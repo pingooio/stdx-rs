@@ -1,0 +1,3 @@
+[build]
+# Using lld as the linker greatly improve compilation times
+rustflags = ["-Clink-args=-fuse-ld=lld"]

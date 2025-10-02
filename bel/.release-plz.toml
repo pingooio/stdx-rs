@@ -1,0 +1,12 @@
+[workspace]
+git_release_enable = true
+pr_branch_prefix = "release-plz-" # PR branch prefix
+
+[[package]] # the double square brackets define a TOML table array
+name = "bel"
+changelog_path = "CHANGELOG.md" # use a custom changelog path for `package_a`
+changelog_update = true # enable changelog update for `package_a`
+git_release_enable = true # enable GitHub/Gitea releases for `package_a`
+
+[changelog]
+protect_breaking_commits = true # always include commits with breaking changes in the changelog

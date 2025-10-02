@@ -1,0 +1,22 @@
+[package]
+name = "bel_fuzz"
+version = "0.1.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+bel = { path = "..", features = ["arbitrary"] }
+
+arbitrary = { version = "1.4.1", features = ["derive"] }
+libfuzzer-sys = "0.4"
+
+
+[[bin]]
+name = "value_binop"
+path = "fuzz_targets/value_binop.rs"
+test = false
+doc = false
+bench = false

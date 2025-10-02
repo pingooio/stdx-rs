@@ -1,0 +1,25 @@
+[package]
+name = "form_urlencoded"
+version = "1.2.2"
+authors = ["The rust-url developers"]
+description = "Parser and serializer for the application/x-www-form-urlencoded syntax, as used by HTML forms."
+categories = ["no-std"]
+repository = "https://github.com/bloom42/stdx"
+license = "Apache-2.0"
+edition = "2024"
+rust-version = "1.85"
+
+[lib]
+path = "./form_urlencoded.rs"
+test = false
+
+[features]
+default = ["std"]
+std = ["alloc", "percent-encoding/std"]
+alloc = ["percent-encoding/alloc"]
+
+[dependencies]
+percent-encoding = { default-features = false, path = "../percent_encoding" }
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--generate-link-to-definition"]

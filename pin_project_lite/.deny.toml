@@ -1,0 +1,42 @@
+# https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html
+[advisories]
+vulnerability = "deny"
+unmaintained = "deny"
+unsound = "deny"
+yanked = "deny"
+notice = "deny"
+git-fetch-with-cli = true
+ignore = [
+]
+
+# https://embarkstudios.github.io/cargo-deny/checks/bans/cfg.html
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+build.executables = "deny"
+build.interpreted = "deny"
+build.include-dependencies = true
+build.include-workspace = false # covered by tools/tidy.sh
+build.include-archives = true
+build.allow-build-scripts = [
+]
+build.bypass = [
+]
+
+# https://embarkstudios.github.io/cargo-deny/checks/licenses/cfg.html
+[licenses]
+version = 2
+unused-allowed-license = "deny"
+private.ignore = true
+allow = [
+    "Apache-2.0",
+    "MIT",
+]
+
+# https://embarkstudios.github.io/cargo-deny/checks/sources/cfg.html
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = [
+]

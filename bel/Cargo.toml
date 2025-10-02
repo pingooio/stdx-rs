@@ -1,0 +1,38 @@
+[package]
+name = "bel"
+description = "A parser and interpreter for the Better Expression Language (BEL)"
+repository = "https://github.com/bloom42/stdx-rs"
+version = "0.11.0"
+edition = "2024"
+license = "MIT"
+categories = ["compilers", "language"]
+
+
+[features]
+default = ["regex", "time", "ip"]
+ip = ["dep:ipnetwork"]
+json = ["dep:serde_json", "dep:base64"]
+regex = ["dep:regex"]
+time = ["dep:chrono"]
+# arbitrary = ["dep:arbitrary", "chrono?/arbitrary", "chrono?/std"]
+# dhat-heap = [ ] # if you are doing heap profiling
+
+
+[dependencies]
+base64 = { path = "../base64", optional = true }
+ipnetwork = { path = "../ipnetwork", optional = true, features = ["serde"] }
+thiserror = "2"
+
+antlr4rust = "=0.3.0-beta3"
+paste = { git = "https://github.com/dtolnay/paste", ref = "6a302522990cbfd9de4e0c61d91854622f7b2999" }
+nom = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+
+arbitrary = { version = "1", features = ["derive"], optional = true }
+chrono = { workspace = true, optional = true }
+regex = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+
+
+[dev-dependencies]
+serde_bytes = "0.11"

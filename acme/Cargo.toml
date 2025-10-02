@@ -1,0 +1,17 @@
+[package]
+name = "acme"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+base64 = { path = "../base64" }
+thiserror = { path = "../thiserror" }
+
+aws-lc-rs = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+
+[dev-dependencies]
+tokio = { workspace = true }

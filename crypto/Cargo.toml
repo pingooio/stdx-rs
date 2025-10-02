@@ -1,0 +1,15 @@
+[package]
+name = "crypto"
+version = "0.1.0"
+edition = "2024"
+authors = ["Sylvain Kerkour"]
+
+[lib]
+path = "./src/crypto.rs"
+
+[dependencies]
+sha2 = { git = "https://github.com/RustCrypto/hashes", rev = "3943486ebe2707e7bc6c43354722ffece8f7d078" }
+sha3 = { git = "https://github.com/RustCrypto/hashes", rev = "3943486ebe2707e7bc6c43354722ffece8f7d078", features = ["asm"] }
+
+[dev-dependencies]
+hex = { path = "../hex" }

@@ -1,0 +1,31 @@
+[package]
+name = "crc32fast"
+version = "1.4.2"
+license = "Apache-2.0"
+authors = [
+  "Sam Rijs <srijs@airpost.net>",
+  "Alex Crichton <alex@alexcrichton.com>"
+]
+description = "Fast, SIMD-accelerated CRC32 (IEEE) checksum computation"
+repository = "https://github.com/bloom42/stdx"
+readme = "README.md"
+keywords = ["hash", "crc", "crc32", "simd", "fast"]
+categories = ["algorithms", "no-std"]
+edition = "2024"
+
+[dependencies]
+cfg-if = { path = "../cfg-if" }
+
+[dev-dependencies]
+rand = { workspace = true }
+# bencher = "0.1"
+# quickcheck = { version = "1.0", default-features = false }
+
+[features]
+default = ["std"]
+std = []
+nightly = []
+
+# [[bench]]
+# name = "bench"
+# harness = false

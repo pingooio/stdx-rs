@@ -1,0 +1,37 @@
+[package]
+name = "maxminddb"
+version = "0.24.0"
+authors = [ "Gregory J. Oschwald <oschwald@gmail.com>" ]
+description = "Library for reading MaxMind DB format used by GeoIP2 and GeoLite2"
+readme = "README.md"
+keywords = ["MaxMind", "GeoIP2", "GeoIP", "geolocation", "ip"]
+categories = ["database", "network-programming"]
+homepage = "https://github.com/oschwald/maxminddb-rust"
+documentation = "http://oschwald.github.io/maxminddb-rust/maxminddb/struct.Reader.html"
+repository = "https://github.com/bloom42/stdx"
+license = "ISC"
+include = ["/Cargo.toml", "/benches/*.rs", "/src/**/*.rs", "/README.md", "/LICENSE"]
+edition = "2024"
+
+
+[lib]
+name ="maxminddb"
+path = "src/maxminddb.rs"
+
+[dependencies]
+ipnetwork = { path = "../ipnetwork" }
+tracing = { workspace = true }
+serde =  { workspace = true }
+memchr = { workspace = true }
+
+[dev-dependencies]
+# env_logger = "0.11"
+# criterion = "0.5"
+# fake = "2.4"
+# rayon = "1.5"
+serde_json = { workspace = true }
+
+
+# [[bench]]
+# name = "lookup"
+# harness = false

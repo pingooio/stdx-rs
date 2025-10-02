@@ -1,0 +1,8 @@
+[package]
+name = "strings"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+itoa = { path = "../itoa" }
+ryu = { path = "../ryu" }

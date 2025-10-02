@@ -1,0 +1,31 @@
+[package]
+name = "serde_yaml"
+version = "0.9.34+deprecated"
+authors = ["David Tolnay <dtolnay@gmail.com>"]
+categories = ["encoding", "parser-implementations"]
+description = "YAML data format for Serde"
+documentation = "https://docs.rs/serde_yaml/"
+edition = "2024"
+keywords = ["yaml", "serde", "serialization"]
+license = "Apache-2.0"
+repository = "https://github.com/bloom42/stdx"
+rust-version = "1.85"
+
+[dependencies]
+indexmap = { workspace = true }
+itoa = { path = "../itoa" }
+ryu = { path = "../ryu" }
+serde = { workspace = true }
+unsafe_libyaml = { path = "../unsafe_libyaml" }
+
+# [dev-dependencies]
+# anyhow = "1.0.79"
+# indoc = "2.0"
+# serde_derive = "1.0.195"
+
+[lib]
+doc-scrape-examples = false
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
+rustdoc-args = ["--generate-link-to-definition"]

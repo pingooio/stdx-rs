@@ -1,0 +1,31 @@
+[package]
+name = "uuid"
+version = "1.17.0"
+description = "Generate, encode and decode UUIDs (RFC 9562)"
+authors = ["Sylvain Kerkour"]
+repository = "https://github.com/bloom42/stdx"
+keywords = ["uuid", "no_std"]
+categories = ["uuid"]
+license = "Apache-2.0"
+edition = "2024"
+
+[lib]
+name = "uuid"
+path = "src/uuid.rs"
+
+[[bin]]
+name = "uuid"
+path = "src/main.rs"
+
+
+[dependencies]
+rand = { workspace = true }
+serde = { workspace = true }
+thiserror = "2"
+
+# features to mimick the uuid crate
+[features]
+default = []
+serde = []
+v4 = []
+v7 = []

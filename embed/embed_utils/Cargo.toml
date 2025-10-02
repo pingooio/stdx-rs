@@ -1,0 +1,28 @@
+[package]
+name = "embed_utils"
+version = "8.4.0"
+description = "Utilities for rust-embed"
+readme = "readme.md"
+documentation = "https://docs.rs/rust-embed"
+repository = "https://github.com/bloom42/stdx"
+license = "MIT"
+keywords = ["http", "rocket", "static", "web", "server"]
+categories = ["web-programming::http-server"]
+authors = ["pyros2097 <pyros2097@gmail.com>"]
+edition = "2024"
+
+[dependencies]
+blake3 = { workspace = true }
+walkdir = { workspace = true }
+
+
+# mime_guess = { version = "2.0.4", optional = true }
+
+# [dependencies.globset]
+# version = "0.4.8"
+# optional = true
+
+[features]
+debug-embed = []
+# mime-guess = ["mime_guess"]
+# include-exclude = ["globset"]

@@ -1,0 +1,34 @@
+[package]
+name = "embed_impl"
+version = "8.4.0"
+description = "Rust Custom Derive Macro which loads files into the rust binary at compile time during release and loads the file from the fs during dev"
+readme = "readme.md"
+documentation = "https://docs.rs/rust-embed"
+repository = "https://github.com/bloom42/stdx"
+license = "MIT"
+keywords = ["http", "rocket", "static", "web", "server"]
+categories = ["web-programming::http-server"]
+authors = ["pyros2097 <pyros2097@gmail.com>"]
+edition = "2024"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { workspace = true }
+quote = { workspace = true }
+proc-macro2 = { workspace = true }
+
+embed_utils = { path = "../embed_utils"}
+walkdir = { workspace = true }
+
+# [dependencies.shellexpand]
+# version = "3"
+# optional = true
+#
+[features]
+debug-embed = []
+# interpolate-folder-path = ["shellexpand"]
+# compression = []
+# mime-guess = ["rust-embed-utils/mime-guess"]
+# include-exclude = ["rust-embed-utils/include-exclude"]

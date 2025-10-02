@@ -1,0 +1,11 @@
+[package]
+name = "countries"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "./countries.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

@@ -1,0 +1,6 @@
+{
+  "dockerFile": "Dockerfile",
+  "extensions": [
+    "rust-lang.rust-analyzer"
+  ]
+}

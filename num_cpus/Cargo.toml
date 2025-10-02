@@ -1,0 +1,16 @@
+[package]
+
+name = "num_cpus"
+version = "1.16.0"
+edition = "2024"
+description = "Get the number of CPUs on a machine."
+authors = ["Sean McArthur <sean@seanmonstar.com>"]
+license = "Apache-2.0"
+repository = "https://github.com/bloom42/stdx"
+documentation = "https://docs.rs/num_cpus"
+keywords = ["cpu", "cpus", "cores"]
+categories = ["hardware-support"]
+readme = "README.md"
+
+[target.'cfg(not(windows))'.dependencies]
+libc = { workspace = true }

@@ -1,0 +1,25 @@
+[package]
+name = "docker"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "docker"
+path = "src/docker.rs"
+
+[[bin]]
+name = "docker"
+path = "src/main.rs"
+
+[dependencies]
+hyper_utils = { path = "../hyper_utils" }
+serde_urlencoded = { path = "../serde_urlencoded" }
+thiserror = { path = "../thiserror" }
+
+
+bytes = { workspace = true }
+hyper = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
