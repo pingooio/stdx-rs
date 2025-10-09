@@ -42,6 +42,7 @@ members = [
     "pin_project_lite",
     "postmark",
     "ryu",
+    "scheduler",
     "serde_urlencoded",
     "serde_yaml",
     "thiserror",
@@ -67,6 +68,7 @@ reqwest = { version = "0.12", default-features = false, features = ["charset", "
 aws-lc-rs = { version = "1" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 walkdir = "2"

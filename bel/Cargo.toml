@@ -21,7 +21,7 @@ time = ["dep:chrono"]
 [dependencies]
 base64 = { path = "../base64", optional = true }
 ipnetwork = { path = "../ipnetwork", optional = true, features = ["serde"] }
-thiserror = "2"
+thiserror = { workspace = true }
 
 antlr4rust = "=0.3.0-beta3"
 paste = { git = "https://github.com/dtolnay/paste", ref = "6a302522990cbfd9de4e0c61d91854622f7b2999" }

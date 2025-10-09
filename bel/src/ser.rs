@@ -1483,7 +1483,8 @@ mod tests {
             HashMap::<_, Value>::from([
                 ("ip_addr", Value::from(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)))),
                 ("ip", Value::from(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)))),
-                ]).into(),
+            ])
+            .into(),
         )]
         .into();
         assert_eq!(tests, expected);
