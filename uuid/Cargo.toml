@@ -1,6 +1,6 @@
 [package]
 name = "uuid"
-version = "1.17.0"
+version = "1.18.1"
 description = "Generate, encode and decode UUIDs (RFC 9562)"
 authors = ["Sylvain Kerkour"]
 repository = "https://github.com/bloom42/stdx"
