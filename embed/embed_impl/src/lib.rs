@@ -232,7 +232,7 @@ fn embed_file(
   folder_path: Option<&str>, ident: &syn::Ident, rel_path: &str, full_canonical_path: &str, metadata_only: bool, crate_path: &syn::Path,
 ) -> syn::Result<TokenStream2> {
   let file = embed_utils::read_file_from_fs(Path::new(full_canonical_path)).expect("File should be readable");
-  let hash = file.metadata.blake3_hash();
+  let hash = file.metadata.sha256_hash();
   let last_modified = match file.metadata.last_modified() {
     Some(last_modified) => quote! { ::std::option::Option::Some(#last_modified) },
     None => quote! { ::std::option::Option::None },
