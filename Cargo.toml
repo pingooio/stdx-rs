@@ -62,7 +62,7 @@ libc = "0.2"
 memchr = "2"
 mime = "0.3"
 nom = "7"
-rand = "0.8"
+rand = "0.9"
 regex = { version = "1" }
 reqwest = { version = "0.12", default-features = false, features = ["charset", "gzip", "http2", "multipart", "json", "rustls-tls", "zstd"] }
 aws-lc-rs = { version = "1" }
