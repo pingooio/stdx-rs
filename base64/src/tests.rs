@@ -1,8 +1,8 @@
 use std::str;
 
 use rand::{
-    Rng, distributions,
-    distributions::{Distribution as _, Uniform},
+    Rng, distr,
+    distr::{Distribution as _, Uniform},
     seq::SliceRandom,
 };
 
@@ -83,7 +83,7 @@ pub fn random_config<R: Rng>(rng: &mut R) -> GeneralPurposeConfig {
         .with_decode_allow_trailing_bits(rng.r#gen())
 }
 
-impl distributions::Distribution<DecodePaddingMode> for distributions::Standard {
+impl distr::Distribution<DecodePaddingMode> for distr::Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> DecodePaddingMode {
         match rng.gen_range(0..=2) {
             0 => DecodePaddingMode::Indifferent,

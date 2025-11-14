@@ -23,7 +23,7 @@ base64 = { path = "../base64", optional = true }
 ipnetwork = { path = "../ipnetwork", optional = true, features = ["serde"] }
 thiserror = { workspace = true }
 
-antlr4rust = "=0.3.0-beta3"
+antlr4rust = "=0.3.0-rc2"
 paste = { git = "https://github.com/dtolnay/paste", ref = "6a302522990cbfd9de4e0c61d91854622f7b2999" }
 nom = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

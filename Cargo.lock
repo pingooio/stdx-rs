@@ -53,9 +53,9 @@ checksum = "5192cca8006f1fd4f7237516f40fa183bb07f8fbdfedaa0036de5ea9b0b45e78"
 
 [[package]]
 name = "antlr4rust"
-version = "0.3.0-beta3"
+version = "0.3.0-rc2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15e8f291e498f0e86cde1686f8881dab6c2fda0b115214b6a48dd7ec6aa17ac5"
+checksum = "d240d49ee89063f90fa0cb18aead41a5893cd544a1785983dc3bf5c3d5faa58b"
 dependencies = [
  "better_any",
  "bit-set",

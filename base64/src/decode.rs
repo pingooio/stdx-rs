@@ -154,7 +154,7 @@ pub fn decoded_len_estimate(encoded_len: usize) -> usize {
 mod tests {
     use rand::{
         Rng,
-        distributions::{Distribution, Uniform},
+        distr::{Distribution, Uniform},
     };
 
     use super::*;

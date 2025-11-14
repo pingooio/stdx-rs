@@ -187,7 +187,7 @@ impl hash::Hasher for Hasher {
 
 #[cfg(test)]
 mod test {
-    use rand::{RngCore, rngs::OsRng};
+    use rand::{rngs::OsRng, TryRngCore};
 
     use super::Hasher;
 
@@ -196,10 +196,10 @@ mod test {
         let mut rand_generator = OsRng {};
 
         let mut bytes_1 = vec![100];
-        rand_generator.fill_bytes(&mut bytes_1);
+        rand_generator.try_fill_bytes(&mut bytes_1).unwrap();
 
         let mut bytes_2 = vec![200];
-        rand_generator.fill_bytes(&mut bytes_2);
+        rand_generator.try_fill_bytes(&mut bytes_2).unwrap();
 
         let mut hash_a = Hasher::new();
         hash_a.update(&bytes_1);
@@ -218,10 +218,10 @@ mod test {
         let mut rand_generator = OsRng {};
 
         let mut bytes_1 = vec![200];
-        rand_generator.fill_bytes(&mut bytes_1);
+        rand_generator.try_fill_bytes(&mut bytes_1).unwrap();
 
         let mut bytes_2 = vec![100];
-        rand_generator.fill_bytes(&mut bytes_2);
+        rand_generator.try_fill_bytes(&mut bytes_2).unwrap();
 
         let mut hash_a = Hasher::new();
         hash_a.update(&bytes_1);
