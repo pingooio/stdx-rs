@@ -1,0 +1,14 @@
+[package]
+name = "single_instance"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "./single_instance.rs"
+
+[dependencies]
+thiserror = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+nix = { version = "0.26", features = ["socket"] }

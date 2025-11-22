@@ -41,6 +41,7 @@ A second, temporary, goal is to reduce supply-chain risks by forking the most-us
 | `serde_urlencoded` | https://github.com/nox/serde_urlencoded | 0cca840185fa85b39e2cc8a0b2547fff5ace8e68 | TODO |
 | `serde_urlencoded` | https://github.com/nox/serde_urlencoded | 0cca840185fa85b39e2cc8a0b2547fff5ace8e68 | TODO |
 | `serde_yaml` | https://github.com/dtolnay/serde-yaml | 2009506d33767dfc88e979d6bc0d53d09f941c94 | TODO |
+| `single_instance` | https://github.com/WLBF/single-instance | b3fae2c90a24f4a53e5944fc2ab828c1c35944cb | MIT |
 | `tld` | https://github.com/rushmorem/publicsuffix | 47958d65a3eab3a01e4a9cf46ccf40c11a7e8052 | TODO |
 | `unsafe_libyaml` | https://crates.io/crates/unsafe-libyaml | 417668ce6565ece14bbd9b4a73137d9241ea1365 | TODO |
 | `uuid` | https://github.com/uuid-rs/uuid | 98fc36df4d3f33669d54f1d7b999888f75d8b71f | TODO |

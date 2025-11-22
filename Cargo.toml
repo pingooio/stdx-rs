@@ -45,6 +45,7 @@ members = [
     "scheduler",
     "serde_urlencoded",
     "serde_yaml",
+    "single_instance",
     "thiserror",
     "thiserror/impl",
     "tld",
