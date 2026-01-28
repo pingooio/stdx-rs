@@ -5,8 +5,6 @@ use std::path::Path;
 use std::time::SystemTime;
 use std::{fs, io};
 
-use aws_lc_rs::digest;
-
 #[cfg_attr(all(debug_assertions, not(feature = "debug-embed")), allow(unused))]
 pub struct FileEntry {
   pub rel_path: String,
@@ -68,8 +66,8 @@ impl Metadata {
     }
   }
 
-  /// The SHA-256 hash of the file
-  pub fn sha256_hash(&self) -> [u8; 32] {
+  /// The BLAKE3 hash of the file
+  pub fn hash(&self) -> [u8; 32] {
     self.hash
   }
 
@@ -96,7 +94,7 @@ pub fn read_file_from_fs(file_path: &Path) -> io::Result<EmbeddedFile> {
   let data = fs::read(file_path)?;
   let data = Cow::from(data);
 
-  let hash: [u8; 32] = digest::digest(&digest::SHA256, &data).as_ref().try_into().expect("invalid digest size");
+  let hash: [u8; 32] = *blake3::hash(&data).as_bytes();
 
   let source_date_epoch = match std::env::var("SOURCE_DATE_EPOCH") {
     Ok(value) => value.parse::<u64>().ok(),

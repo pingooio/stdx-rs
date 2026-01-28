@@ -12,7 +12,7 @@ authors = ["pyros2097 <pyros2097@gmail.com>"]
 edition = "2024"
 
 [dependencies]
-aws-lc-rs = { workspace = true }
+blake3 = { workspace = true }
 walkdir = { workspace = true }
 
 
