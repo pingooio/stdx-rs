@@ -5,6 +5,8 @@ use std::path::Path;
 use std::time::SystemTime;
 use std::{fs, io};
 
+use sha2::{Digest, Sha256};
+
 #[cfg_attr(all(debug_assertions, not(feature = "debug-embed")), allow(unused))]
 pub struct FileEntry {
   pub rel_path: String,
@@ -46,7 +48,7 @@ pub struct EmbeddedFile {
 /// Metadata about an embedded file
 #[derive(Clone)]
 pub struct Metadata {
-  /// the BLAKE3 hash of the file
+  /// the SHA256 hash of the file
   hash: [u8; 32],
   last_modified: Option<u64>,
   created: Option<u64>,
@@ -66,7 +68,7 @@ impl Metadata {
     }
   }
 
-  /// The BLAKE3 hash of the file
+  /// The SHA256 hash of the file
   pub fn hash(&self) -> [u8; 32] {
     self.hash
   }
@@ -94,7 +96,7 @@ pub fn read_file_from_fs(file_path: &Path) -> io::Result<EmbeddedFile> {
   let data = fs::read(file_path)?;
   let data = Cow::from(data);
 
-  let hash: [u8; 32] = *blake3::hash(&data).as_bytes();
+  let hash: [u8; 32] = *Sha256::digest(&data).as_array().unwrap();
 
   let source_date_epoch = match std::env::var("SOURCE_DATE_EPOCH") {
     Ok(value) => value.parse::<u64>().ok(),
