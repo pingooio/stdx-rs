@@ -187,7 +187,7 @@ impl hash::Hasher for Hasher {
 
 #[cfg(test)]
 mod test {
-    use rand::{rngs::OsRng, TryRngCore};
+    use rand::{TryRngCore, rngs::OsRng};
 
     use super::Hasher;
 

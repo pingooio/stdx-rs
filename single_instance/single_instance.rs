@@ -21,7 +21,7 @@
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[cfg(any(target_os = "linux", target_os="android"))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[error("new abstract addr error")]
     Nix(#[from] nix::Error),
 
@@ -29,7 +29,6 @@ pub enum Error {
     #[error("file open or create error")]
     Io(#[from] std::io::Error),
 }
-
 
 // #[cfg(target_os = "macos")]
 // extern crate libc;
@@ -43,12 +42,16 @@ pub enum Error {
 
 pub use self::inner::*;
 
-#[cfg(any(target_os = "linux", target_os="android"))]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 mod inner {
-    use super::Error;
-    use nix::sys::socket::{self, UnixAddr};
-    use nix::unistd;
     use std::os::unix::prelude::RawFd;
+
+    use nix::{
+        sys::socket::{self, UnixAddr},
+        unistd,
+    };
+
+    use super::Error;
 
     /// A struct representing one running instance.
     pub struct SingleInstance {
@@ -74,7 +77,9 @@ mod inner {
                 Err(e) => return Err(e.into()),
             };
 
-            Ok(Self { maybe_sock })
+            Ok(Self {
+                maybe_sock,
+            })
         }
 
         /// Returns whether this instance is single.
@@ -95,11 +100,11 @@ mod inner {
 
 #[cfg(target_os = "macos")]
 mod inner {
+    use std::{fs::File, os::unix::io::AsRawFd, path::Path};
+
+    use libc::{__error, EWOULDBLOCK, LOCK_EX, LOCK_NB, flock};
+
     use super::Error;
-    use libc::{__error, flock, EWOULDBLOCK, LOCK_EX, LOCK_NB};
-    use std::fs::File;
-    use std::os::unix::io::AsRawFd;
-    use std::path::Path;
 
     /// A struct representing one running instance.
     pub struct SingleInstance {
@@ -136,7 +141,7 @@ mod inner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    static UNIQ_ID : &'static str   = "aa2d0258-ffe9-11e7-ba89-0ed5f89f718b";
+    static UNIQ_ID: &'static str = "aa2d0258-ffe9-11e7-ba89-0ed5f89f718b";
     #[test]
     fn test_single_instance() {
         {
