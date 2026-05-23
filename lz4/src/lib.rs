@@ -6,6 +6,7 @@ const MFLIMIT: usize = 12;
 const HASH_LOG: usize = 16;
 const HASH_SIZE: usize = 1 << HASH_LOG;
 const HASH_SEED: u32 = 2_654_435_761;
+const SKIP_STRENGTH: usize = 4;
 
 pub type Result<T> = core::result::Result<T, Error>;
 
@@ -37,8 +38,13 @@ pub fn compress_to_buffer(source: &[u8], destination: &mut [u8]) -> Result<usize
     let mut dest_pos = 0usize;
     let mut anchor = 0usize;
     let mut pos = 0usize;
+    let mut search_matches = 1usize;
     let src_len = source.len();
     let mut hash_table = [usize::MAX; HASH_SIZE];
+
+    if destination.len() < max_compressed_size(src_len) {
+        return Err(Error::DestinationTooSmall);
+    }
 
     if src_len >= MFLIMIT {
         while pos + MFLIMIT <= src_len {
@@ -54,46 +60,46 @@ pub fn compress_to_buffer(source: &[u8], destination: &mut [u8]) -> Result<usize
                 && read_u32(source, candidate) == sequence
             {
                 let literal_length = pos - anchor;
-                let mut match_length = MIN_MATCH;
                 let match_limit = src_len - LAST_LITERALS;
-                while pos + match_length < match_limit && source[candidate + match_length] == source[pos + match_length]
-                {
-                    match_length += 1;
-                }
+                let match_length =
+                    MIN_MATCH + count_match_length(source, pos + MIN_MATCH, candidate + MIN_MATCH, match_limit);
 
                 let mut token = 0u8;
                 token |= encode_length_nibble(literal_length) << 4;
                 token |= encode_length_nibble(match_length - MIN_MATCH);
-                write_byte(destination, &mut dest_pos, token)?;
-                write_extended_length(destination, &mut dest_pos, literal_length)?;
-                write_slice(destination, &mut dest_pos, &source[anchor..pos])?;
+                write_byte_unchecked(destination, &mut dest_pos, token);
+                write_extended_length_unchecked(destination, &mut dest_pos, literal_length);
+                write_slice_unchecked(destination, &mut dest_pos, &source[anchor..pos]);
 
                 let offset = (pos - candidate) as u16;
-                write_byte(destination, &mut dest_pos, (offset & 0x00FF) as u8)?;
-                write_byte(destination, &mut dest_pos, (offset >> 8) as u8)?;
+                write_byte_unchecked(destination, &mut dest_pos, (offset & 0x00FF) as u8);
+                write_byte_unchecked(destination, &mut dest_pos, (offset >> 8) as u8);
 
-                write_extended_length(destination, &mut dest_pos, match_length - MIN_MATCH)?;
+                write_extended_length_unchecked(destination, &mut dest_pos, match_length - MIN_MATCH);
 
-                let match_start = pos;
                 pos += match_length;
                 anchor = pos;
+                search_matches = 1;
 
-                let mut update = match_start + 1;
-                while update + MIN_MATCH <= pos {
-                    hash_table[hash(read_u32(source, update))] = update;
-                    update += 1;
+                if pos + MIN_MATCH <= src_len {
+                    let insert_pos = pos.saturating_sub(2);
+                    if insert_pos + MIN_MATCH <= src_len {
+                        hash_table[hash(read_u32(source, insert_pos))] = insert_pos;
+                    }
                 }
             } else {
-                pos += 1;
+                let skip = search_matches >> SKIP_STRENGTH;
+                search_matches += 1;
+                pos += 1 + skip;
             }
         }
     }
 
     let literal_length = src_len - anchor;
     let token = encode_length_nibble(literal_length) << 4;
-    write_byte(destination, &mut dest_pos, token)?;
-    write_extended_length(destination, &mut dest_pos, literal_length)?;
-    write_slice(destination, &mut dest_pos, &source[anchor..])?;
+    write_byte_unchecked(destination, &mut dest_pos, token);
+    write_extended_length_unchecked(destination, &mut dest_pos, literal_length);
+    write_slice_unchecked(destination, &mut dest_pos, &source[anchor..]);
 
     Ok(dest_pos)
 }
@@ -169,41 +175,65 @@ fn read_u32(input: &[u8], index: usize) -> u32 {
     u32::from_le_bytes([input[index], input[index + 1], input[index + 2], input[index + 3]])
 }
 
+fn count_match_length(source: &[u8], mut left: usize, mut right: usize, limit: usize) -> usize {
+    let start = left;
+
+    while left + 8 <= limit && right + 8 <= source.len() {
+        let left_word = u64::from_le_bytes(source[left..left + 8].try_into().expect("fixed-size slice"));
+        let right_word = u64::from_le_bytes(source[right..right + 8].try_into().expect("fixed-size slice"));
+        if left_word != right_word {
+            left += ((left_word ^ right_word).trailing_zeros() / 8) as usize;
+            return left - start;
+        }
+        left += 8;
+        right += 8;
+    }
+
+    while left + 4 <= limit && right + 4 <= source.len() {
+        let left_word = u32::from_le_bytes(source[left..left + 4].try_into().expect("fixed-size slice"));
+        let right_word = u32::from_le_bytes(source[right..right + 4].try_into().expect("fixed-size slice"));
+        if left_word != right_word {
+            left += ((left_word ^ right_word).trailing_zeros() / 8) as usize;
+            return left - start;
+        }
+        left += 4;
+        right += 4;
+    }
+
+    while left < limit && source[left] == source[right] {
+        left += 1;
+        right += 1;
+    }
+
+    left - start
+}
+
 fn encode_length_nibble(length: usize) -> u8 {
     core::cmp::min(length, 15) as u8
 }
 
-fn write_extended_length(destination: &mut [u8], dest_pos: &mut usize, length: usize) -> Result<()> {
+fn write_extended_length_unchecked(destination: &mut [u8], dest_pos: &mut usize, length: usize) {
     if length < 15 {
-        return Ok(());
+        return;
     }
 
     let mut remaining = length - 15;
     while remaining >= 255 {
-        write_byte(destination, dest_pos, 255)?;
+        write_byte_unchecked(destination, dest_pos, 255);
         remaining -= 255;
     }
-    write_byte(destination, dest_pos, remaining as u8)?;
-    Ok(())
+    write_byte_unchecked(destination, dest_pos, remaining as u8);
 }
 
-fn write_byte(destination: &mut [u8], dest_pos: &mut usize, value: u8) -> Result<()> {
-    if *dest_pos >= destination.len() {
-        return Err(Error::DestinationTooSmall);
-    }
+fn write_byte_unchecked(destination: &mut [u8], dest_pos: &mut usize, value: u8) {
     destination[*dest_pos] = value;
     *dest_pos += 1;
-    Ok(())
 }
 
-fn write_slice(destination: &mut [u8], dest_pos: &mut usize, source: &[u8]) -> Result<()> {
-    let end = dest_pos.checked_add(source.len()).ok_or(Error::CorruptData)?;
-    if end > destination.len() {
-        return Err(Error::DestinationTooSmall);
-    }
+fn write_slice_unchecked(destination: &mut [u8], dest_pos: &mut usize, source: &[u8]) {
+    let end = *dest_pos + source.len();
     destination[*dest_pos..end].copy_from_slice(source);
     *dest_pos = end;
-    Ok(())
 }
 
 fn read_length(initial: usize, source: &[u8], src_pos: &mut usize) -> Result<usize> {
