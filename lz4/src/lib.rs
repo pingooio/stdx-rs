@@ -13,7 +13,6 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     DestinationTooSmall,
     CorruptData,
-    InvalidCapacity,
 }
 
 impl fmt::Display for Error {
@@ -21,7 +20,6 @@ impl fmt::Display for Error {
         match self {
             Error::DestinationTooSmall => f.write_str("destination buffer too small"),
             Error::CorruptData => f.write_str("corrupt lz4 block"),
-            Error::InvalidCapacity => f.write_str("invalid output capacity"),
         }
     }
 }
@@ -45,9 +43,9 @@ pub fn compress_to_buffer(source: &[u8], destination: &mut [u8]) -> Result<usize
     if src_len >= MFLIMIT {
         while pos + MFLIMIT <= src_len {
             let sequence = read_u32(source, pos);
-            let hash = hash(sequence);
-            let candidate = hash_table[hash];
-            hash_table[hash] = pos;
+            let hash_index = hash(sequence);
+            let candidate = hash_table[hash_index];
+            hash_table[hash_index] = pos;
 
             if candidate != usize::MAX
                 && pos > candidate
@@ -102,10 +100,6 @@ pub fn compress_to_buffer(source: &[u8], destination: &mut [u8]) -> Result<usize
 }
 
 pub fn decompress(data: &[u8], capacity: usize) -> Result<Vec<u8>> {
-    if capacity == 0 && !data.is_empty() {
-        return Err(Error::InvalidCapacity);
-    }
-
     let mut output = vec![0; capacity];
     let written = decompress_to_buffer(data, &mut output)?;
     output.truncate(written);

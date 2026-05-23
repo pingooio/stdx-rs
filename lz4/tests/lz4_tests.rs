@@ -78,7 +78,7 @@ fn decompress_respects_capacity() {
 fn decompress_to_buffer_detects_corruption() {
     let malformed_cases = [
         vec![0x00, 0x01],       // offset bytes missing
-        vec![0x10, 0xAA],       // literal length longer than source
+        vec![0x20, 0xAA],       // literal length longer than source
         vec![0x00, 0x00, 0x00], // invalid zero offset
         vec![0xF0],             // literal extension missing
     ];
