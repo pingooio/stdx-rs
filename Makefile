@@ -11,3 +11,8 @@ clean:
 .PHONY: update_deps
 update_deps:
 	cargo update
+
+
+.PHONY: s3_integration_test
+s3_integration_test:
+	$(MAKE) -C s3 integration-test
