@@ -56,8 +56,7 @@ pub fn compress_to_buffer(source: &[u8], destination: &mut [u8]) -> Result<usize
                 let literal_length = pos - anchor;
                 let mut match_length = MIN_MATCH;
                 let match_limit = src_len - LAST_LITERALS;
-                while pos + match_length < match_limit
-                    && source[candidate + match_length] == source[pos + match_length]
+                while pos + match_length < match_limit && source[candidate + match_length] == source[pos + match_length]
                 {
                     match_length += 1;
                 }
