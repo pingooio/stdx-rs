@@ -2,5 +2,11 @@
 name = "lz4"
 version = "0.1.0"
 edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/pingooio/stdx-rs"
+description = "Pure Rust LZ4 block compression and decompression"
 
 [dependencies]
+
+[dev-dependencies]
+lz4_reference = { package = "lz4", version = "1" }
