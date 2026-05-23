@@ -49,7 +49,7 @@ members = [
     "thiserror",
     "thiserror/impl",
     "tld",
-    "unsafe_libyaml",
+    "unsafe_libyaml", "lz4",
 ]
 
 [workspace.dependencies]
