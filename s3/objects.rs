@@ -156,7 +156,9 @@ impl<H: HttpClient> Client<H> {
             deleted: xml
                 .deleted
                 .into_iter()
-                .map(|entry| DeletedObject { key: entry.key })
+                .map(|entry| DeletedObject {
+                    key: entry.key,
+                })
                 .collect(),
             errors: xml
                 .errors
@@ -195,7 +197,9 @@ impl<H: HttpClient> Client<H> {
             .execute(HttpMethod::Put, &canonical_uri, &canonical_query, body)
             .await?;
         let e_tag = header_to_string(&response, "etag");
-        Ok(UploadPartOutput { e_tag })
+        Ok(UploadPartOutput {
+            e_tag,
+        })
     }
 
     pub async fn complete_multipart_upload(
@@ -215,7 +219,9 @@ impl<H: HttpClient> Client<H> {
             .await?;
         let xml_text = bytes_to_string(collect_body(response.body).await?)?;
         let xml: CompleteMultipartUploadResultXml = from_str(&xml_text)?;
-        Ok(CompleteMultipartUploadOutput { e_tag: xml.e_tag })
+        Ok(CompleteMultipartUploadOutput {
+            e_tag: xml.e_tag,
+        })
     }
 
     pub async fn abort_multipart_upload(

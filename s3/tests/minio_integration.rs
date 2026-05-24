@@ -60,7 +60,9 @@ async fn collect_stream(body: s3::ByteStream) -> Vec<u8> {
 async fn create_bucket_or_panic(client: &Client<ReqwestHttpClient>, bucket: &str) {
     match client.create_bucket(bucket).await {
         Ok(()) => {}
-        Err(Error::Api { status: 409, .. }) => {}
+        Err(Error::Api {
+            status: 409, ..
+        }) => {}
         Err(err) => panic!("create_bucket failed: {err}"),
     }
 }
