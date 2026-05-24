@@ -1,0 +1,17 @@
+[package]
+name = "lz4"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/pingooio/stdx-rs"
+description = "Pure Rust LZ4 block compression and decompression"
+
+[dependencies]
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+lz4_reference = { package = "lz4", version = "1" }
+
+[[bench]]
+name = "comparison"
+harness = false
