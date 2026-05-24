@@ -59,10 +59,7 @@ impl fmt::Display for Error {
             Error::Http(err) => write!(f, "http error: {err}"),
             Error::Time(err) => write!(f, "time error: {err}"),
             Error::Xml(err) => write!(f, "xml error: {err}"),
-            Error::Api {
-                status,
-                body,
-            } => write!(f, "s3 api error (status {status}): {body}"),
+            Error::Api { status, body } => write!(f, "s3 api error (status {status}): {body}"),
         }
     }
 }
@@ -317,10 +314,7 @@ impl<H: HttpClient> Client<H> {
         let status = response.status_code;
         let body_bytes = collect_body(response.body).await.unwrap_or_default();
         let body = String::from_utf8_lossy(&body_bytes).into_owned();
-        Err(Error::Api {
-            status,
-            body,
-        })
+        Err(Error::Api { status, body })
     }
 }
 
@@ -575,13 +569,27 @@ mod tests {
     #[test]
     fn exposes_supported_actions_list() {
         let actions = [
+            "ListBuckets",
             "CreateBucket",
+            "HeadBucket",
+            "DeleteBucket",
+            "GetBucketLocation",
+            "DeleteObjects",
+            "ListMultipartUploads",
+            "ListParts",
+            "PutObjectTagging",
+            "GetObjectTagging",
+            "DeleteObjectTagging",
             "PutObject",
             "GetObject",
             "HeadObject",
             "DeleteObject",
             "ListObjects",
+            "CreateMultipartUpload",
+            "UploadPart",
+            "CompleteMultipartUpload",
+            "AbortMultipartUpload",
         ];
-        assert_eq!(actions.len(), 6);
+        assert_eq!(actions.len(), 20);
     }
 }
