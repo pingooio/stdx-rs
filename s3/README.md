@@ -18,7 +18,7 @@ use s3::{Client, ClientConfig, StaticCredentials};
 let cfg = ClientConfig {
     endpoint: "http://127.0.0.1:9000",
     credentials: StaticCredentials::new("minioadmin", "minioadmin", ""),
-    region: "us-east-1",
+    region: "auto",
 };
 
 let client = Client::new(&cfg)?;

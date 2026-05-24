@@ -24,7 +24,7 @@ fn unique_suffix() -> String {
 
 fn test_client() -> Client<ReqwestHttpClient> {
     let endpoint = env_or_default("S3_ENDPOINT", "http://127.0.0.1:9000");
-    let region = env_or_default("S3_REGION", "us-east-1");
+    let region = env_or_default("S3_REGION", "auto");
     let access_key_id = env_or_default("S3_ACCESS_KEY_ID", "minioadmin");
     let secret_access_key = env_or_default("S3_SECRET_ACCESS_KEY", "minioadmin");
     let session_token = std::env::var("S3_SESSION_TOKEN").unwrap_or_default();
