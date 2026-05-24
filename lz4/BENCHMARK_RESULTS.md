@@ -1,6 +1,6 @@
 # LZ4 benchmark results
 
-- Date (UTC): 2026-05-24 07:32:45
+- Date (UTC): 2026-05-24 10:23:56
 - Command: `cargo bench -p lz4@0.1.0 --bench comparison -- --sample-size 30`
 - Tool: Criterion
 
@@ -8,23 +8,23 @@
 
 | Dataset | Ours (µs) | Reference (µs) | Ours MiB/s | Ref MiB/s | Speed ratio (ref/ours) |
 |---|---:|---:|---:|---:|---:|
-| compressible-1024 | 6.963 | 0.355 | 140.26 | 2754.47 | 19.6x |
-| random-1024 | 7.232 | 0.687 | 135.04 | 1420.50 | 10.5x |
-| compressible-16384 | 9.023 | 1.766 | 1731.66 | 8849.46 | 5.1x |
-| random-16384 | 9.793 | 2.649 | 1595.56 | 5898.84 | 3.7x |
-| compressible-131072 | 24.556 | 11.993 | 5090.47 | 10422.69 | 2.0x |
-| random-131072 | 19.927 | 10.699 | 6273.01 | 11683.64 | 1.9x |
+| compressible-1024 | 7.620 | 0.346 | 128.16 | 2821.69 | 22.0x |
+| random-1024 | 8.674 | 0.692 | 112.58 | 1410.34 | 12.5x |
+| compressible-16384 | 10.279 | 1.763 | 1520.13 | 8861.72 | 5.8x |
+| random-16384 | 10.947 | 2.638 | 1427.36 | 5923.47 | 4.1x |
+| compressible-131072 | 24.107 | 12.001 | 5185.17 | 10415.49 | 2.0x |
+| random-131072 | 21.178 | 10.607 | 5902.26 | 11784.38 | 2.0x |
 
 ## Decompression of reference-compressed blocks (lower time is better)
 
 | Dataset | Ours (µs) | Reference (µs) | Ours MiB/s | Ref MiB/s | Speed ratio (ref/ours) |
 |---|---:|---:|---:|---:|---:|
-| compressible-1024 | 0.708 | 0.225 | 1378.66 | 4337.09 | 3.1x |
-| random-1024 | 0.079 | 0.084 | 12397.35 | 11622.41 | 0.9x |
-| compressible-16384 | 10.477 | 1.259 | 1491.34 | 12414.92 | 8.3x |
-| random-16384 | 5.855 | 5.857 | 2668.53 | 2667.68 | 1.0x |
-| compressible-131072 | 83.373 | 10.153 | 1499.29 | 12311.15 | 8.2x |
-| random-131072 | 4.762 | 4.616 | 26251.04 | 27079.98 | 1.0x |
+| compressible-1024 | 0.142 | 0.145 | 6899.09 | 6736.06 | 1.0x |
+| random-1024 | 0.081 | 0.082 | 12098.81 | 11841.67 | 1.0x |
+| compressible-16384 | 0.522 | 1.254 | 29951.32 | 12456.97 | 0.4x |
+| random-16384 | 0.550 | 0.554 | 28411.12 | 28208.45 | 1.0x |
+| compressible-131072 | 4.227 | 10.205 | 29572.05 | 12249.39 | 0.4x |
+| random-131072 | 52.826 | 52.786 | 2366.28 | 2368.05 | 1.0x |
 
 ### Notes
 - These numbers are from the current CI/container environment and are mainly for relative comparison between implementations.

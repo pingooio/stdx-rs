@@ -157,10 +157,32 @@ pub fn decompress_to_buffer(source: &[u8], destination: &mut [u8]) -> Result<usi
             return Err(Error::DestinationTooSmall);
         }
 
-        for _ in 0..match_length {
-            let byte = destination[dest_pos - offset];
-            destination[dest_pos] = byte;
-            dest_pos += 1;
+        copy_match(destination, dest_pos, offset, match_length);
+        dest_pos = match_end;
+    }
+
+    fn copy_match(destination: &mut [u8], dest_pos: usize, offset: usize, match_length: usize) {
+        if offset == 1 {
+            let repeated = destination[dest_pos - 1];
+            destination[dest_pos..dest_pos + match_length].fill(repeated);
+            return;
+        }
+
+        if offset >= match_length {
+            let match_start = dest_pos - offset;
+            let (prefix, suffix) = destination.split_at_mut(dest_pos);
+            suffix[..match_length].copy_from_slice(&prefix[match_start..match_start + match_length]);
+            return;
+        }
+
+        let match_start = dest_pos - offset;
+        destination.copy_within(match_start..match_start + offset, dest_pos);
+
+        let mut copied = offset;
+        while copied < match_length {
+            let chunk = core::cmp::min(match_length - copied, copied);
+            destination.copy_within(dest_pos..dest_pos + chunk, dest_pos + copied);
+            copied += chunk;
         }
     }
 
