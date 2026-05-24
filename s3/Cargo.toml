@@ -3,6 +3,9 @@ name = "s3"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+path = "src/s3.rs"
+
 [features]
 default = ["reqwest"]
 reqwest = ["dep:reqwest"]

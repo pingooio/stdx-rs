@@ -6,14 +6,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt};
-
 use hmac::{Hmac, Mac};
-use quick_xml::de::from_str;
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use url::Url;
 
-const EMPTY_PAYLOAD_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+pub(crate) const EMPTY_PAYLOAD_SHA256: &str =
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 #[derive(Debug, Clone)]
 pub struct StaticCredentials<'a> {
@@ -40,18 +38,18 @@ pub struct ClientConfig<'a> {
 }
 
 #[derive(Debug, Clone)]
-struct OwnedCredentials {
-    access_key_id: String,
-    secret_access_key: String,
-    session_token: Option<String>,
+pub(crate) struct OwnedCredentials {
+    pub(crate) access_key_id: String,
+    pub(crate) secret_access_key: String,
+    pub(crate) session_token: Option<String>,
 }
 
 #[derive(Debug)]
 pub struct Client<H: HttpClient> {
-    endpoint: Url,
-    region: String,
-    credentials: OwnedCredentials,
-    http: H,
+    pub(crate) endpoint: Url,
+    pub(crate) region: String,
+    pub(crate) credentials: OwnedCredentials,
+    pub(crate) http: H,
 }
 
 #[derive(Debug)]
@@ -104,7 +102,7 @@ pub enum HttpMethod {
 }
 
 impl HttpMethod {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             HttpMethod::Get => "GET",
             HttpMethod::Put => "PUT",
@@ -182,56 +180,6 @@ impl HttpClient for ReqwestHttpClient {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct CompletedPart {
-    pub part_number: u32,
-    pub e_tag: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct UploadPartOutput {
-    pub e_tag: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct CompleteMultipartUploadOutput {
-    pub e_tag: Option<String>,
-}
-
-pub struct GetObjectOutput {
-    pub body: ByteStream,
-    pub e_tag: Option<String>,
-    pub content_type: Option<String>,
-    pub content_length: Option<u64>,
-}
-
-#[derive(Debug, Clone)]
-pub struct HeadObjectOutput {
-    pub e_tag: Option<String>,
-    pub content_type: Option<String>,
-    pub content_length: Option<u64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ListObjectsOutput {
-    pub name: String,
-    pub prefix: Option<String>,
-    pub key_count: Option<u64>,
-    pub max_keys: Option<u64>,
-    pub is_truncated: bool,
-    pub next_continuation_token: Option<String>,
-    pub contents: Vec<ListObject>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ListObject {
-    pub key: String,
-    pub last_modified: Option<String>,
-    pub e_tag: Option<String>,
-    pub size: Option<u64>,
-    pub storage_class: Option<String>,
-}
-
 impl<H: HttpClient> Client<H> {
     pub fn with_http_client(config: &ClientConfig<'_>, http: H) -> Result<Self, Error> {
         if config.endpoint.trim().is_empty() {
@@ -265,151 +213,7 @@ impl<H: HttpClient> Client<H> {
         })
     }
 
-    pub async fn create_bucket(&self, bucket: &str) -> Result<(), Error> {
-        let canonical_uri = canonical_bucket_uri(bucket);
-        let response = self.execute(HttpMethod::Put, &canonical_uri, "", b"").await?;
-        consume_empty(response)
-    }
-
-    pub async fn put_object(&self, bucket: &str, key: &str, body: &[u8]) -> Result<(), Error> {
-        let canonical_uri = canonical_object_uri(bucket, key);
-        let response = self.execute(HttpMethod::Put, &canonical_uri, "", body).await?;
-        consume_empty(response)
-    }
-
-    pub async fn get_object(&self, bucket: &str, key: &str) -> Result<GetObjectOutput, Error> {
-        let canonical_uri = canonical_object_uri(bucket, key);
-        let response = self.execute(HttpMethod::Get, &canonical_uri, "", b"").await?;
-        let e_tag = header_to_string(&response, "etag");
-        let content_type = header_to_string(&response, "content-type");
-        let content_length = header_to_u64(&response, "content-length");
-
-        Ok(GetObjectOutput {
-            body: response.body,
-            e_tag,
-            content_type,
-            content_length,
-        })
-    }
-
-    pub async fn head_object(&self, bucket: &str, key: &str) -> Result<HeadObjectOutput, Error> {
-        let canonical_uri = canonical_object_uri(bucket, key);
-        let response = self.execute(HttpMethod::Head, &canonical_uri, "", b"").await?;
-
-        Ok(HeadObjectOutput {
-            e_tag: header_to_string(&response, "etag"),
-            content_type: header_to_string(&response, "content-type"),
-            content_length: header_to_u64(&response, "content-length"),
-        })
-    }
-
-    pub async fn delete_object(&self, bucket: &str, key: &str) -> Result<(), Error> {
-        let canonical_uri = canonical_object_uri(bucket, key);
-        let response = self.execute(HttpMethod::Delete, &canonical_uri, "", b"").await?;
-        consume_empty(response)
-    }
-
-    pub async fn list_objects(
-        &self,
-        bucket: &str,
-        prefix: Option<&str>,
-        continuation_token: Option<&str>,
-        max_keys: Option<u32>,
-    ) -> Result<ListObjectsOutput, Error> {
-        let canonical_uri = canonical_bucket_uri(bucket);
-
-        let mut params = BTreeMap::new();
-        params.insert("list-type".to_string(), "2".to_string());
-        if let Some(prefix) = prefix {
-            params.insert("prefix".to_string(), prefix.to_string());
-        }
-        if let Some(token) = continuation_token {
-            params.insert("continuation-token".to_string(), token.to_string());
-        }
-        if let Some(max_keys) = max_keys {
-            params.insert("max-keys".to_string(), max_keys.to_string());
-        }
-
-        let canonical_query = canonical_query_string(&params);
-        let response = self.execute(HttpMethod::Get, &canonical_uri, &canonical_query, b"").await?;
-        let body = bytes_to_string(collect_body(response.body).await?)?;
-        let xml: ListBucketResultXml = from_str(&body)?;
-
-        Ok(ListObjectsOutput {
-            name: xml.name,
-            prefix: xml.prefix,
-            key_count: xml.key_count,
-            max_keys: xml.max_keys,
-            is_truncated: xml.is_truncated,
-            next_continuation_token: xml.next_continuation_token,
-            contents: xml
-                .contents
-                .into_iter()
-                .map(|entry| ListObject {
-                    key: entry.key,
-                    last_modified: entry.last_modified,
-                    e_tag: entry.e_tag,
-                    size: entry.size,
-                    storage_class: entry.storage_class,
-                })
-                .collect(),
-        })
-    }
-
-    pub async fn create_multipart_upload(&self, bucket: &str, key: &str) -> Result<String, Error> {
-        let canonical_uri = canonical_object_uri(bucket, key);
-        let response = self.execute(HttpMethod::Post, &canonical_uri, "uploads", b"").await?;
-        let xml_text = bytes_to_string(collect_body(response.body).await?)?;
-        let xml: InitiateMultipartUploadResultXml = from_str(&xml_text)?;
-        Ok(xml.upload_id)
-    }
-
-    pub async fn upload_part(
-        &self,
-        bucket: &str,
-        key: &str,
-        upload_id: &str,
-        part_number: u32,
-        body: &[u8],
-    ) -> Result<UploadPartOutput, Error> {
-        let canonical_uri = canonical_object_uri(bucket, key);
-        let mut params = BTreeMap::new();
-        params.insert("partNumber".to_string(), part_number.to_string());
-        params.insert("uploadId".to_string(), upload_id.to_string());
-        let canonical_query = canonical_query_string(&params);
-        let response = self.execute(HttpMethod::Put, &canonical_uri, &canonical_query, body).await?;
-        let e_tag = header_to_string(&response, "etag");
-        Ok(UploadPartOutput { e_tag })
-    }
-
-    pub async fn complete_multipart_upload(
-        &self,
-        bucket: &str,
-        key: &str,
-        upload_id: &str,
-        parts: &[CompletedPart],
-    ) -> Result<CompleteMultipartUploadOutput, Error> {
-        let canonical_uri = canonical_object_uri(bucket, key);
-        let mut params = BTreeMap::new();
-        params.insert("uploadId".to_string(), upload_id.to_string());
-        let canonical_query = canonical_query_string(&params);
-        let xml_body = build_complete_multipart_body(parts);
-        let response = self.execute(HttpMethod::Post, &canonical_uri, &canonical_query, &xml_body).await?;
-        let xml_text = bytes_to_string(collect_body(response.body).await?)?;
-        let xml: CompleteMultipartUploadResultXml = from_str(&xml_text)?;
-        Ok(CompleteMultipartUploadOutput { e_tag: xml.e_tag })
-    }
-
-    pub async fn abort_multipart_upload(&self, bucket: &str, key: &str, upload_id: &str) -> Result<(), Error> {
-        let canonical_uri = canonical_object_uri(bucket, key);
-        let mut params = BTreeMap::new();
-        params.insert("uploadId".to_string(), upload_id.to_string());
-        let canonical_query = canonical_query_string(&params);
-        let response = self.execute(HttpMethod::Delete, &canonical_uri, &canonical_query, b"").await?;
-        consume_empty(response)
-    }
-
-    async fn execute(
+    pub(crate) async fn execute(
         &self,
         method: HttpMethod,
         canonical_uri: &str,
@@ -520,23 +324,23 @@ impl Client<ReqwestHttpClient> {
     }
 }
 
-fn consume_empty(_response: HttpResponseData) -> Result<(), Error> {
+pub(crate) fn consume_empty(_response: HttpResponseData) -> Result<(), Error> {
     Ok(())
 }
 
-fn canonical_bucket_uri(bucket: &str) -> String {
+pub(crate) fn canonical_bucket_uri(bucket: &str) -> String {
     canonical_uri(&format!("/{bucket}"))
 }
 
-fn canonical_object_uri(bucket: &str, key: &str) -> String {
+pub(crate) fn canonical_object_uri(bucket: &str, key: &str) -> String {
     canonical_uri(&format!("/{bucket}/{key}"))
 }
 
-fn canonical_uri(path: &str) -> String {
+pub(crate) fn canonical_uri(path: &str) -> String {
     path.split('/').map(percent_encode).collect::<Vec<_>>().join("/")
 }
 
-fn canonical_query_string(params: &BTreeMap<String, String>) -> String {
+pub(crate) fn canonical_query_string(params: &BTreeMap<String, String>) -> String {
     params
         .iter()
         .map(|(k, v)| format!("{}={}", percent_encode(k), percent_encode(v)))
@@ -552,7 +356,7 @@ fn endpoint_host(url: &Url) -> String {
     }
 }
 
-fn percent_encode(input: &str) -> String {
+pub(crate) fn percent_encode(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     for &b in input.as_bytes() {
         if b.is_ascii_uppercase()
@@ -578,7 +382,7 @@ fn hex_nibble_upper(value: u8) -> char {
     }
 }
 
-fn hex_lower(bytes: &[u8]) -> String {
+pub(crate) fn hex_lower(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
     for b in bytes {
@@ -596,7 +400,7 @@ fn sign_v4(secret_access_key: &str, date: &str, region: &str, string_to_sign: &s
     hmac_sha256(&k_signing, string_to_sign.as_bytes())
 }
 
-fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
+pub(crate) fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts any key length for SHA-256");
     mac.update(data);
     let bytes = mac.finalize().into_bytes();
@@ -605,7 +409,7 @@ fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     out
 }
 
-fn sha256(data: &[u8]) -> [u8; 32] {
+pub(crate) fn sha256(data: &[u8]) -> [u8; 32] {
     let digest = Sha256::digest(data);
     let mut out = [0u8; 32];
     out.copy_from_slice(&digest);
@@ -645,7 +449,7 @@ fn civil_from_days(days_since_unix_epoch: i64) -> (i32, i64, i64) {
     (year as i32, month, day)
 }
 
-async fn collect_body(mut stream: ByteStream) -> Result<Vec<u8>, Error> {
+pub(crate) async fn collect_body(mut stream: ByteStream) -> Result<Vec<u8>, Error> {
     let mut out = Vec::new();
     while let Some(chunk) = stream.next().await {
         let bytes = chunk.map_err(|e| Error::Http(e.to_string()))?;
@@ -654,80 +458,16 @@ async fn collect_body(mut stream: ByteStream) -> Result<Vec<u8>, Error> {
     Ok(out)
 }
 
-fn bytes_to_string(bytes: Vec<u8>) -> Result<String, Error> {
+pub(crate) fn bytes_to_string(bytes: Vec<u8>) -> Result<String, Error> {
     String::from_utf8(bytes).map_err(|e| Error::Http(e.to_string()))
 }
 
-fn header_to_string(response: &HttpResponseData, name: &str) -> Option<String> {
+pub(crate) fn header_to_string(response: &HttpResponseData, name: &str) -> Option<String> {
     response.header(name).map(ToString::to_string)
 }
 
-fn header_to_u64(response: &HttpResponseData, name: &str) -> Option<u64> {
+pub(crate) fn header_to_u64(response: &HttpResponseData, name: &str) -> Option<u64> {
     response.header(name).and_then(|s| s.parse::<u64>().ok())
-}
-
-fn build_complete_multipart_body(parts: &[CompletedPart]) -> Vec<u8> {
-    let mut xml = String::from("<CompleteMultipartUpload>");
-    for part in parts {
-        xml.push_str("<Part><PartNumber>");
-        xml.push_str(&part.part_number.to_string());
-        xml.push_str("</PartNumber><ETag>");
-        xml.push_str(&xml_escape(&part.e_tag));
-        xml.push_str("</ETag></Part>");
-    }
-    xml.push_str("</CompleteMultipartUpload>");
-    xml.into_bytes()
-}
-
-fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename = "ListBucketResult")]
-struct ListBucketResultXml {
-    #[serde(rename = "Name")]
-    name: String,
-    #[serde(rename = "Prefix")]
-    prefix: Option<String>,
-    #[serde(rename = "KeyCount")]
-    key_count: Option<u64>,
-    #[serde(rename = "MaxKeys")]
-    max_keys: Option<u64>,
-    #[serde(rename = "IsTruncated")]
-    is_truncated: bool,
-    #[serde(rename = "NextContinuationToken")]
-    next_continuation_token: Option<String>,
-    #[serde(rename = "Contents", default)]
-    contents: Vec<ObjectXml>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ObjectXml {
-    #[serde(rename = "Key")]
-    key: String,
-    #[serde(rename = "LastModified")]
-    last_modified: Option<String>,
-    #[serde(rename = "ETag")]
-    e_tag: Option<String>,
-    #[serde(rename = "Size")]
-    size: Option<u64>,
-    #[serde(rename = "StorageClass")]
-    storage_class: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename = "InitiateMultipartUploadResult")]
-struct InitiateMultipartUploadResultXml {
-    #[serde(rename = "UploadId")]
-    upload_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename = "CompleteMultipartUploadResult")]
-struct CompleteMultipartUploadResultXml {
-    #[serde(rename = "ETag")]
-    e_tag: Option<String>,
 }
 
 #[cfg(test)]
@@ -784,35 +524,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_list_objects_v2_xml() {
-        let xml = r#"
-<ListBucketResult>
-  <Name>my-bucket</Name>
-  <Prefix>photos/</Prefix>
-  <KeyCount>1</KeyCount>
-  <MaxKeys>1000</MaxKeys>
-  <IsTruncated>false</IsTruncated>
-  <Contents>
-    <Key>photos/a.jpg</Key>
-    <LastModified>2026-01-01T00:00:00.000Z</LastModified>
-    <ETag>\"abc\"</ETag>
-    <Size>42</Size>
-    <StorageClass>STANDARD</StorageClass>
-  </Contents>
-</ListBucketResult>
-"#;
-
-        let parsed: ListBucketResultXml = from_str(xml).unwrap();
-        assert_eq!(parsed.name, "my-bucket");
-        assert_eq!(parsed.prefix.as_deref(), Some("photos/"));
-        assert_eq!(parsed.key_count, Some(1));
-        assert_eq!(parsed.max_keys, Some(1000));
-        assert!(!parsed.is_truncated);
-        assert_eq!(parsed.contents.len(), 1);
-        assert_eq!(parsed.contents[0].key, "photos/a.jpg");
-    }
-
-    #[test]
     fn amz_datetime_format_works() {
         let ts = UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         let (date, datetime) = amz_datetime(ts).unwrap();
@@ -846,6 +557,11 @@ mod tests {
     }
 
     #[test]
+    fn empty_payload_sha256_constant_is_correct() {
+        assert_eq!(EMPTY_PAYLOAD_SHA256, hex_lower(&sha256(b"")));
+    }
+
+    #[test]
     fn exposes_supported_actions_list() {
         let actions = [
             "CreateBucket",
@@ -856,10 +572,5 @@ mod tests {
             "ListObjects",
         ];
         assert_eq!(actions.len(), 6);
-    }
-
-    #[test]
-    fn empty_payload_sha256_constant_is_correct() {
-        assert_eq!(EMPTY_PAYLOAD_SHA256, hex_lower(&sha256(b"")));
     }
 }
