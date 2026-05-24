@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 use std::fmt;
-use std::io::Read;
+use std::future::Future;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use bytes::Bytes;
 
 use hmac::{Hmac, Mac};
 use quick_xml::de::from_str;
@@ -73,12 +75,6 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-impl From<std::io::Error> for Error {
-    fn from(value: std::io::Error) -> Self {
-        Self::Http(value.to_string())
-    }
-}
-
 impl From<std::time::SystemTimeError> for Error {
     fn from(value: std::time::SystemTimeError) -> Self {
         Self::Time(value)
@@ -122,33 +118,44 @@ pub struct HttpRequest {
     pub body: Vec<u8>,
 }
 
-pub trait HttpResponse: Read + Send {
-    fn status_code(&self) -> u16;
-    fn header(&self, name: &str) -> Option<String>;
+#[derive(Debug)]
+pub struct HttpResponseData {
+    pub status_code: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Bytes,
+}
+
+impl HttpResponseData {
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
 }
 
 pub trait HttpClient: Send + Sync {
-    fn send(&self, request: HttpRequest) -> Result<Box<dyn HttpResponse>, HttpError>;
+    fn send(&self, request: HttpRequest) -> impl Future<Output = Result<HttpResponseData, HttpError>> + Send + '_;
 }
 
 #[cfg(feature = "reqwest")]
 #[derive(Debug, Default, Clone)]
 pub struct ReqwestHttpClient {
-    inner: reqwest::blocking::Client,
+    inner: reqwest::Client,
 }
 
 #[cfg(feature = "reqwest")]
 impl ReqwestHttpClient {
     pub fn new() -> Self {
         Self {
-            inner: reqwest::blocking::Client::new(),
+            inner: reqwest::Client::new(),
         }
     }
 }
 
 #[cfg(feature = "reqwest")]
 impl HttpClient for ReqwestHttpClient {
-    fn send(&self, request: HttpRequest) -> Result<Box<dyn HttpResponse>, HttpError> {
+    async fn send(&self, request: HttpRequest) -> Result<HttpResponseData, HttpError> {
         let method = reqwest::Method::from_bytes(request.method.as_str().as_bytes())?;
         let mut req = self.inner.request(method, &request.url);
         for (name, value) in request.headers {
@@ -157,36 +164,17 @@ impl HttpClient for ReqwestHttpClient {
         if !request.body.is_empty() {
             req = req.body(request.body);
         }
-        let response = req.send()?;
-        Ok(Box::new(ReqwestHttpResponse { inner: response }))
-    }
-}
-
-#[cfg(feature = "reqwest")]
-#[derive(Debug)]
-struct ReqwestHttpResponse {
-    inner: reqwest::blocking::Response,
-}
-
-#[cfg(feature = "reqwest")]
-impl Read for ReqwestHttpResponse {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.inner.read(buf)
-    }
-}
-
-#[cfg(feature = "reqwest")]
-impl HttpResponse for ReqwestHttpResponse {
-    fn status_code(&self) -> u16 {
-        self.inner.status().as_u16()
-    }
-
-    fn header(&self, name: &str) -> Option<String> {
-        self.inner
+        let response = req.send().await?;
+        let status_code = response.status().as_u16();
+        let headers = response
             .headers()
-            .get(name)
-            .and_then(|v| v.to_str().ok())
-            .map(ToString::to_string)
+            .iter()
+            .filter_map(|(name, value)| {
+                value.to_str().ok().map(|v| (name.as_str().to_string(), v.to_string()))
+            })
+            .collect();
+        let body = response.bytes().await?;
+        Ok(HttpResponseData { status_code, headers, body })
     }
 }
 
@@ -207,7 +195,7 @@ pub struct CompleteMultipartUploadOutput {
 }
 
 pub struct GetObjectOutput {
-    pub body: Box<dyn Read + Send>,
+    pub body: Bytes,
     pub e_tag: Option<String>,
     pub content_type: Option<String>,
     pub content_length: Option<u64>,
@@ -273,51 +261,51 @@ impl<H: HttpClient> Client<H> {
         })
     }
 
-    pub fn create_bucket(&self, bucket: &str) -> Result<(), Error> {
+    pub async fn create_bucket(&self, bucket: &str) -> Result<(), Error> {
         let canonical_uri = canonical_bucket_uri(bucket);
-        let response = self.execute(HttpMethod::Put, &canonical_uri, "", b"")?;
+        let response = self.execute(HttpMethod::Put, &canonical_uri, "", b"").await?;
         consume_empty(response)
     }
 
-    pub fn put_object(&self, bucket: &str, key: &str, body: &[u8]) -> Result<(), Error> {
+    pub async fn put_object(&self, bucket: &str, key: &str, body: &[u8]) -> Result<(), Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
-        let response = self.execute(HttpMethod::Put, &canonical_uri, "", body)?;
+        let response = self.execute(HttpMethod::Put, &canonical_uri, "", body).await?;
         consume_empty(response)
     }
 
-    pub fn get_object(&self, bucket: &str, key: &str) -> Result<GetObjectOutput, Error> {
+    pub async fn get_object(&self, bucket: &str, key: &str) -> Result<GetObjectOutput, Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
-        let response = self.execute(HttpMethod::Get, &canonical_uri, "", b"")?;
-        let e_tag = header_to_string(&*response, "etag");
-        let content_type = header_to_string(&*response, "content-type");
-        let content_length = header_to_u64(&*response, "content-length");
+        let response = self.execute(HttpMethod::Get, &canonical_uri, "", b"").await?;
+        let e_tag = header_to_string(&response, "etag");
+        let content_type = header_to_string(&response, "content-type");
+        let content_length = header_to_u64(&response, "content-length");
 
         Ok(GetObjectOutput {
-            body: response,
+            body: response.body,
             e_tag,
             content_type,
             content_length,
         })
     }
 
-    pub fn head_object(&self, bucket: &str, key: &str) -> Result<HeadObjectOutput, Error> {
+    pub async fn head_object(&self, bucket: &str, key: &str) -> Result<HeadObjectOutput, Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
-        let response = self.execute(HttpMethod::Head, &canonical_uri, "", b"")?;
+        let response = self.execute(HttpMethod::Head, &canonical_uri, "", b"").await?;
 
         Ok(HeadObjectOutput {
-            e_tag: header_to_string(&*response, "etag"),
-            content_type: header_to_string(&*response, "content-type"),
-            content_length: header_to_u64(&*response, "content-length"),
+            e_tag: header_to_string(&response, "etag"),
+            content_type: header_to_string(&response, "content-type"),
+            content_length: header_to_u64(&response, "content-length"),
         })
     }
 
-    pub fn delete_object(&self, bucket: &str, key: &str) -> Result<(), Error> {
+    pub async fn delete_object(&self, bucket: &str, key: &str) -> Result<(), Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
-        let response = self.execute(HttpMethod::Delete, &canonical_uri, "", b"")?;
+        let response = self.execute(HttpMethod::Delete, &canonical_uri, "", b"").await?;
         consume_empty(response)
     }
 
-    pub fn list_objects(
+    pub async fn list_objects(
         &self,
         bucket: &str,
         prefix: Option<&str>,
@@ -339,8 +327,8 @@ impl<H: HttpClient> Client<H> {
         }
 
         let canonical_query = canonical_query_string(&params);
-        let mut response = self.execute(HttpMethod::Get, &canonical_uri, &canonical_query, b"")?;
-        let body = read_all_to_string(&mut *response)?;
+        let response = self.execute(HttpMethod::Get, &canonical_uri, &canonical_query, b"").await?;
+        let body = bytes_to_string(response.body)?;
         let xml: ListBucketResultXml = from_str(&body)?;
 
         Ok(ListObjectsOutput {
@@ -364,15 +352,15 @@ impl<H: HttpClient> Client<H> {
         })
     }
 
-    pub fn create_multipart_upload(&self, bucket: &str, key: &str) -> Result<String, Error> {
+    pub async fn create_multipart_upload(&self, bucket: &str, key: &str) -> Result<String, Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
-        let mut response = self.execute(HttpMethod::Post, &canonical_uri, "uploads", b"")?;
-        let xml_text = read_all_to_string(&mut *response)?;
+        let response = self.execute(HttpMethod::Post, &canonical_uri, "uploads", b"").await?;
+        let xml_text = bytes_to_string(response.body)?;
         let xml: InitiateMultipartUploadResultXml = from_str(&xml_text)?;
         Ok(xml.upload_id)
     }
 
-    pub fn upload_part(
+    pub async fn upload_part(
         &self,
         bucket: &str,
         key: &str,
@@ -385,12 +373,12 @@ impl<H: HttpClient> Client<H> {
         params.insert("partNumber".to_string(), part_number.to_string());
         params.insert("uploadId".to_string(), upload_id.to_string());
         let canonical_query = canonical_query_string(&params);
-        let response = self.execute(HttpMethod::Put, &canonical_uri, &canonical_query, body)?;
-        let e_tag = header_to_string(&*response, "etag");
+        let response = self.execute(HttpMethod::Put, &canonical_uri, &canonical_query, body).await?;
+        let e_tag = header_to_string(&response, "etag");
         Ok(UploadPartOutput { e_tag })
     }
 
-    pub fn complete_multipart_upload(
+    pub async fn complete_multipart_upload(
         &self,
         bucket: &str,
         key: &str,
@@ -402,28 +390,28 @@ impl<H: HttpClient> Client<H> {
         params.insert("uploadId".to_string(), upload_id.to_string());
         let canonical_query = canonical_query_string(&params);
         let xml_body = build_complete_multipart_body(parts);
-        let mut response = self.execute(HttpMethod::Post, &canonical_uri, &canonical_query, &xml_body)?;
-        let xml_text = read_all_to_string(&mut *response)?;
+        let response = self.execute(HttpMethod::Post, &canonical_uri, &canonical_query, &xml_body).await?;
+        let xml_text = bytes_to_string(response.body)?;
         let xml: CompleteMultipartUploadResultXml = from_str(&xml_text)?;
         Ok(CompleteMultipartUploadOutput { e_tag: xml.e_tag })
     }
 
-    pub fn abort_multipart_upload(&self, bucket: &str, key: &str, upload_id: &str) -> Result<(), Error> {
+    pub async fn abort_multipart_upload(&self, bucket: &str, key: &str, upload_id: &str) -> Result<(), Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
         let mut params = BTreeMap::new();
         params.insert("uploadId".to_string(), upload_id.to_string());
         let canonical_query = canonical_query_string(&params);
-        let response = self.execute(HttpMethod::Delete, &canonical_uri, &canonical_query, b"")?;
+        let response = self.execute(HttpMethod::Delete, &canonical_uri, &canonical_query, b"").await?;
         consume_empty(response)
     }
 
-    fn execute(
+    async fn execute(
         &self,
         method: HttpMethod,
         canonical_uri: &str,
         canonical_query: &str,
         body: &[u8],
-    ) -> Result<Box<dyn HttpResponse>, Error> {
+    ) -> Result<HttpResponseData, Error> {
         let (date, amz_datetime) = amz_datetime(SystemTime::now())?;
         let credential_scope = format!("{}/{}/s3/aws4_request", date, self.region);
 
@@ -508,14 +496,14 @@ impl<H: HttpClient> Client<H> {
             headers,
             body: body.to_vec(),
         };
-        let mut response = self.http.send(request).map_err(|err| Error::Http(err.to_string()))?;
+        let response = self.http.send(request).await.map_err(|err| Error::Http(err.to_string()))?;
 
-        if (200..300).contains(&response.status_code()) {
+        if (200..300).contains(&response.status_code) {
             return Ok(response);
         }
 
-        let status = response.status_code();
-        let body = read_all_to_string(&mut *response).unwrap_or_default();
+        let status = response.status_code;
+        let body = String::from_utf8_lossy(&response.body).into_owned();
         Err(Error::Api { status, body })
     }
 }
@@ -527,14 +515,13 @@ impl Client<ReqwestHttpClient> {
     }
 }
 
-fn consume_empty(response: Box<dyn HttpResponse>) -> Result<(), Error> {
-    if (200..300).contains(&response.status_code()) {
+fn consume_empty(response: HttpResponseData) -> Result<(), Error> {
+    if (200..300).contains(&response.status_code) {
         return Ok(());
     }
 
-    let status = response.status_code();
-    let mut response = response;
-    let body = read_all_to_string(&mut *response).unwrap_or_default();
+    let status = response.status_code;
+    let body = String::from_utf8_lossy(&response.body).into_owned();
     Err(Error::Api { status, body })
 }
 
@@ -659,17 +646,15 @@ fn civil_from_days(days_since_unix_epoch: i64) -> (i32, i64, i64) {
     (year as i32, month, day)
 }
 
-fn read_all_to_string(reader: &mut dyn Read) -> Result<String, Error> {
-    let mut body = String::new();
-    reader.read_to_string(&mut body)?;
-    Ok(body)
+fn bytes_to_string(bytes: Bytes) -> Result<String, Error> {
+    String::from_utf8(bytes.into()).map_err(|e| Error::Http(e.to_string()))
 }
 
-fn header_to_string(response: &dyn HttpResponse, name: &str) -> Option<String> {
-    response.header(name)
+fn header_to_string(response: &HttpResponseData, name: &str) -> Option<String> {
+    response.header(name).map(ToString::to_string)
 }
 
-fn header_to_u64(response: &dyn HttpResponse, name: &str) -> Option<u64> {
+fn header_to_u64(response: &HttpResponseData, name: &str) -> Option<u64> {
     response.header(name).and_then(|s| s.parse::<u64>().ok())
 }
 
@@ -740,38 +725,17 @@ struct CompleteMultipartUploadResultXml {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Cursor;
 
     #[derive(Default)]
     struct NoopHttpClient;
 
-    struct DummyHttpResponse {
-        status: u16,
-        body: Cursor<Vec<u8>>,
-    }
-
-    impl Read for DummyHttpResponse {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            self.body.read(buf)
-        }
-    }
-
-    impl HttpResponse for DummyHttpResponse {
-        fn status_code(&self) -> u16 {
-            self.status
-        }
-
-        fn header(&self, _name: &str) -> Option<String> {
-            None
-        }
-    }
-
     impl HttpClient for NoopHttpClient {
-        fn send(&self, _request: HttpRequest) -> Result<Box<dyn HttpResponse>, HttpError> {
-            Ok(Box::new(DummyHttpResponse {
-                status: 200,
-                body: Cursor::new(Vec::new()),
-            }))
+        async fn send(&self, _request: HttpRequest) -> Result<HttpResponseData, HttpError> {
+            Ok(HttpResponseData {
+                status_code: 200,
+                headers: Vec::new(),
+                body: Bytes::new(),
+            })
         }
     }
 

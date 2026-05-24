@@ -1,6 +1,5 @@
 #![cfg(feature = "reqwest")]
 
-use std::io::Read;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use s3::{Client, ClientConfig, CompletedPart, Error, ReqwestHttpClient, StaticCredentials};
@@ -37,8 +36,8 @@ fn test_client() -> Client<ReqwestHttpClient> {
     Client::new(&cfg).expect("failed to build s3 client")
 }
 
-#[test]
-fn minio_object_lifecycle() {
+#[tokio::test]
+async fn minio_object_lifecycle() {
     if !integration_enabled() {
         eprintln!("skipping integration test (set S3_RUN_INTEGRATION=1)");
         return;
@@ -47,7 +46,7 @@ fn minio_object_lifecycle() {
     let client = test_client();
     let bucket = env_or_default("S3_TEST_BUCKET", "stdx-rs-s3-integration");
 
-    match client.create_bucket(&bucket) {
+    match client.create_bucket(&bucket).await {
         Ok(()) => {}
         Err(Error::Api { status: 409, .. }) => {}
         Err(err) => panic!("create_bucket failed: {err}"),
@@ -56,28 +55,25 @@ fn minio_object_lifecycle() {
     let key = format!("integration/{}/hello.txt", unique_suffix());
     let body = b"hello from stdx s3";
 
-    client.put_object(&bucket, &key, body).expect("put_object failed");
+    client.put_object(&bucket, &key, body).await.expect("put_object failed");
 
-    let head = client.head_object(&bucket, &key).expect("head_object failed");
+    let head = client.head_object(&bucket, &key).await.expect("head_object failed");
     assert_eq!(head.content_length, Some(body.len() as u64));
 
-    let mut got = client.get_object(&bucket, &key).expect("get_object failed");
-    let mut got_body = Vec::new();
-    got.body
-        .read_to_end(&mut got_body)
-        .expect("failed reading object body stream");
-    assert_eq!(got_body, body);
+    let got = client.get_object(&bucket, &key).await.expect("get_object failed");
+    assert_eq!(got.body.as_ref(), body.as_ref());
 
     let listed = client
         .list_objects(&bucket, Some("integration/"), None, Some(1000))
+        .await
         .expect("list_objects failed");
     assert!(listed.contents.iter().any(|obj| obj.key == key));
 
-    client.delete_object(&bucket, &key).expect("delete_object failed");
+    client.delete_object(&bucket, &key).await.expect("delete_object failed");
 }
 
-#[test]
-fn minio_multipart_upload() {
+#[tokio::test]
+async fn minio_multipart_upload() {
     if !integration_enabled() {
         eprintln!("skipping integration test (set S3_RUN_INTEGRATION=1)");
         return;
@@ -86,7 +82,7 @@ fn minio_multipart_upload() {
     let client = test_client();
     let bucket = env_or_default("S3_TEST_BUCKET", "stdx-rs-s3-integration");
 
-    match client.create_bucket(&bucket) {
+    match client.create_bucket(&bucket).await {
         Ok(()) => {}
         Err(Error::Api { status: 409, .. }) => {}
         Err(err) => panic!("create_bucket failed: {err}"),
@@ -100,13 +96,16 @@ fn minio_multipart_upload() {
 
     let upload_id = client
         .create_multipart_upload(&bucket, &key)
+        .await
         .expect("create_multipart_upload failed");
 
     let out1 = client
         .upload_part(&bucket, &key, &upload_id, 1, &part1)
+        .await
         .expect("upload_part 1 failed");
     let out2 = client
         .upload_part(&bucket, &key, &upload_id, 2, &part2)
+        .await
         .expect("upload_part 2 failed");
 
     let parts = vec![
@@ -122,26 +121,26 @@ fn minio_multipart_upload() {
 
     client
         .complete_multipart_upload(&bucket, &key, &upload_id, &parts)
+        .await
         .expect("complete_multipart_upload failed");
 
     let head = client
         .head_object(&bucket, &key)
+        .await
         .expect("head_object after multipart failed");
     let expected_len = (part1.len() + part2.len()) as u64;
     assert_eq!(head.content_length, Some(expected_len));
 
-    let mut got = client
+    let got = client
         .get_object(&bucket, &key)
+        .await
         .expect("get_object after multipart failed");
-    let mut got_body = Vec::new();
-    got.body
-        .read_to_end(&mut got_body)
-        .expect("failed reading object body stream");
     let mut expected = part1;
     expected.extend_from_slice(&part2);
-    assert_eq!(got_body, expected);
+    assert_eq!(got.body.as_ref(), expected.as_slice());
 
     client
         .delete_object(&bucket, &key)
+        .await
         .expect("delete_object after multipart failed");
 }

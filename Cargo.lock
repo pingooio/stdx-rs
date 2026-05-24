@@ -1860,7 +1860,6 @@ dependencies = [
  "base64",
  "bytes",
  "encoding_rs",
- "futures-channel",
  "futures-core",
  "futures-util",
  "h2",
@@ -2007,11 +2006,13 @@ dependencies = [
 name = "s3"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "hmac",
  "quick-xml",
  "reqwest",
  "serde",
  "sha2 0.10.9",
+ "tokio",
  "url",
 ]
 
