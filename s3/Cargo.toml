@@ -11,9 +11,11 @@ default = ["reqwest"]
 reqwest = ["dep:reqwest"]
 
 [dependencies]
+base64 = "0.22"
 bytes = { workspace = true }
 futures-util = { workspace = true }
 hmac = "0.12.1"
+md-5 = "0.10.6"
 quick-xml = { version = "0.38", features = ["serialize"] }
 reqwest = { workspace = true, features = ["stream"], optional = true }
 serde = { workspace = true, features = ["derive"] }
