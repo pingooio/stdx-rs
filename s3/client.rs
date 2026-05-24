@@ -1,8 +1,10 @@
-use std::collections::BTreeMap;
-use std::fmt;
-use std::future::Future;
-use std::pin::Pin;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    collections::BTreeMap,
+    fmt,
+    future::Future,
+    pin::Pin,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt};
@@ -10,24 +12,13 @@ use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use url::Url;
 
-pub(crate) const EMPTY_PAYLOAD_SHA256: &str =
-    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+pub(crate) const EMPTY_PAYLOAD_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 #[derive(Debug, Clone)]
 pub struct StaticCredentials<'a> {
     pub access_key_id: &'a str,
     pub secret_access_key: &'a str,
     pub session_token: &'a str,
-}
-
-impl<'a> StaticCredentials<'a> {
-    pub fn new(access_key_id: &'a str, secret_access_key: &'a str, session_token: &'a str) -> Self {
-        Self {
-            access_key_id,
-            secret_access_key,
-            session_token,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -68,7 +59,10 @@ impl fmt::Display for Error {
             Error::Http(err) => write!(f, "http error: {err}"),
             Error::Time(err) => write!(f, "time error: {err}"),
             Error::Xml(err) => write!(f, "xml error: {err}"),
-            Error::Api { status, body } => write!(f, "s3 api error (status {status}): {body}"),
+            Error::Api {
+                status,
+                body,
+            } => write!(f, "s3 api error (status {status}): {body}"),
         }
     }
 }
@@ -171,12 +165,18 @@ impl HttpClient for ReqwestHttpClient {
         let headers = response
             .headers()
             .iter()
-            .filter_map(|(name, value)| {
-                value.to_str().ok().map(|v| (name.as_str().to_string(), v.to_string()))
-            })
+            .filter_map(|(name, value)| value.to_str().ok().map(|v| (name.as_str().to_string(), v.to_string())))
             .collect();
-        let body: ByteStream = Box::pin(response.bytes_stream().map(|r| r.map_err(|e| -> HttpError { Box::new(e) })));
-        Ok(HttpResponseData { status_code, headers, body })
+        let body: ByteStream = Box::pin(
+            response
+                .bytes_stream()
+                .map(|r| r.map_err(|e| -> HttpError { Box::new(e) })),
+        );
+        Ok(HttpResponseData {
+            status_code,
+            headers,
+            body,
+        })
     }
 }
 
@@ -304,7 +304,11 @@ impl<H: HttpClient> Client<H> {
             headers,
             body: body.to_vec(),
         };
-        let response = self.http.send(request).await.map_err(|err| Error::Http(err.to_string()))?;
+        let response = self
+            .http
+            .send(request)
+            .await
+            .map_err(|err| Error::Http(err.to_string()))?;
 
         if (200..300).contains(&response.status_code) {
             return Ok(response);
@@ -313,7 +317,10 @@ impl<H: HttpClient> Client<H> {
         let status = response.status_code;
         let body_bytes = collect_body(response.body).await.unwrap_or_default();
         let body = String::from_utf8_lossy(&body_bytes).into_owned();
-        Err(Error::Api { status, body })
+        Err(Error::Api {
+            status,
+            body,
+        })
     }
 }
 
@@ -536,8 +543,12 @@ mod tests {
     fn client_config_validation_works() {
         let cfg = ClientConfig {
             endpoint: "",
-            credentials: StaticCredentials::new("a", "b", ""),
-            region: "us-east-1",
+            credentials: StaticCredentials {
+                access_key_id: "a",
+                secret_access_key: "b",
+                session_token: "",
+            },
+            region: "auto",
         };
         assert!(matches!(
             Client::with_http_client(&cfg, NoopHttpClient),
@@ -550,8 +561,8 @@ mod tests {
         let sig = sign_v4(
             "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
             "20130524",
-            "us-east-1",
-            "AWS4-HMAC-SHA256\n20130524T000000Z\n20130524/us-east-1/s3/aws4_request\nabc",
+            "auto",
+            "AWS4-HMAC-SHA256\n20130524T000000Z\n20130524/auto/s3/aws4_request\nabc",
         );
         assert_eq!(sig.len(), 32);
     }

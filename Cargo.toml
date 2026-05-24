@@ -42,6 +42,7 @@ members = [
     "pin_project_lite",
     "postmark",
     "ryu",
+    "s3",
     "scheduler",
     "serde_urlencoded",
     "serde_yaml",
@@ -49,7 +50,7 @@ members = [
     "thiserror",
     "thiserror/impl",
     "tld",
-    "unsafe_libyaml", "s3",
+    "unsafe_libyaml"
 ]
 
 [workspace.dependencies]

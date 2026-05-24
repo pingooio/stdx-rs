@@ -4,8 +4,8 @@ use quick_xml::de::from_str;
 use serde::Deserialize;
 
 use crate::client::{
-    Client, HttpClient, HttpMethod,
-    bytes_to_string, canonical_bucket_uri, canonical_query_string, collect_body, consume_empty,
+    Client, HttpClient, HttpMethod, bytes_to_string, canonical_bucket_uri, canonical_query_string, collect_body,
+    consume_empty,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,7 +57,9 @@ impl<H: HttpClient> Client<H> {
         }
 
         let canonical_query = canonical_query_string(&params);
-        let response = self.execute(HttpMethod::Get, &canonical_uri, &canonical_query, b"").await?;
+        let response = self
+            .execute(HttpMethod::Get, &canonical_uri, &canonical_query, b"")
+            .await?;
         let body = bytes_to_string(collect_body(response.body).await?)?;
         let xml: ListBucketResultXml = from_str(&body)?;
 
@@ -118,8 +120,9 @@ struct ObjectXml {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use quick_xml::de::from_str;
+
+    use super::*;
 
     #[test]
     fn parses_list_objects_v2_xml() {

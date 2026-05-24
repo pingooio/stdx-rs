@@ -31,7 +31,11 @@ fn test_client() -> Client<ReqwestHttpClient> {
 
     let cfg = ClientConfig {
         endpoint: &endpoint,
-        credentials: StaticCredentials::new(&access_key_id, &secret_access_key, &session_token),
+        credentials: StaticCredentials {
+            access_key_id: &access_key_id,
+            secret_access_key: &secret_access_key,
+            session_token: &session_token,
+        },
         region: &region,
     };
 
@@ -55,7 +59,9 @@ async fn minio_object_lifecycle() {
 
     match client.create_bucket(&bucket).await {
         Ok(()) => {}
-        Err(Error::Api { status: 409, .. }) => {}
+        Err(Error::Api {
+            status: 409, ..
+        }) => {}
         Err(err) => panic!("create_bucket failed: {err}"),
     }
 
@@ -91,7 +97,9 @@ async fn minio_multipart_upload() {
 
     match client.create_bucket(&bucket).await {
         Ok(()) => {}
-        Err(Error::Api { status: 409, .. }) => {}
+        Err(Error::Api {
+            status: 409, ..
+        }) => {}
         Err(err) => panic!("create_bucket failed: {err}"),
     }
 

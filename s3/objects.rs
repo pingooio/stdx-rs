@@ -4,9 +4,8 @@ use quick_xml::de::from_str;
 use serde::Deserialize;
 
 use crate::client::{
-    ByteStream, Client, HttpClient, HttpMethod,
-    bytes_to_string, canonical_object_uri, canonical_query_string, collect_body, consume_empty,
-    header_to_string, header_to_u64,
+    ByteStream, Client, HttpClient, HttpMethod, bytes_to_string, canonical_object_uri, canonical_query_string,
+    collect_body, consume_empty, header_to_string, header_to_u64,
 };
 
 #[derive(Debug, Clone)]
@@ -99,9 +98,13 @@ impl<H: HttpClient> Client<H> {
         params.insert("partNumber".to_string(), part_number.to_string());
         params.insert("uploadId".to_string(), upload_id.to_string());
         let canonical_query = canonical_query_string(&params);
-        let response = self.execute(HttpMethod::Put, &canonical_uri, &canonical_query, body).await?;
+        let response = self
+            .execute(HttpMethod::Put, &canonical_uri, &canonical_query, body)
+            .await?;
         let e_tag = header_to_string(&response, "etag");
-        Ok(UploadPartOutput { e_tag })
+        Ok(UploadPartOutput {
+            e_tag,
+        })
     }
 
     pub async fn complete_multipart_upload(
@@ -116,18 +119,29 @@ impl<H: HttpClient> Client<H> {
         params.insert("uploadId".to_string(), upload_id.to_string());
         let canonical_query = canonical_query_string(&params);
         let xml_body = build_complete_multipart_body(parts);
-        let response = self.execute(HttpMethod::Post, &canonical_uri, &canonical_query, &xml_body).await?;
+        let response = self
+            .execute(HttpMethod::Post, &canonical_uri, &canonical_query, &xml_body)
+            .await?;
         let xml_text = bytes_to_string(collect_body(response.body).await?)?;
         let xml: CompleteMultipartUploadResultXml = from_str(&xml_text)?;
-        Ok(CompleteMultipartUploadOutput { e_tag: xml.e_tag })
+        Ok(CompleteMultipartUploadOutput {
+            e_tag: xml.e_tag,
+        })
     }
 
-    pub async fn abort_multipart_upload(&self, bucket: &str, key: &str, upload_id: &str) -> Result<(), crate::client::Error> {
+    pub async fn abort_multipart_upload(
+        &self,
+        bucket: &str,
+        key: &str,
+        upload_id: &str,
+    ) -> Result<(), crate::client::Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
         let mut params = BTreeMap::new();
         params.insert("uploadId".to_string(), upload_id.to_string());
         let canonical_query = canonical_query_string(&params);
-        let response = self.execute(HttpMethod::Delete, &canonical_uri, &canonical_query, b"").await?;
+        let response = self
+            .execute(HttpMethod::Delete, &canonical_uri, &canonical_query, b"")
+            .await?;
         consume_empty(response)
     }
 }
