@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+hmac = "0.12.1"
 quick-xml = { version = "0.38", features = ["serialize"] }
 reqwest = { workspace = true, features = ["blocking"] }
 serde = { workspace = true, features = ["derive"] }
+sha2 = "0.10.8"
