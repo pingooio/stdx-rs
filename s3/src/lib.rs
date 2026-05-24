@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fmt;
+use std::io::Read;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use hmac::{Hmac, Mac};
@@ -91,9 +92,8 @@ impl From<quick_xml::DeError> for Error {
     }
 }
 
-#[derive(Debug, Clone)]
 pub struct GetObjectOutput {
-    pub body: Vec<u8>,
+    pub body: Box<dyn Read + Send>,
     pub e_tag: Option<String>,
     pub content_type: Option<String>,
     pub content_length: Option<u64>,
@@ -175,10 +175,9 @@ impl Client {
         let canonical_uri = canonical_object_uri(bucket, key);
         let response = self.execute(Method::GET, &canonical_uri, "", b"")?;
         let headers = response.headers().clone();
-        let body = response.bytes()?.to_vec();
 
         Ok(GetObjectOutput {
-            body,
+            body: Box::new(response),
             e_tag: header_to_string(headers.get("etag")),
             content_type: header_to_string(headers.get("content-type")),
             content_length: header_to_u64(headers.get("content-length")),

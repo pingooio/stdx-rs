@@ -1,4 +1,5 @@
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::io::Read;
 
 use s3::{Client, ClientConfig, Error, StaticCredentials};
 
@@ -62,10 +63,14 @@ fn minio_object_lifecycle() {
         .expect("head_object failed");
     assert_eq!(head.content_length, Some(body.len() as u64));
 
-    let got = client
+    let mut got = client
         .get_object(&bucket, &key)
         .expect("get_object failed");
-    assert_eq!(got.body, body);
+    let mut got_body = Vec::new();
+    got.body
+        .read_to_end(&mut got_body)
+        .expect("failed reading object body stream");
+    assert_eq!(got_body, body);
 
     let listed = client
         .list_objects(&bucket, Some("integration/"), None, Some(1000))
