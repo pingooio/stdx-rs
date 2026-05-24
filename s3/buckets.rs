@@ -28,10 +28,56 @@ pub struct ListObject {
     pub storage_class: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Bucket {
+    pub name: String,
+    pub creation_date: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListBucketsOutput {
+    pub buckets: Vec<Bucket>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GetBucketLocationOutput {
+    pub location_constraint: Option<String>,
+}
+
 impl<H: HttpClient> Client<H> {
+    pub async fn list_buckets(&self) -> Result<ListBucketsOutput, crate::client::Error> {
+        let response = self.execute(HttpMethod::Get, "/", "", b"").await?;
+        let body = bytes_to_string(collect_body(response.body).await?)?;
+        let xml: ListAllMyBucketsResultXml = from_str(&body)?;
+
+        Ok(ListBucketsOutput {
+            buckets: xml
+                .buckets
+                .bucket
+                .into_iter()
+                .map(|entry| Bucket {
+                    name: entry.name,
+                    creation_date: entry.creation_date,
+                })
+                .collect(),
+        })
+    }
+
     pub async fn create_bucket(&self, bucket: &str) -> Result<(), crate::client::Error> {
         let canonical_uri = canonical_bucket_uri(bucket);
         let response = self.execute(HttpMethod::Put, &canonical_uri, "", b"").await?;
+        consume_empty(response)
+    }
+
+    pub async fn head_bucket(&self, bucket: &str) -> Result<(), crate::client::Error> {
+        let canonical_uri = canonical_bucket_uri(bucket);
+        let response = self.execute(HttpMethod::Head, &canonical_uri, "", b"").await?;
+        consume_empty(response)
+    }
+
+    pub async fn delete_bucket(&self, bucket: &str) -> Result<(), crate::client::Error> {
+        let canonical_uri = canonical_bucket_uri(bucket);
+        let response = self.execute(HttpMethod::Delete, &canonical_uri, "", b"").await?;
         consume_empty(response)
     }
 
@@ -83,6 +129,44 @@ impl<H: HttpClient> Client<H> {
                 .collect(),
         })
     }
+
+    pub async fn get_bucket_location(&self, bucket: &str) -> Result<GetBucketLocationOutput, crate::client::Error> {
+        let canonical_uri = canonical_bucket_uri(bucket);
+        let response = self.execute(HttpMethod::Get, &canonical_uri, "location=", b"").await?;
+        let body = bytes_to_string(collect_body(response.body).await?)?;
+        let xml: LocationConstraintXml = from_str(&body)?;
+        Ok(GetBucketLocationOutput {
+            location_constraint: xml.location_constraint.and_then(|s| {
+                let trimmed = s.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            }),
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename = "ListAllMyBucketsResult")]
+struct ListAllMyBucketsResultXml {
+    #[serde(rename = "Buckets")]
+    buckets: BucketsXml,
+}
+
+#[derive(Debug, Deserialize)]
+struct BucketsXml {
+    #[serde(rename = "Bucket", default)]
+    bucket: Vec<BucketXml>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BucketXml {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "CreationDate")]
+    creation_date: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -118,6 +202,13 @@ struct ObjectXml {
     storage_class: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename = "LocationConstraint")]
+struct LocationConstraintXml {
+    #[serde(rename = "$text")]
+    location_constraint: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use quick_xml::de::from_str;
@@ -151,5 +242,38 @@ mod tests {
         assert!(!parsed.is_truncated);
         assert_eq!(parsed.contents.len(), 1);
         assert_eq!(parsed.contents[0].key, "photos/a.jpg");
+    }
+
+    #[test]
+    fn parses_list_buckets_xml() {
+        let xml = r#"
+<ListAllMyBucketsResult>
+  <Buckets>
+    <Bucket>
+      <Name>bucket-a</Name>
+      <CreationDate>2026-01-01T00:00:00.000Z</CreationDate>
+    </Bucket>
+    <Bucket>
+      <Name>bucket-b</Name>
+    </Bucket>
+  </Buckets>
+</ListAllMyBucketsResult>
+"#;
+
+        let parsed: ListAllMyBucketsResultXml = from_str(xml).unwrap();
+        assert_eq!(parsed.buckets.bucket.len(), 2);
+        assert_eq!(parsed.buckets.bucket[0].name, "bucket-a");
+        assert_eq!(
+            parsed.buckets.bucket[0].creation_date.as_deref(),
+            Some("2026-01-01T00:00:00.000Z")
+        );
+        assert_eq!(parsed.buckets.bucket[1].name, "bucket-b");
+    }
+
+    #[test]
+    fn parses_bucket_location_xml() {
+        let xml = "<LocationConstraint>auto</LocationConstraint>";
+        let parsed: LocationConstraintXml = from_str(xml).unwrap();
+        assert_eq!(parsed.location_constraint.as_deref(), Some("auto"));
     }
 }

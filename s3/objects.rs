@@ -4,8 +4,8 @@ use quick_xml::de::from_str;
 use serde::Deserialize;
 
 use crate::client::{
-    ByteStream, Client, HttpClient, HttpMethod, bytes_to_string, canonical_object_uri, canonical_query_string,
-    collect_body, consume_empty, header_to_string, header_to_u64,
+    ByteStream, Client, HttpClient, HttpMethod, bytes_to_string, canonical_bucket_uri, canonical_object_uri,
+    canonical_query_string, collect_body, consume_empty, header_to_string, header_to_u64,
 };
 
 #[derive(Debug, Clone)]
@@ -22,6 +22,60 @@ pub struct UploadPartOutput {
 #[derive(Debug, Clone)]
 pub struct CompleteMultipartUploadOutput {
     pub e_tag: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeletedObject {
+    pub key: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeleteObjectsError {
+    pub key: Option<String>,
+    pub code: Option<String>,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeleteObjectsOutput {
+    pub deleted: Vec<DeletedObject>,
+    pub errors: Vec<DeleteObjectsError>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MultipartUpload {
+    pub key: String,
+    pub upload_id: String,
+    pub initiated: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ListMultipartUploadsOutput {
+    pub uploads: Vec<MultipartUpload>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UploadedPart {
+    pub part_number: u32,
+    pub e_tag: Option<String>,
+    pub size: Option<u64>,
+    pub last_modified: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ListPartsOutput {
+    pub parts: Vec<UploadedPart>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tag {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct GetObjectTaggingOutput {
+    pub tags: Vec<Tag>,
 }
 
 pub struct GetObjectOutput {
@@ -77,6 +131,34 @@ impl<H: HttpClient> Client<H> {
         consume_empty(response)
     }
 
+    pub async fn delete_objects(
+        &self,
+        bucket: &str,
+        keys: &[&str],
+    ) -> Result<DeleteObjectsOutput, crate::client::Error> {
+        let canonical_uri = canonical_bucket_uri(bucket);
+        let body = build_delete_objects_body(keys);
+        let response = self.execute(HttpMethod::Post, &canonical_uri, "delete=", &body).await?;
+        let xml_text = bytes_to_string(collect_body(response.body).await?)?;
+        let xml: DeleteResultXml = from_str(&xml_text)?;
+        Ok(DeleteObjectsOutput {
+            deleted: xml
+                .deleted
+                .into_iter()
+                .map(|entry| DeletedObject { key: entry.key })
+                .collect(),
+            errors: xml
+                .errors
+                .into_iter()
+                .map(|entry| DeleteObjectsError {
+                    key: entry.key,
+                    code: entry.code,
+                    message: entry.message,
+                })
+                .collect(),
+        })
+    }
+
     pub async fn create_multipart_upload(&self, bucket: &str, key: &str) -> Result<String, crate::client::Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
         let response = self.execute(HttpMethod::Post, &canonical_uri, "uploads=", b"").await?;
@@ -102,9 +184,7 @@ impl<H: HttpClient> Client<H> {
             .execute(HttpMethod::Put, &canonical_uri, &canonical_query, body)
             .await?;
         let e_tag = header_to_string(&response, "etag");
-        Ok(UploadPartOutput {
-            e_tag,
-        })
+        Ok(UploadPartOutput { e_tag })
     }
 
     pub async fn complete_multipart_upload(
@@ -124,9 +204,7 @@ impl<H: HttpClient> Client<H> {
             .await?;
         let xml_text = bytes_to_string(collect_body(response.body).await?)?;
         let xml: CompleteMultipartUploadResultXml = from_str(&xml_text)?;
-        Ok(CompleteMultipartUploadOutput {
-            e_tag: xml.e_tag,
-        })
+        Ok(CompleteMultipartUploadOutput { e_tag: xml.e_tag })
     }
 
     pub async fn abort_multipart_upload(
@@ -144,6 +222,108 @@ impl<H: HttpClient> Client<H> {
             .await?;
         consume_empty(response)
     }
+
+    pub async fn list_multipart_uploads(
+        &self,
+        bucket: &str,
+    ) -> Result<ListMultipartUploadsOutput, crate::client::Error> {
+        let canonical_uri = canonical_bucket_uri(bucket);
+        let response = self.execute(HttpMethod::Get, &canonical_uri, "uploads=", b"").await?;
+        let xml_text = bytes_to_string(collect_body(response.body).await?)?;
+        let xml: ListMultipartUploadsResultXml = from_str(&xml_text)?;
+        Ok(ListMultipartUploadsOutput {
+            uploads: xml
+                .uploads
+                .into_iter()
+                .filter_map(|entry| {
+                    Some(MultipartUpload {
+                        key: entry.key?,
+                        upload_id: entry.upload_id?,
+                        initiated: entry.initiated,
+                    })
+                })
+                .collect(),
+        })
+    }
+
+    pub async fn list_parts(
+        &self,
+        bucket: &str,
+        key: &str,
+        upload_id: &str,
+    ) -> Result<ListPartsOutput, crate::client::Error> {
+        let canonical_uri = canonical_object_uri(bucket, key);
+        let mut params = BTreeMap::new();
+        params.insert("uploadId".to_string(), upload_id.to_string());
+        let canonical_query = canonical_query_string(&params);
+        let response = self
+            .execute(HttpMethod::Get, &canonical_uri, &canonical_query, b"")
+            .await?;
+        let xml_text = bytes_to_string(collect_body(response.body).await?)?;
+        let xml: ListPartsResultXml = from_str(&xml_text)?;
+        Ok(ListPartsOutput {
+            parts: xml
+                .parts
+                .into_iter()
+                .filter_map(|entry| {
+                    Some(UploadedPart {
+                        part_number: entry.part_number?,
+                        e_tag: entry.e_tag,
+                        size: entry.size,
+                        last_modified: entry.last_modified,
+                    })
+                })
+                .collect(),
+        })
+    }
+
+    pub async fn put_object_tagging(&self, bucket: &str, key: &str, tags: &[Tag]) -> Result<(), crate::client::Error> {
+        let canonical_uri = canonical_object_uri(bucket, key);
+        let body = build_tagging_body(tags);
+        let response = self.execute(HttpMethod::Put, &canonical_uri, "tagging=", &body).await?;
+        consume_empty(response)
+    }
+
+    pub async fn get_object_tagging(
+        &self,
+        bucket: &str,
+        key: &str,
+    ) -> Result<GetObjectTaggingOutput, crate::client::Error> {
+        let canonical_uri = canonical_object_uri(bucket, key);
+        let response = self.execute(HttpMethod::Get, &canonical_uri, "tagging=", b"").await?;
+        let xml_text = bytes_to_string(collect_body(response.body).await?)?;
+        let xml: TaggingXml = from_str(&xml_text)?;
+        Ok(GetObjectTaggingOutput {
+            tags: xml
+                .tag_set
+                .tag
+                .into_iter()
+                .map(|entry| Tag {
+                    key: entry.key,
+                    value: entry.value,
+                })
+                .collect(),
+        })
+    }
+
+    pub async fn delete_object_tagging(&self, bucket: &str, key: &str) -> Result<(), crate::client::Error> {
+        let canonical_uri = canonical_object_uri(bucket, key);
+        let response = self
+            .execute(HttpMethod::Delete, &canonical_uri, "tagging=", b"")
+            .await?;
+        consume_empty(response)
+    }
+}
+
+fn build_delete_objects_body(keys: &[&str]) -> Vec<u8> {
+    let mut xml = String::from("<Delete>");
+    for key in keys {
+        xml.push_str("<Object><Key>");
+        xml.push_str(&xml_escape(key));
+        xml.push_str("</Key></Object>");
+    }
+    xml.push_str("</Delete>");
+    xml.into_bytes()
 }
 
 fn build_complete_multipart_body(parts: &[CompletedPart]) -> Vec<u8> {
@@ -156,6 +336,19 @@ fn build_complete_multipart_body(parts: &[CompletedPart]) -> Vec<u8> {
         xml.push_str("</ETag></Part>");
     }
     xml.push_str("</CompleteMultipartUpload>");
+    xml.into_bytes()
+}
+
+fn build_tagging_body(tags: &[Tag]) -> Vec<u8> {
+    let mut xml = String::from("<Tagging><TagSet>");
+    for tag in tags {
+        xml.push_str("<Tag><Key>");
+        xml.push_str(&xml_escape(&tag.key));
+        xml.push_str("</Key><Value>");
+        xml.push_str(&xml_escape(&tag.value));
+        xml.push_str("</Value></Tag>");
+    }
+    xml.push_str("</TagSet></Tagging>");
     xml.into_bytes()
 }
 
@@ -175,4 +368,172 @@ struct InitiateMultipartUploadResultXml {
 struct CompleteMultipartUploadResultXml {
     #[serde(rename = "ETag")]
     e_tag: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename = "DeleteResult")]
+struct DeleteResultXml {
+    #[serde(rename = "Deleted", default)]
+    deleted: Vec<DeletedXml>,
+    #[serde(rename = "Error", default)]
+    errors: Vec<DeleteErrorXml>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeletedXml {
+    #[serde(rename = "Key")]
+    key: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteErrorXml {
+    #[serde(rename = "Key")]
+    key: Option<String>,
+    #[serde(rename = "Code")]
+    code: Option<String>,
+    #[serde(rename = "Message")]
+    message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename = "ListMultipartUploadsResult")]
+struct ListMultipartUploadsResultXml {
+    #[serde(rename = "Upload", default)]
+    uploads: Vec<MultipartUploadXml>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MultipartUploadXml {
+    #[serde(rename = "Key")]
+    key: Option<String>,
+    #[serde(rename = "UploadId")]
+    upload_id: Option<String>,
+    #[serde(rename = "Initiated")]
+    initiated: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename = "ListPartsResult")]
+struct ListPartsResultXml {
+    #[serde(rename = "Part", default)]
+    parts: Vec<PartXml>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PartXml {
+    #[serde(rename = "PartNumber")]
+    part_number: Option<u32>,
+    #[serde(rename = "ETag")]
+    e_tag: Option<String>,
+    #[serde(rename = "Size")]
+    size: Option<u64>,
+    #[serde(rename = "LastModified")]
+    last_modified: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename = "Tagging")]
+struct TaggingXml {
+    #[serde(rename = "TagSet")]
+    tag_set: TagSetXml,
+}
+
+#[derive(Debug, Deserialize)]
+struct TagSetXml {
+    #[serde(rename = "Tag", default)]
+    tag: Vec<TagXml>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TagXml {
+    #[serde(rename = "Key")]
+    key: String,
+    #[serde(rename = "Value")]
+    value: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use quick_xml::de::from_str;
+
+    use super::*;
+
+    #[test]
+    fn builds_delete_objects_body() {
+        let xml = String::from_utf8(build_delete_objects_body(&["a", "b/c"])).unwrap();
+        assert!(xml.contains("<Key>a</Key>"));
+        assert!(xml.contains("<Key>b/c</Key>"));
+    }
+
+    #[test]
+    fn parses_delete_objects_response() {
+        let xml = r#"
+<DeleteResult>
+  <Deleted><Key>a.txt</Key></Deleted>
+  <Error><Key>b.txt</Key><Code>AccessDenied</Code><Message>Denied</Message></Error>
+</DeleteResult>
+"#;
+        let parsed: DeleteResultXml = from_str(xml).unwrap();
+        assert_eq!(parsed.deleted.len(), 1);
+        assert_eq!(parsed.deleted[0].key, "a.txt");
+        assert_eq!(parsed.errors.len(), 1);
+        assert_eq!(parsed.errors[0].code.as_deref(), Some("AccessDenied"));
+    }
+
+    #[test]
+    fn builds_and_parses_tagging_xml() {
+        let body = build_tagging_body(&[
+            Tag {
+                key: "env".to_string(),
+                value: "dev".to_string(),
+            },
+            Tag {
+                key: "team".to_string(),
+                value: "infra".to_string(),
+            },
+        ]);
+        let xml = String::from_utf8(body).unwrap();
+        assert!(xml.contains("<Key>env</Key><Value>dev</Value>"));
+        assert!(xml.contains("<Key>team</Key><Value>infra</Value>"));
+
+        let parsed: TaggingXml =
+            from_str("<Tagging><TagSet><Tag><Key>a</Key><Value>b</Value></Tag></TagSet></Tagging>").unwrap();
+        assert_eq!(parsed.tag_set.tag.len(), 1);
+        assert_eq!(parsed.tag_set.tag[0].key, "a");
+        assert_eq!(parsed.tag_set.tag[0].value, "b");
+    }
+
+    #[test]
+    fn parses_list_parts_response() {
+        let xml = r#"
+<ListPartsResult>
+  <Part>
+    <PartNumber>1</PartNumber>
+    <ETag>"etag-1"</ETag>
+    <Size>5</Size>
+    <LastModified>2026-01-01T00:00:00.000Z</LastModified>
+  </Part>
+</ListPartsResult>
+"#;
+        let parsed: ListPartsResultXml = from_str(xml).unwrap();
+        assert_eq!(parsed.parts.len(), 1);
+        assert_eq!(parsed.parts[0].part_number, Some(1));
+    }
+
+    #[test]
+    fn parses_list_multipart_uploads_response() {
+        let xml = r#"
+<ListMultipartUploadsResult>
+  <Upload>
+    <Key>big.bin</Key>
+    <UploadId>upload-1</UploadId>
+    <Initiated>2026-01-01T00:00:00.000Z</Initiated>
+  </Upload>
+</ListMultipartUploadsResult>
+"#;
+        let parsed: ListMultipartUploadsResultXml = from_str(xml).unwrap();
+        assert_eq!(parsed.uploads.len(), 1);
+        assert_eq!(parsed.uploads[0].key.as_deref(), Some("big.bin"));
+        assert_eq!(parsed.uploads[0].upload_id.as_deref(), Some("upload-1"));
+    }
 }
