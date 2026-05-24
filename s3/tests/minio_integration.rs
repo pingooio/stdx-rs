@@ -1,7 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::io::Read;
 
-use s3::{Client, ClientConfig, Error, StaticCredentials};
+use s3::{Client, ClientConfig, CompletedPart, Error, StaticCredentials};
 
 fn integration_enabled() -> bool {
     std::env::var("S3_RUN_INTEGRATION").ok().as_deref() == Some("1")
@@ -80,4 +80,74 @@ fn minio_object_lifecycle() {
     client
         .delete_object(&bucket, &key)
         .expect("delete_object failed");
+}
+
+#[test]
+fn minio_multipart_upload() {
+    if !integration_enabled() {
+        eprintln!("skipping integration test (set S3_RUN_INTEGRATION=1)");
+        return;
+    }
+
+    let client = test_client();
+    let bucket = env_or_default("S3_TEST_BUCKET", "stdx-rs-s3-integration");
+
+    match client.create_bucket(&bucket) {
+        Ok(()) => {}
+        Err(Error::Api { status: 409, .. }) => {}
+        Err(err) => panic!("create_bucket failed: {err}"),
+    }
+
+    let key = format!("integration/{}/multipart.bin", unique_suffix());
+
+    // S3 requires every part except the last to be at least 5 MiB.
+    let part1: Vec<u8> = vec![b'A'; 5 * 1024 * 1024];
+    let part2: Vec<u8> = vec![b'B'; 1024];
+
+    let upload_id = client
+        .create_multipart_upload(&bucket, &key)
+        .expect("create_multipart_upload failed");
+
+    let out1 = client
+        .upload_part(&bucket, &key, &upload_id, 1, &part1)
+        .expect("upload_part 1 failed");
+    let out2 = client
+        .upload_part(&bucket, &key, &upload_id, 2, &part2)
+        .expect("upload_part 2 failed");
+
+    let parts = vec![
+        CompletedPart {
+            part_number: 1,
+            e_tag: out1.e_tag.expect("part 1 etag missing"),
+        },
+        CompletedPart {
+            part_number: 2,
+            e_tag: out2.e_tag.expect("part 2 etag missing"),
+        },
+    ];
+
+    client
+        .complete_multipart_upload(&bucket, &key, &upload_id, &parts)
+        .expect("complete_multipart_upload failed");
+
+    let head = client
+        .head_object(&bucket, &key)
+        .expect("head_object after multipart failed");
+    let expected_len = (part1.len() + part2.len()) as u64;
+    assert_eq!(head.content_length, Some(expected_len));
+
+    let mut got = client
+        .get_object(&bucket, &key)
+        .expect("get_object after multipart failed");
+    let mut got_body = Vec::new();
+    got.body
+        .read_to_end(&mut got_body)
+        .expect("failed reading object body stream");
+    let mut expected = part1;
+    expected.extend_from_slice(&part2);
+    assert_eq!(got_body, expected);
+
+    client
+        .delete_object(&bucket, &key)
+        .expect("delete_object after multipart failed");
 }

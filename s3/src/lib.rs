@@ -92,6 +92,22 @@ impl From<quick_xml::DeError> for Error {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct CompletedPart {
+    pub part_number: u32,
+    pub e_tag: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct UploadPartOutput {
+    pub e_tag: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompleteMultipartUploadOutput {
+    pub e_tag: Option<String>,
+}
+
 pub struct GetObjectOutput {
     pub body: Box<dyn Read + Send>,
     pub e_tag: Option<String>,
@@ -247,6 +263,64 @@ impl Client {
                 })
                 .collect(),
         })
+    }
+
+    pub fn create_multipart_upload(&self, bucket: &str, key: &str) -> Result<String, Error> {
+        let canonical_uri = canonical_object_uri(bucket, key);
+        let response = self.execute(Method::POST, &canonical_uri, "uploads", b"")?;
+        let xml_text = response.text()?;
+        let xml: InitiateMultipartUploadResultXml = from_str(&xml_text)?;
+        Ok(xml.upload_id)
+    }
+
+    pub fn upload_part(
+        &self,
+        bucket: &str,
+        key: &str,
+        upload_id: &str,
+        part_number: u32,
+        body: &[u8],
+    ) -> Result<UploadPartOutput, Error> {
+        let canonical_uri = canonical_object_uri(bucket, key);
+        let mut params = BTreeMap::new();
+        params.insert("partNumber".to_string(), part_number.to_string());
+        params.insert("uploadId".to_string(), upload_id.to_string());
+        let canonical_query = canonical_query_string(&params);
+        let response = self.execute(Method::PUT, &canonical_uri, &canonical_query, body)?;
+        let e_tag = header_to_string(response.headers().get("etag"));
+        Ok(UploadPartOutput { e_tag })
+    }
+
+    pub fn complete_multipart_upload(
+        &self,
+        bucket: &str,
+        key: &str,
+        upload_id: &str,
+        parts: &[CompletedPart],
+    ) -> Result<CompleteMultipartUploadOutput, Error> {
+        let canonical_uri = canonical_object_uri(bucket, key);
+        let mut params = BTreeMap::new();
+        params.insert("uploadId".to_string(), upload_id.to_string());
+        let canonical_query = canonical_query_string(&params);
+        let xml_body = build_complete_multipart_body(parts);
+        let response = self.execute(Method::POST, &canonical_uri, &canonical_query, &xml_body)?;
+        let xml_text = response.text()?;
+        let xml: CompleteMultipartUploadResultXml = from_str(&xml_text)?;
+        Ok(CompleteMultipartUploadOutput { e_tag: xml.e_tag })
+    }
+
+    pub fn abort_multipart_upload(
+        &self,
+        bucket: &str,
+        key: &str,
+        upload_id: &str,
+    ) -> Result<(), Error> {
+        let canonical_uri = canonical_object_uri(bucket, key);
+        let mut params = BTreeMap::new();
+        params.insert("uploadId".to_string(), upload_id.to_string());
+        let canonical_query = canonical_query_string(&params);
+        let response = self.execute(Method::DELETE, &canonical_uri, &canonical_query, b"")?;
+        consume_empty(response)
     }
 
     fn execute(
@@ -497,6 +571,23 @@ fn header_to_u64(value: Option<&reqwest::header::HeaderValue>) -> Option<u64> {
         .and_then(|s| s.parse::<u64>().ok())
 }
 
+fn build_complete_multipart_body(parts: &[CompletedPart]) -> Vec<u8> {
+    let mut xml = String::from("<CompleteMultipartUpload>");
+    for part in parts {
+        xml.push_str("<Part><PartNumber>");
+        xml.push_str(&part.part_number.to_string());
+        xml.push_str("</PartNumber><ETag>");
+        xml.push_str(&xml_escape(&part.e_tag));
+        xml.push_str("</ETag></Part>");
+    }
+    xml.push_str("</CompleteMultipartUpload>");
+    xml.into_bytes()
+}
+
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename = "ListBucketResult")]
 struct ListBucketResultXml {
@@ -528,6 +619,20 @@ struct ObjectXml {
     size: Option<u64>,
     #[serde(rename = "StorageClass")]
     storage_class: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename = "InitiateMultipartUploadResult")]
+struct InitiateMultipartUploadResultXml {
+    #[serde(rename = "UploadId")]
+    upload_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename = "CompleteMultipartUploadResult")]
+struct CompleteMultipartUploadResultXml {
+    #[serde(rename = "ETag")]
+    e_tag: Option<String>,
 }
 
 #[cfg(test)]

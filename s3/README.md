@@ -8,6 +8,7 @@ Minimal S3 client SDK for `stdx-rs`, focused on common actions:
 - `HeadObject`
 - `DeleteObject`
 - `ListObjects` (ListObjectsV2)
+- `CreateMultipartUpload` / `UploadPart` / `CompleteMultipartUpload` / `AbortMultipartUpload`
 
 ## API
 
@@ -25,10 +26,24 @@ let client = Client::new(&cfg)?;
 
 ## Integration tests (MinIO)
 
-The Makefile sets default env vars but does **not** start MinIO.
+### 1. Start MinIO
+
+```bash
+docker run -d --name minio \
+  -p 9000:9000 \
+  -e MINIO_ROOT_USER=minioadmin \
+  -e MINIO_ROOT_PASSWORD=minioadmin \
+  minio/minio server /data
+```
+
+### 2. Run integration tests
 
 ```bash
 make -C s3 integration-test
 ```
 
-Example MinIO image: `minio/minio`.
+### 3. Stop and remove MinIO
+
+```bash
+docker stop minio && docker rm minio
+```
