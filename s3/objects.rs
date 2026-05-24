@@ -80,7 +80,7 @@ impl<H: HttpClient> Client<H> {
 
     pub async fn create_multipart_upload(&self, bucket: &str, key: &str) -> Result<String, crate::client::Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
-        let response = self.execute(HttpMethod::Post, &canonical_uri, "uploads", b"").await?;
+        let response = self.execute(HttpMethod::Post, &canonical_uri, "uploads=", b"").await?;
         let xml_text = bytes_to_string(collect_body(response.body).await?)?;
         let xml: InitiateMultipartUploadResultXml = from_str(&xml_text)?;
         Ok(xml.upload_id)
