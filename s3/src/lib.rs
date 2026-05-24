@@ -1,9 +1,11 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::future::Future;
+use std::pin::Pin;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
+use futures_util::{Stream, StreamExt};
 
 use hmac::{Hmac, Mac};
 use quick_xml::de::from_str;
@@ -89,6 +91,9 @@ impl From<quick_xml::DeError> for Error {
 
 pub type HttpError = Box<dyn std::error::Error + Send + Sync>;
 
+/// A pinned, boxed async stream of byte chunks.
+pub type ByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, HttpError>> + Send>>;
+
 #[derive(Debug, Clone, Copy)]
 pub enum HttpMethod {
     Get,
@@ -118,11 +123,10 @@ pub struct HttpRequest {
     pub body: Vec<u8>,
 }
 
-#[derive(Debug)]
 pub struct HttpResponseData {
     pub status_code: u16,
     pub headers: Vec<(String, String)>,
-    pub body: Bytes,
+    pub body: ByteStream,
 }
 
 impl HttpResponseData {
@@ -173,7 +177,7 @@ impl HttpClient for ReqwestHttpClient {
                 value.to_str().ok().map(|v| (name.as_str().to_string(), v.to_string()))
             })
             .collect();
-        let body = response.bytes().await?;
+        let body: ByteStream = Box::pin(response.bytes_stream().map(|r| r.map_err(|e| -> HttpError { Box::new(e) })));
         Ok(HttpResponseData { status_code, headers, body })
     }
 }
@@ -195,7 +199,7 @@ pub struct CompleteMultipartUploadOutput {
 }
 
 pub struct GetObjectOutput {
-    pub body: Bytes,
+    pub body: ByteStream,
     pub e_tag: Option<String>,
     pub content_type: Option<String>,
     pub content_length: Option<u64>,
@@ -328,7 +332,7 @@ impl<H: HttpClient> Client<H> {
 
         let canonical_query = canonical_query_string(&params);
         let response = self.execute(HttpMethod::Get, &canonical_uri, &canonical_query, b"").await?;
-        let body = bytes_to_string(response.body)?;
+        let body = bytes_to_string(collect_body(response.body).await?)?;
         let xml: ListBucketResultXml = from_str(&body)?;
 
         Ok(ListObjectsOutput {
@@ -355,7 +359,7 @@ impl<H: HttpClient> Client<H> {
     pub async fn create_multipart_upload(&self, bucket: &str, key: &str) -> Result<String, Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
         let response = self.execute(HttpMethod::Post, &canonical_uri, "uploads", b"").await?;
-        let xml_text = bytes_to_string(response.body)?;
+        let xml_text = bytes_to_string(collect_body(response.body).await?)?;
         let xml: InitiateMultipartUploadResultXml = from_str(&xml_text)?;
         Ok(xml.upload_id)
     }
@@ -391,7 +395,7 @@ impl<H: HttpClient> Client<H> {
         let canonical_query = canonical_query_string(&params);
         let xml_body = build_complete_multipart_body(parts);
         let response = self.execute(HttpMethod::Post, &canonical_uri, &canonical_query, &xml_body).await?;
-        let xml_text = bytes_to_string(response.body)?;
+        let xml_text = bytes_to_string(collect_body(response.body).await?)?;
         let xml: CompleteMultipartUploadResultXml = from_str(&xml_text)?;
         Ok(CompleteMultipartUploadOutput { e_tag: xml.e_tag })
     }
@@ -503,7 +507,8 @@ impl<H: HttpClient> Client<H> {
         }
 
         let status = response.status_code;
-        let body = String::from_utf8_lossy(&response.body).into_owned();
+        let body_bytes = collect_body(response.body).await.unwrap_or_default();
+        let body = String::from_utf8_lossy(&body_bytes).into_owned();
         Err(Error::Api { status, body })
     }
 }
@@ -515,14 +520,8 @@ impl Client<ReqwestHttpClient> {
     }
 }
 
-fn consume_empty(response: HttpResponseData) -> Result<(), Error> {
-    if (200..300).contains(&response.status_code) {
-        return Ok(());
-    }
-
-    let status = response.status_code;
-    let body = String::from_utf8_lossy(&response.body).into_owned();
-    Err(Error::Api { status, body })
+fn consume_empty(_response: HttpResponseData) -> Result<(), Error> {
+    Ok(())
 }
 
 fn canonical_bucket_uri(bucket: &str) -> String {
@@ -646,8 +645,17 @@ fn civil_from_days(days_since_unix_epoch: i64) -> (i32, i64, i64) {
     (year as i32, month, day)
 }
 
-fn bytes_to_string(bytes: Bytes) -> Result<String, Error> {
-    String::from_utf8(bytes.into()).map_err(|e| Error::Http(e.to_string()))
+async fn collect_body(mut stream: ByteStream) -> Result<Vec<u8>, Error> {
+    let mut out = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk.map_err(|e| Error::Http(e.to_string()))?;
+        out.extend_from_slice(&bytes);
+    }
+    Ok(out)
+}
+
+fn bytes_to_string(bytes: Vec<u8>) -> Result<String, Error> {
+    String::from_utf8(bytes).map_err(|e| Error::Http(e.to_string()))
 }
 
 fn header_to_string(response: &HttpResponseData, name: &str) -> Option<String> {
@@ -734,7 +742,7 @@ mod tests {
             Ok(HttpResponseData {
                 status_code: 200,
                 headers: Vec::new(),
-                body: Bytes::new(),
+                body: Box::pin(futures_util::stream::empty()),
             })
         }
     }

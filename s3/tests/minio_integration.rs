@@ -2,6 +2,8 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use bytes::Bytes;
+use futures_util::TryStreamExt;
 use s3::{Client, ClientConfig, CompletedPart, Error, ReqwestHttpClient, StaticCredentials};
 
 fn integration_enabled() -> bool {
@@ -36,6 +38,11 @@ fn test_client() -> Client<ReqwestHttpClient> {
     Client::new(&cfg).expect("failed to build s3 client")
 }
 
+async fn collect_stream(body: s3::ByteStream) -> Vec<u8> {
+    let chunks: Vec<Bytes> = body.try_collect().await.expect("failed to collect body stream");
+    chunks.into_iter().flat_map(|b| b.into_iter()).collect()
+}
+
 #[tokio::test]
 async fn minio_object_lifecycle() {
     if !integration_enabled() {
@@ -61,7 +68,7 @@ async fn minio_object_lifecycle() {
     assert_eq!(head.content_length, Some(body.len() as u64));
 
     let got = client.get_object(&bucket, &key).await.expect("get_object failed");
-    assert_eq!(got.body.as_ref(), body.as_ref());
+    assert_eq!(collect_stream(got.body).await, body.as_ref());
 
     let listed = client
         .list_objects(&bucket, Some("integration/"), None, Some(1000))
@@ -137,7 +144,7 @@ async fn minio_multipart_upload() {
         .expect("get_object after multipart failed");
     let mut expected = part1;
     expected.extend_from_slice(&part2);
-    assert_eq!(got.body.as_ref(), expected.as_slice());
+    assert_eq!(collect_stream(got.body).await, expected);
 
     client
         .delete_object(&bucket, &key)
