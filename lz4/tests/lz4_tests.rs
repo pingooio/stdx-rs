@@ -35,6 +35,28 @@ fn test_inputs() -> Vec<Vec<u8>> {
     ]
 }
 
+fn interop_stress_inputs() -> Vec<Vec<u8>> {
+    let mut cases = test_inputs();
+
+    for len in [5usize, 6, 7, 8, 12, 13, 14, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257, 511, 512, 513, 4095, 4096, 4097, 65_535] {
+        cases.push(deterministic_bytes(len, 0xC0FFEE_u32 ^ len as u32));
+    }
+
+    for len in 0usize..=512 {
+        let mut repeating = vec![0u8; len];
+        for (i, byte) in repeating.iter_mut().enumerate() {
+            *byte = (i % 7) as u8;
+        }
+        cases.push(repeating);
+    }
+
+    cases
+}
+
+fn max_compressed_size(source_len: usize) -> usize {
+    source_len + (source_len / 255) + 16
+}
+
 #[test]
 fn roundtrip_allocating_api() {
     for input in test_inputs() {
@@ -113,4 +135,50 @@ fn interop_large_repetitive_stream() {
     let reference_compressed = lz4_block::compress(&input, None, false).unwrap();
     let ours = decompress(&reference_compressed, input.len()).unwrap();
     assert_eq!(ours, input);
+}
+
+#[test]
+fn interop_reference_matrix_allocating_api() {
+    for input in interop_stress_inputs() {
+        let expected_from_reference = lz4_block::decompress(
+            &lz4_block::compress(&input, None, false).unwrap(),
+            Some(input.len() as i32),
+        )
+        .unwrap();
+        assert_eq!(expected_from_reference, input);
+
+        let reference_compressed = lz4_block::compress(&input, None, false).unwrap();
+        let ours_from_reference = decompress(&reference_compressed, input.len()).unwrap();
+        assert_eq!(ours_from_reference, expected_from_reference);
+
+        let our_compressed = compress(&input).unwrap();
+        let reference_from_ours = lz4_block::decompress(&our_compressed, Some(input.len() as i32)).unwrap();
+        let ours_from_ours = decompress(&our_compressed, input.len()).unwrap();
+        assert_eq!(reference_from_ours, input);
+        assert_eq!(ours_from_ours, reference_from_ours);
+    }
+}
+
+#[test]
+fn interop_reference_matrix_buffer_api() {
+    for input in interop_stress_inputs() {
+        let reference_compressed = lz4_block::compress(&input, None, false).unwrap();
+        let mut ours_output = vec![0u8; input.len()];
+        let written = decompress_to_buffer(&reference_compressed, &mut ours_output).unwrap();
+        ours_output.truncate(written);
+        assert_eq!(written, input.len());
+        assert_eq!(ours_output, input);
+
+        let mut our_compressed = vec![0u8; max_compressed_size(input.len())];
+        let our_written = compress_to_buffer(&input, &mut our_compressed).unwrap();
+        our_compressed.truncate(our_written);
+
+        let reference_from_ours = lz4_block::decompress(&our_compressed, Some(input.len() as i32)).unwrap();
+        assert_eq!(reference_from_ours, input);
+
+        let mut ours_from_ours = vec![0u8; input.len()];
+        let out_written = decompress_to_buffer(&our_compressed, &mut ours_from_ours).unwrap();
+        ours_from_ours.truncate(out_written);
+        assert_eq!(ours_from_ours, reference_from_ours);
+    }
 }
