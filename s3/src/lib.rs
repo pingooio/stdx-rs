@@ -5,10 +5,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use hmac::{Hmac, Mac};
 use quick_xml::de::from_str;
-use reqwest::blocking::{Client as HttpClient, Response};
-use reqwest::{Method, Url};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use url::Url;
 
 const EMPTY_PAYLOAD_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
@@ -44,17 +43,17 @@ struct OwnedCredentials {
 }
 
 #[derive(Debug)]
-pub struct Client {
+pub struct Client<H: HttpClient> {
     endpoint: Url,
     region: String,
     credentials: OwnedCredentials,
-    http: HttpClient,
+    http: H,
 }
 
 #[derive(Debug)]
 pub enum Error {
     InvalidConfig(&'static str),
-    Http(reqwest::Error),
+    Http(String),
     Time(std::time::SystemTimeError),
     Xml(quick_xml::DeError),
     Api { status: u16, body: String },
@@ -74,9 +73,9 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-impl From<reqwest::Error> for Error {
-    fn from(value: reqwest::Error) -> Self {
-        Self::Http(value)
+impl From<std::io::Error> for Error {
+    fn from(value: std::io::Error) -> Self {
+        Self::Http(value.to_string())
     }
 }
 
@@ -89,6 +88,105 @@ impl From<std::time::SystemTimeError> for Error {
 impl From<quick_xml::DeError> for Error {
     fn from(value: quick_xml::DeError) -> Self {
         Self::Xml(value)
+    }
+}
+
+pub type HttpError = Box<dyn std::error::Error + Send + Sync>;
+
+#[derive(Debug, Clone, Copy)]
+pub enum HttpMethod {
+    Get,
+    Put,
+    Post,
+    Delete,
+    Head,
+}
+
+impl HttpMethod {
+    fn as_str(self) -> &'static str {
+        match self {
+            HttpMethod::Get => "GET",
+            HttpMethod::Put => "PUT",
+            HttpMethod::Post => "POST",
+            HttpMethod::Delete => "DELETE",
+            HttpMethod::Head => "HEAD",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HttpRequest {
+    pub method: HttpMethod,
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+pub trait HttpResponse: Read + Send {
+    fn status_code(&self) -> u16;
+    fn header(&self, name: &str) -> Option<String>;
+}
+
+pub trait HttpClient: Send + Sync {
+    fn send(&self, request: HttpRequest) -> Result<Box<dyn HttpResponse>, HttpError>;
+}
+
+#[cfg(feature = "reqwest")]
+#[derive(Debug, Default, Clone)]
+pub struct ReqwestHttpClient {
+    inner: reqwest::blocking::Client,
+}
+
+#[cfg(feature = "reqwest")]
+impl ReqwestHttpClient {
+    pub fn new() -> Self {
+        Self {
+            inner: reqwest::blocking::Client::new(),
+        }
+    }
+}
+
+#[cfg(feature = "reqwest")]
+impl HttpClient for ReqwestHttpClient {
+    fn send(&self, request: HttpRequest) -> Result<Box<dyn HttpResponse>, HttpError> {
+        let method = reqwest::Method::from_bytes(request.method.as_str().as_bytes())?;
+        let mut req = self.inner.request(method, &request.url);
+        for (name, value) in request.headers {
+            req = req.header(&name, &value);
+        }
+        if !request.body.is_empty() {
+            req = req.body(request.body);
+        }
+        let response = req.send()?;
+        Ok(Box::new(ReqwestHttpResponse { inner: response }))
+    }
+}
+
+#[cfg(feature = "reqwest")]
+#[derive(Debug)]
+struct ReqwestHttpResponse {
+    inner: reqwest::blocking::Response,
+}
+
+#[cfg(feature = "reqwest")]
+impl Read for ReqwestHttpResponse {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+#[cfg(feature = "reqwest")]
+impl HttpResponse for ReqwestHttpResponse {
+    fn status_code(&self) -> u16 {
+        self.inner.status().as_u16()
+    }
+
+    fn header(&self, name: &str) -> Option<String> {
+        self.inner
+            .headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(ToString::to_string)
     }
 }
 
@@ -142,8 +240,8 @@ pub struct ListObject {
     pub storage_class: Option<String>,
 }
 
-impl Client {
-    pub fn new(config: &ClientConfig<'_>) -> Result<Self, Error> {
+impl<H: HttpClient> Client<H> {
+    pub fn with_http_client(config: &ClientConfig<'_>, http: H) -> Result<Self, Error> {
         if config.endpoint.trim().is_empty() {
             return Err(Error::InvalidConfig("endpoint must not be empty"));
         }
@@ -171,50 +269,51 @@ impl Client {
                     Some(config.credentials.session_token.to_string())
                 },
             },
-            http: HttpClient::new(),
+            http,
         })
     }
 
     pub fn create_bucket(&self, bucket: &str) -> Result<(), Error> {
         let canonical_uri = canonical_bucket_uri(bucket);
-        let response = self.execute(Method::PUT, &canonical_uri, "", b"")?;
+        let response = self.execute(HttpMethod::Put, &canonical_uri, "", b"")?;
         consume_empty(response)
     }
 
     pub fn put_object(&self, bucket: &str, key: &str, body: &[u8]) -> Result<(), Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
-        let response = self.execute(Method::PUT, &canonical_uri, "", body)?;
+        let response = self.execute(HttpMethod::Put, &canonical_uri, "", body)?;
         consume_empty(response)
     }
 
     pub fn get_object(&self, bucket: &str, key: &str) -> Result<GetObjectOutput, Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
-        let response = self.execute(Method::GET, &canonical_uri, "", b"")?;
-        let headers = response.headers().clone();
+        let response = self.execute(HttpMethod::Get, &canonical_uri, "", b"")?;
+        let e_tag = header_to_string(&*response, "etag");
+        let content_type = header_to_string(&*response, "content-type");
+        let content_length = header_to_u64(&*response, "content-length");
 
         Ok(GetObjectOutput {
-            body: Box::new(response),
-            e_tag: header_to_string(headers.get("etag")),
-            content_type: header_to_string(headers.get("content-type")),
-            content_length: header_to_u64(headers.get("content-length")),
+            body: response,
+            e_tag,
+            content_type,
+            content_length,
         })
     }
 
     pub fn head_object(&self, bucket: &str, key: &str) -> Result<HeadObjectOutput, Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
-        let response = self.execute(Method::HEAD, &canonical_uri, "", b"")?;
-        let headers = response.headers();
+        let response = self.execute(HttpMethod::Head, &canonical_uri, "", b"")?;
 
         Ok(HeadObjectOutput {
-            e_tag: header_to_string(headers.get("etag")),
-            content_type: header_to_string(headers.get("content-type")),
-            content_length: header_to_u64(headers.get("content-length")),
+            e_tag: header_to_string(&*response, "etag"),
+            content_type: header_to_string(&*response, "content-type"),
+            content_length: header_to_u64(&*response, "content-length"),
         })
     }
 
     pub fn delete_object(&self, bucket: &str, key: &str) -> Result<(), Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
-        let response = self.execute(Method::DELETE, &canonical_uri, "", b"")?;
+        let response = self.execute(HttpMethod::Delete, &canonical_uri, "", b"")?;
         consume_empty(response)
     }
 
@@ -240,8 +339,8 @@ impl Client {
         }
 
         let canonical_query = canonical_query_string(&params);
-        let response = self.execute(Method::GET, &canonical_uri, &canonical_query, b"")?;
-        let body = response.text()?;
+        let mut response = self.execute(HttpMethod::Get, &canonical_uri, &canonical_query, b"")?;
+        let body = read_all_to_string(&mut *response)?;
         let xml: ListBucketResultXml = from_str(&body)?;
 
         Ok(ListObjectsOutput {
@@ -267,8 +366,8 @@ impl Client {
 
     pub fn create_multipart_upload(&self, bucket: &str, key: &str) -> Result<String, Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
-        let response = self.execute(Method::POST, &canonical_uri, "uploads", b"")?;
-        let xml_text = response.text()?;
+        let mut response = self.execute(HttpMethod::Post, &canonical_uri, "uploads", b"")?;
+        let xml_text = read_all_to_string(&mut *response)?;
         let xml: InitiateMultipartUploadResultXml = from_str(&xml_text)?;
         Ok(xml.upload_id)
     }
@@ -286,8 +385,8 @@ impl Client {
         params.insert("partNumber".to_string(), part_number.to_string());
         params.insert("uploadId".to_string(), upload_id.to_string());
         let canonical_query = canonical_query_string(&params);
-        let response = self.execute(Method::PUT, &canonical_uri, &canonical_query, body)?;
-        let e_tag = header_to_string(response.headers().get("etag"));
+        let response = self.execute(HttpMethod::Put, &canonical_uri, &canonical_query, body)?;
+        let e_tag = header_to_string(&*response, "etag");
         Ok(UploadPartOutput { e_tag })
     }
 
@@ -303,33 +402,28 @@ impl Client {
         params.insert("uploadId".to_string(), upload_id.to_string());
         let canonical_query = canonical_query_string(&params);
         let xml_body = build_complete_multipart_body(parts);
-        let response = self.execute(Method::POST, &canonical_uri, &canonical_query, &xml_body)?;
-        let xml_text = response.text()?;
+        let mut response = self.execute(HttpMethod::Post, &canonical_uri, &canonical_query, &xml_body)?;
+        let xml_text = read_all_to_string(&mut *response)?;
         let xml: CompleteMultipartUploadResultXml = from_str(&xml_text)?;
         Ok(CompleteMultipartUploadOutput { e_tag: xml.e_tag })
     }
 
-    pub fn abort_multipart_upload(
-        &self,
-        bucket: &str,
-        key: &str,
-        upload_id: &str,
-    ) -> Result<(), Error> {
+    pub fn abort_multipart_upload(&self, bucket: &str, key: &str, upload_id: &str) -> Result<(), Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
         let mut params = BTreeMap::new();
         params.insert("uploadId".to_string(), upload_id.to_string());
         let canonical_query = canonical_query_string(&params);
-        let response = self.execute(Method::DELETE, &canonical_uri, &canonical_query, b"")?;
+        let response = self.execute(HttpMethod::Delete, &canonical_uri, &canonical_query, b"")?;
         consume_empty(response)
     }
 
     fn execute(
         &self,
-        method: Method,
+        method: HttpMethod,
         canonical_uri: &str,
         canonical_query: &str,
         body: &[u8],
-    ) -> Result<Response, Error> {
+    ) -> Result<Box<dyn HttpResponse>, Error> {
         let (date, amz_datetime) = amz_datetime(SystemTime::now())?;
         let credential_scope = format!("{}/{}/s3/aws4_request", date, self.region);
 
@@ -398,41 +492,49 @@ impl Client {
             )
         };
 
-        let mut request = self
-            .http
-            .request(method, &url)
-            .header("host", host)
-            .header("x-amz-date", amz_datetime)
-            .header("x-amz-content-sha256", payload_hash)
-            .header("authorization", authorization);
-
+        let mut headers = vec![
+            ("host".to_string(), host),
+            ("x-amz-date".to_string(), amz_datetime),
+            ("x-amz-content-sha256".to_string(), payload_hash),
+            ("authorization".to_string(), authorization),
+        ];
         if let Some(token) = self.credentials.session_token.as_deref() {
-            request = request.header("x-amz-security-token", token);
+            headers.push(("x-amz-security-token".to_string(), token.to_string()));
         }
 
-        let response = if body.is_empty() {
-            request.send()?
-        } else {
-            request.body(body.to_vec()).send()?
+        let request = HttpRequest {
+            method,
+            url,
+            headers,
+            body: body.to_vec(),
         };
+        let mut response = self.http.send(request).map_err(|err| Error::Http(err.to_string()))?;
 
-        if response.status().is_success() {
+        if (200..300).contains(&response.status_code()) {
             return Ok(response);
         }
 
-        let status = response.status().as_u16();
-        let body = response.text().unwrap_or_default();
+        let status = response.status_code();
+        let body = read_all_to_string(&mut *response).unwrap_or_default();
         Err(Error::Api { status, body })
     }
 }
 
-fn consume_empty(response: Response) -> Result<(), Error> {
-    if response.status().is_success() {
+#[cfg(feature = "reqwest")]
+impl Client<ReqwestHttpClient> {
+    pub fn new(config: &ClientConfig<'_>) -> Result<Self, Error> {
+        Self::with_http_client(config, ReqwestHttpClient::new())
+    }
+}
+
+fn consume_empty(response: Box<dyn HttpResponse>) -> Result<(), Error> {
+    if (200..300).contains(&response.status_code()) {
         return Ok(());
     }
 
-    let status = response.status().as_u16();
-    let body = response.text().unwrap_or_default();
+    let status = response.status_code();
+    let mut response = response;
+    let body = read_all_to_string(&mut *response).unwrap_or_default();
     Err(Error::Api { status, body })
 }
 
@@ -445,10 +547,7 @@ fn canonical_object_uri(bucket: &str, key: &str) -> String {
 }
 
 fn canonical_uri(path: &str) -> String {
-    path.split('/')
-        .map(percent_encode)
-        .collect::<Vec<_>>()
-        .join("/")
+    path.split('/').map(percent_encode).collect::<Vec<_>>().join("/")
 }
 
 fn canonical_query_string(params: &BTreeMap<String, String>) -> String {
@@ -512,8 +611,7 @@ fn sign_v4(secret_access_key: &str, date: &str, region: &str, string_to_sign: &s
 }
 
 fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
-    let mut mac =
-        Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts any key length for SHA-256");
+    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts any key length for SHA-256");
     mac.update(data);
     let bytes = mac.finalize().into_bytes();
     let mut out = [0u8; 32];
@@ -561,14 +659,18 @@ fn civil_from_days(days_since_unix_epoch: i64) -> (i32, i64, i64) {
     (year as i32, month, day)
 }
 
-fn header_to_string(value: Option<&reqwest::header::HeaderValue>) -> Option<String> {
-    value.and_then(|v| v.to_str().ok()).map(ToString::to_string)
+fn read_all_to_string(reader: &mut dyn Read) -> Result<String, Error> {
+    let mut body = String::new();
+    reader.read_to_string(&mut body)?;
+    Ok(body)
 }
 
-fn header_to_u64(value: Option<&reqwest::header::HeaderValue>) -> Option<u64> {
-    value
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<u64>().ok())
+fn header_to_string(response: &dyn HttpResponse, name: &str) -> Option<String> {
+    response.header(name)
+}
+
+fn header_to_u64(response: &dyn HttpResponse, name: &str) -> Option<u64> {
+    response.header(name).and_then(|s| s.parse::<u64>().ok())
 }
 
 fn build_complete_multipart_body(parts: &[CompletedPart]) -> Vec<u8> {
@@ -638,6 +740,40 @@ struct CompleteMultipartUploadResultXml {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
+
+    #[derive(Default)]
+    struct NoopHttpClient;
+
+    struct DummyHttpResponse {
+        status: u16,
+        body: Cursor<Vec<u8>>,
+    }
+
+    impl Read for DummyHttpResponse {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.body.read(buf)
+        }
+    }
+
+    impl HttpResponse for DummyHttpResponse {
+        fn status_code(&self) -> u16 {
+            self.status
+        }
+
+        fn header(&self, _name: &str) -> Option<String> {
+            None
+        }
+    }
+
+    impl HttpClient for NoopHttpClient {
+        fn send(&self, _request: HttpRequest) -> Result<Box<dyn HttpResponse>, HttpError> {
+            Ok(Box::new(DummyHttpResponse {
+                status: 200,
+                body: Cursor::new(Vec::new()),
+            }))
+        }
+    }
 
     #[test]
     fn sha256_known_vectors() {
@@ -669,7 +805,10 @@ mod tests {
 
     #[test]
     fn canonical_uri_preserves_slashes() {
-        assert_eq!(canonical_object_uri("my-bucket", "folder/my file.txt"), "/my-bucket/folder/my%20file.txt");
+        assert_eq!(
+            canonical_object_uri("my-bucket", "folder/my file.txt"),
+            "/my-bucket/folder/my%20file.txt"
+        );
     }
 
     #[test]
@@ -717,7 +856,10 @@ mod tests {
             credentials: StaticCredentials::new("a", "b", ""),
             region: "us-east-1",
         };
-        assert!(matches!(Client::new(&cfg), Err(Error::InvalidConfig(_))));
+        assert!(matches!(
+            Client::with_http_client(&cfg, NoopHttpClient),
+            Err(Error::InvalidConfig(_))
+        ));
     }
 
     #[test]

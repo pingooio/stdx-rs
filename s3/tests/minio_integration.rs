@@ -1,7 +1,9 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::io::Read;
+#![cfg(feature = "reqwest")]
 
-use s3::{Client, ClientConfig, CompletedPart, Error, StaticCredentials};
+use std::io::Read;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use s3::{Client, ClientConfig, CompletedPart, Error, ReqwestHttpClient, StaticCredentials};
 
 fn integration_enabled() -> bool {
     std::env::var("S3_RUN_INTEGRATION").ok().as_deref() == Some("1")
@@ -19,7 +21,7 @@ fn unique_suffix() -> String {
     nanos.to_string()
 }
 
-fn test_client() -> Client {
+fn test_client() -> Client<ReqwestHttpClient> {
     let endpoint = env_or_default("S3_ENDPOINT", "http://127.0.0.1:9000");
     let region = env_or_default("S3_REGION", "us-east-1");
     let access_key_id = env_or_default("S3_ACCESS_KEY_ID", "minioadmin");
@@ -54,18 +56,12 @@ fn minio_object_lifecycle() {
     let key = format!("integration/{}/hello.txt", unique_suffix());
     let body = b"hello from stdx s3";
 
-    client
-        .put_object(&bucket, &key, body)
-        .expect("put_object failed");
+    client.put_object(&bucket, &key, body).expect("put_object failed");
 
-    let head = client
-        .head_object(&bucket, &key)
-        .expect("head_object failed");
+    let head = client.head_object(&bucket, &key).expect("head_object failed");
     assert_eq!(head.content_length, Some(body.len() as u64));
 
-    let mut got = client
-        .get_object(&bucket, &key)
-        .expect("get_object failed");
+    let mut got = client.get_object(&bucket, &key).expect("get_object failed");
     let mut got_body = Vec::new();
     got.body
         .read_to_end(&mut got_body)
@@ -77,9 +73,7 @@ fn minio_object_lifecycle() {
         .expect("list_objects failed");
     assert!(listed.contents.iter().any(|obj| obj.key == key));
 
-    client
-        .delete_object(&bucket, &key)
-        .expect("delete_object failed");
+    client.delete_object(&bucket, &key).expect("delete_object failed");
 }
 
 #[test]

@@ -3,9 +3,14 @@ name = "s3"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["reqwest"]
+reqwest = ["dep:reqwest"]
+
 [dependencies]
 hmac = "0.12.1"
 quick-xml = { version = "0.38", features = ["serialize"] }
-reqwest = { workspace = true, features = ["blocking"] }
+reqwest = { workspace = true, features = ["blocking"], optional = true }
 serde = { workspace = true, features = ["derive"] }
 sha2 = "0.10.8"
+url = "2"
