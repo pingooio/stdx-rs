@@ -217,6 +217,18 @@ impl<H: HttpClient> Client<H> {
         canonical_query: &str,
         body: &[u8],
     ) -> Result<HttpResponseData, Error> {
+        self.execute_with_headers(method, canonical_uri, canonical_query, body, &[])
+            .await
+    }
+
+    pub(crate) async fn execute_with_headers(
+        &self,
+        method: HttpMethod,
+        canonical_uri: &str,
+        canonical_query: &str,
+        body: &[u8],
+        extra_headers: &[(String, String)],
+    ) -> Result<HttpResponseData, Error> {
         let (date, amz_datetime) = amz_datetime(SystemTime::now())?;
         let credential_scope = format!("{}/{}/s3/aws4_request", date, self.region);
 
@@ -227,17 +239,24 @@ impl<H: HttpClient> Client<H> {
             hex_lower(&sha256(body))
         };
 
-        let mut canonical_headers = vec![
-            format!("host:{}\n", host),
-            format!("x-amz-content-sha256:{}\n", payload_hash),
-            format!("x-amz-date:{}\n", amz_datetime),
+        let mut headers = vec![
+            ("host".to_string(), host.clone()),
+            ("x-amz-date".to_string(), amz_datetime.clone()),
+            ("x-amz-content-sha256".to_string(), payload_hash.clone()),
         ];
-        let mut signed_headers = vec!["host", "x-amz-content-sha256", "x-amz-date"];
-
+        headers.extend(extra_headers.iter().cloned());
         if let Some(token) = self.credentials.session_token.as_deref() {
-            canonical_headers.push(format!("x-amz-security-token:{}\n", token));
-            signed_headers.push("x-amz-security-token");
+            headers.push(("x-amz-security-token".to_string(), token.to_string()));
         }
+
+        let mut canonical_headers = headers
+            .iter()
+            .map(|(name, value)| format!("{}:{}\n", name.to_ascii_lowercase(), canonical_header_value(value)))
+            .collect::<Vec<_>>();
+        let mut signed_headers = headers
+            .iter()
+            .map(|(name, _)| name.to_ascii_lowercase())
+            .collect::<Vec<_>>();
 
         canonical_headers.sort();
         signed_headers.sort();
@@ -285,15 +304,7 @@ impl<H: HttpClient> Client<H> {
             )
         };
 
-        let mut headers = vec![
-            ("host".to_string(), host),
-            ("x-amz-date".to_string(), amz_datetime),
-            ("x-amz-content-sha256".to_string(), payload_hash),
-            ("authorization".to_string(), authorization),
-        ];
-        if let Some(token) = self.credentials.session_token.as_deref() {
-            headers.push(("x-amz-security-token".to_string(), token.to_string()));
-        }
+        headers.push(("authorization".to_string(), authorization));
 
         let request = HttpRequest {
             method,
@@ -309,6 +320,10 @@ impl<H: HttpClient> Client<H> {
 
         if (200..300).contains(&response.status_code) {
             return Ok(response);
+        }
+
+        fn canonical_header_value(value: &str) -> &str {
+            value.trim()
         }
 
         let status = response.status_code;
