@@ -1,4 +1,4 @@
-use super::cshake::{CShake256, bytepad, encode_string, right_encode};
+use super::shake256::{CShake256, bytepad, encode_string, right_encode};
 
 const KMAC256_RATE: usize = 136;
 
