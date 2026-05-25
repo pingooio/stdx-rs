@@ -1,6 +1,11 @@
 use crate::{Hash, Hasher, MAX_HASH_LENGTH};
 
-const SHA512_K: [u64; 80] = [
+#[cfg(target_arch = "x86_64")]
+use crate::sha512_amd64;
+#[cfg(target_arch = "aarch64")]
+use crate::sha512_arm64;
+
+pub(crate) const SHA512_K: [u64; 80] = [
     0x428a2f98d728ae22,
     0x7137449123ef65cd,
     0xb5c0fbcfec4d3b2f,
@@ -94,76 +99,97 @@ pub struct Sha512 {
 impl Sha512 {
     #[inline]
     fn process_block(&mut self, block: &[u8; 128]) {
-        let mut w = [0u64; 80];
-        let mut i = 0usize;
-        while i < 16 {
-            let offset = i * 8;
-            w[i] = u64::from_be_bytes([
-                block[offset],
-                block[offset + 1],
-                block[offset + 2],
-                block[offset + 3],
-                block[offset + 4],
-                block[offset + 5],
-                block[offset + 6],
-                block[offset + 7],
-            ]);
-            i += 1;
+        #[cfg(target_arch = "x86_64")]
+        {
+            if sha512_amd64::process_block_if_supported(&mut self.state, block) {
+                return;
+            }
         }
 
-        while i < 80 {
-            let s0 = w[i - 15].rotate_right(1) ^ w[i - 15].rotate_right(8) ^ (w[i - 15] >> 7);
-            let s1 = w[i - 2].rotate_right(19) ^ w[i - 2].rotate_right(61) ^ (w[i - 2] >> 6);
-            w[i] = w[i - 16]
-                .wrapping_add(s0)
-                .wrapping_add(w[i - 7])
-                .wrapping_add(s1);
-            i += 1;
+        #[cfg(target_arch = "aarch64")]
+        {
+            // SAFETY: aarch64 target in this repository assumes SHA3/SHA512 instructions are present.
+            unsafe {
+                sha512_arm64::process_block(&mut self.state, block);
+            }
+            return;
         }
 
-        let mut a = self.state[0];
-        let mut b = self.state[1];
-        let mut c = self.state[2];
-        let mut d = self.state[3];
-        let mut e = self.state[4];
-        let mut f = self.state[5];
-        let mut g = self.state[6];
-        let mut h = self.state[7];
-
-        i = 0;
-        while i < 80 {
-            let s1 = e.rotate_right(14) ^ e.rotate_right(18) ^ e.rotate_right(41);
-            let ch = (e & f) ^ ((!e) & g);
-            let temp1 = h
-                .wrapping_add(s1)
-                .wrapping_add(ch)
-                .wrapping_add(SHA512_K[i])
-                .wrapping_add(w[i]);
-            let s0 = a.rotate_right(28) ^ a.rotate_right(34) ^ a.rotate_right(39);
-            let maj = (a & b) ^ (a & c) ^ (b & c);
-            let temp2 = s0.wrapping_add(maj);
-
-            h = g;
-            g = f;
-            f = e;
-            e = d.wrapping_add(temp1);
-            d = c;
-            c = b;
-            b = a;
-            a = temp1.wrapping_add(temp2);
-
-            i += 1;
-        }
-
-        self.state[0] = self.state[0].wrapping_add(a);
-        self.state[1] = self.state[1].wrapping_add(b);
-        self.state[2] = self.state[2].wrapping_add(c);
-        self.state[3] = self.state[3].wrapping_add(d);
-        self.state[4] = self.state[4].wrapping_add(e);
-        self.state[5] = self.state[5].wrapping_add(f);
-        self.state[6] = self.state[6].wrapping_add(g);
-        self.state[7] = self.state[7].wrapping_add(h);
+        process_block_scalar(&mut self.state, block);
     }
+}
+
+#[inline]
+pub(crate) fn process_block_scalar(state: &mut [u64; 8], block: &[u8; 128]) {
+    let mut w = [0u64; 80];
+    let mut i = 0usize;
+    while i < 16 {
+        let offset = i * 8;
+        w[i] = u64::from_be_bytes([
+            block[offset],
+            block[offset + 1],
+            block[offset + 2],
+            block[offset + 3],
+            block[offset + 4],
+            block[offset + 5],
+            block[offset + 6],
+            block[offset + 7],
+        ]);
+        i += 1;
+    }
+
+    while i < 80 {
+        let s0 = w[i - 15].rotate_right(1) ^ w[i - 15].rotate_right(8) ^ (w[i - 15] >> 7);
+        let s1 = w[i - 2].rotate_right(19) ^ w[i - 2].rotate_right(61) ^ (w[i - 2] >> 6);
+        w[i] = w[i - 16]
+            .wrapping_add(s0)
+            .wrapping_add(w[i - 7])
+            .wrapping_add(s1);
+        i += 1;
+    }
+
+    let mut a = state[0];
+    let mut b = state[1];
+    let mut c = state[2];
+    let mut d = state[3];
+    let mut e = state[4];
+    let mut f = state[5];
+    let mut g = state[6];
+    let mut h = state[7];
+
+    i = 0;
+    while i < 80 {
+        let s1 = e.rotate_right(14) ^ e.rotate_right(18) ^ e.rotate_right(41);
+        let ch = (e & f) ^ ((!e) & g);
+        let temp1 = h
+            .wrapping_add(s1)
+            .wrapping_add(ch)
+            .wrapping_add(SHA512_K[i])
+            .wrapping_add(w[i]);
+        let s0 = a.rotate_right(28) ^ a.rotate_right(34) ^ a.rotate_right(39);
+        let maj = (a & b) ^ (a & c) ^ (b & c);
+        let temp2 = s0.wrapping_add(maj);
+
+        h = g;
+        g = f;
+        f = e;
+        e = d.wrapping_add(temp1);
+        d = c;
+        c = b;
+        b = a;
+        a = temp1.wrapping_add(temp2);
+
+        i += 1;
+    }
+
+    state[0] = state[0].wrapping_add(a);
+    state[1] = state[1].wrapping_add(b);
+    state[2] = state[2].wrapping_add(c);
+    state[3] = state[3].wrapping_add(d);
+    state[4] = state[4].wrapping_add(e);
+    state[5] = state[5].wrapping_add(f);
+    state[6] = state[6].wrapping_add(g);
+    state[7] = state[7].wrapping_add(h);
 }
 
 impl Hasher for Sha512 {
@@ -204,6 +230,85 @@ impl Hasher for Sha512 {
                 block.copy_from_slice(&self.buffer);
                 self.process_block(&block);
                 self.buffer_len = 0;
+            }
+        }
+
+        #[cfg(test)]
+        mod tests {
+            use super::Sha512;
+            use crate::Hasher;
+
+            const VECTORS_SHA512: [(&str, &str); 7] = [
+                (
+                    "",
+                    "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
+                ),
+                (
+                    "a",
+                    "1f40fc92da241694750979ee6cf582f2d5d7d28e18335de05abc54d0560e0f5302860c652bf08d560252aa5e74210546f369fbbbce8c12cfc7957b2652fe9a75",
+                ),
+                (
+                    "abc",
+                    "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f",
+                ),
+                (
+                    "message digest",
+                    "107dbf389d9e9f71a3a95f6c055b9251bc5268c2be16d6c13492ea45b0199f3309e16455ab1e96118e8a905d5597b72038ddb372a89826046de66687bb420e7c",
+                ),
+                (
+                    "abcdefghijklmnopqrstuvwxyz",
+                    "4dbff86cc2ca1bae1e16468a05cb9881c97f1753bce3619034898faa1aabe429955a1bf8ec483d7421fe3c1646613a59ed5441fb0f321389f77f48a879c7b1f1",
+                ),
+                (
+                    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+                    "1e07be23c26a86ea37ea810c8ec7809352515a970e9253c26f536cfc7a9996c45c8370583e0a78fa4a90041d71a4ceab7423f19c71b9d5a3e01249f0bebd5894",
+                ),
+                (
+                    "12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+                    "72ec1ef1124a45b047e8b7c75a932195135bb61de24ec0d1914042246e0aec3a2354e093d76f3048b456764346900cb130d2a4fd5dd16abb5e30bcb850dee843",
+                ),
+            ];
+
+            #[test]
+            fn known_vectors_single_update() {
+                for (input, expected) in VECTORS_SHA512 {
+                    let mut hasher = Sha512::new();
+                    hasher.update(input.as_bytes());
+                    let digest = hasher.sum();
+                    assert_eq!(hex::encode(digest.as_ref()), expected);
+                }
+            }
+
+            #[test]
+            fn known_vectors_incremental() {
+                for (input, expected) in VECTORS_SHA512 {
+                    let bytes = input.as_bytes();
+                    let mut hasher = Sha512::new();
+                    for chunk in bytes.chunks(5) {
+                        hasher.update(chunk);
+                    }
+                    let digest = hasher.sum();
+                    assert_eq!(hex::encode(digest.as_ref()), expected);
+                }
+            }
+
+            #[test]
+            fn block_boundary_lengths() {
+                for len in [111usize, 112, 113, 127, 128, 129, 255, 256, 257] {
+                    let input = vec![b'a'; len];
+
+                    let mut whole = Sha512::new();
+                    whole.update(&input);
+                    let whole_sum = whole.sum();
+
+                    let mut split = Sha512::new();
+                    for chunk in input.chunks(11) {
+                        split.update(chunk);
+                    }
+                    let split_sum = split.sum();
+
+                    assert_eq!(whole_sum.as_ref(), split_sum.as_ref());
+                }
             }
         }
 
