@@ -259,4 +259,40 @@ mod tests {
             assert_eq!(whole_sum.as_ref(), split_sum.as_ref());
         }
     }
+
+    // NIST FIPS 180-4 vector: SHA-256("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")
+    #[test]
+    fn nist_448_bit_message() {
+        let input = b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+        let mut hasher = Sha256::new();
+        hasher.update(input);
+        assert_eq!(
+            hex::encode(hasher.sum().as_ref()),
+            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+        );
+    }
+
+    // NIST FIPS 180-4 vector: SHA-256("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu")
+    #[test]
+    fn nist_896_bit_message() {
+        let input = b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu";
+        let mut hasher = Sha256::new();
+        hasher.update(input);
+        assert_eq!(
+            hex::encode(hasher.sum().as_ref()),
+            "cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1"
+        );
+    }
+
+    // NIST vector: one million 'a' characters
+    #[test]
+    fn nist_one_million_a() {
+        let input = vec![b'a'; 1_000_000];
+        let mut hasher = Sha256::new();
+        hasher.update(&input);
+        assert_eq!(
+            hex::encode(hasher.sum().as_ref()),
+            "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
+        );
+    }
 }
