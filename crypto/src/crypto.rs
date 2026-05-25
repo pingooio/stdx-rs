@@ -49,6 +49,12 @@ pub trait Hasher: Sized + Clone {
     }
 }
 
+pub trait Xof: Sized + Send + Sync {
+    fn new() -> Self;
+    fn absobrd(&mut self, data: &[u8]);
+    fn squeeze(&mut self, out: &mut [u8]);
+}
+
 #[derive(Clone)]
 pub struct Hmac<H: Hasher> {
     hash: H,
