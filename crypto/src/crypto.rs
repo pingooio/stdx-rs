@@ -26,6 +26,13 @@ pub trait Hasher: Sized + Clone {
     fn new() -> Self;
     fn update(&mut self, data: &[u8]);
     fn sum(self) -> Hash;
+
+    #[inline]
+    fn hash(data: &[u8]) -> Hash {
+        let mut hasher = Self::new();
+        hasher.update(data);
+        return hasher.sum();
+    }
 }
 
 #[derive(Clone)]
