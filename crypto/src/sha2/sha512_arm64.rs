@@ -2,7 +2,7 @@
 
 use core::arch::aarch64::*;
 
-use crate::sha512::SHA512_K;
+use super::sha512::SHA512_K;
 
 #[inline]
 pub(crate) unsafe fn process_block(state: &mut [u64; 8], block: &[u8; 128]) {

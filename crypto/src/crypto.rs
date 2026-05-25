@@ -1,20 +1,7 @@
 pub mod hkdf;
 pub mod md5;
-mod sha256;
+pub mod sha2;
 pub mod sha3;
-mod sha512;
-pub use hkdf::Hkdf;
-pub use sha256::Sha256;
-pub use sha512::Sha512;
-
-#[cfg(target_arch = "x86_64")]
-mod sha256_amd64;
-#[cfg(target_arch = "aarch64")]
-mod sha256_arm64;
-#[cfg(target_arch = "x86_64")]
-mod sha512_amd64;
-#[cfg(target_arch = "aarch64")]
-mod sha512_arm64;
 
 const MAX_HASH_LENGTH: usize = 64;
 const MAX_HASH_BLOCK_SIZE: usize = 128;
@@ -117,7 +104,10 @@ impl<H: Hasher> Hmac<H> {
 
 #[cfg(test)]
 mod hmac_tests {
-    use super::{Hmac, Sha256, Sha512};
+    use crate::{
+        Hmac,
+        sha2::{Sha256, Sha512},
+    };
 
     #[derive(Clone, Copy)]
     enum TestInput {

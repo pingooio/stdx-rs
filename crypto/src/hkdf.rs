@@ -1,10 +1,5 @@
 use crate::{Hasher, Hmac};
 
-// /// HKDF (HMAC-based Extract-and-Expand Key Derivation Function) as defined in RFC 5869.
-// pub struct Hkdf<H: Hasher> {
-//     _phantom: core::marker::PhantomData<H>,
-// }
-
 /// Extract step: `PRK = HMAC-Hash(salt, IKM)`.
 ///
 /// If `salt` is `None`, a string of `H::OUTPUT_SIZE` zero bytes is used.
@@ -74,7 +69,7 @@ pub fn derive_key<H: Hasher, const N: usize>(ikm: &[u8], info: &[u8], salt: Opti
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Sha256, Sha512};
+    use crate::sha2::{Sha256, Sha512};
 
     struct TestVector {
         ikm: &'static str,
@@ -237,7 +232,8 @@ mod tests {
     #[should_panic(expected = "HKDF output length exceeds RFC 5869 limit")]
     fn hkdf_expand_panics_when_output_is_too_large() {
         let prk = [0u8; 32];
-        let _ = expand::<Sha256, 8161>(&prk, b"");
+        const N: usize = Sha256::BLOCK_SIZE * 300;
+        let _ = expand::<Sha256, N>(&prk, b"");
     }
 
     #[test]

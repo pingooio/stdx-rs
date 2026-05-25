@@ -52,8 +52,8 @@ pub fn p1600<const ROUNDS: usize>(state: &mut [u64; 25]) {
     // "the rounds of KECCAK-p[b, nr] match the last rounds of KECCAK-f[b]"
     let round_consts: &[u64] = &ROUND_CONSTANTS[(24 - ROUNDS)..];
 
-    // not unrolling this loop results in a much smaller function, plus
-    // it positively influences performance due to the smaller load on the instruction cache
+    // not unrolling this loop may results in a smaller function, plus
+    // it may positively influences performance due to the smaller number of instructions
     for &rc in round_consts {
         let mut array = [0u64; 5];
 
