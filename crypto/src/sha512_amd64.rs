@@ -53,9 +53,9 @@ unsafe fn compress(state: &mut [u64; 8], block: &[u8; 128]) {
 
     i = 0;
     while i < 80 {
-        let wk = _mm_setr_epi64x(
-            w[i].wrapping_add(SHA512_K[i]) as i64,
+        let wk = _mm_set_epi64x(
             w[i + 1].wrapping_add(SHA512_K[i + 1]) as i64,
+            w[i].wrapping_add(SHA512_K[i]) as i64,
         );
 
         let prev_abef = abef;
