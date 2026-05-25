@@ -16,12 +16,7 @@ impl Sha1 {
         let mut i = 0usize;
         while i < 16 {
             let offset = i * 4;
-            w[i] = u32::from_be_bytes([
-                block[offset],
-                block[offset + 1],
-                block[offset + 2],
-                block[offset + 3],
-            ]);
+            w[i] = u32::from_be_bytes([block[offset], block[offset + 1], block[offset + 2], block[offset + 3]]);
             i += 1;
         }
 
@@ -39,13 +34,13 @@ impl Sha1 {
         i = 0;
         while i < 80 {
             let (f, k) = if i < 20 {
-                ((b & c) | ((!b) & d), 0x5a82_7999u32)
+                ((b & c) | ((!b) & d), 0x5a827999u32)
             } else if i < 40 {
-                (b ^ c ^ d, 0x6ed9_eba1u32)
+                (b ^ c ^ d, 0x6ed9eba1u32)
             } else if i < 60 {
-                ((b & c) | (b & d) | (c & d), 0x8f1b_bcdc_u32)
+                ((b & c) | (b & d) | (c & d), 0x8f1bbcdcu32)
             } else {
-                (b ^ c ^ d, 0xca62_c1d6u32)
+                (b ^ c ^ d, 0xca62c1d6u32)
             };
 
             let tmp = a
@@ -78,7 +73,7 @@ impl Hasher for Sha1 {
     #[inline]
     fn new() -> Self {
         return Sha1 {
-            state: [0x6745_2301, 0xefcd_ab89, 0x98ba_dcfe, 0x1032_5476, 0xc3d2_e1f0],
+            state: [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0],
             buffer: [0u8; 64],
             buffer_len: 0,
             total_len: 0,
@@ -157,9 +152,8 @@ impl Hasher for Sha1 {
 
 #[cfg(test)]
 mod tests {
-    use crate::Hasher;
-
     use super::Sha1;
+    use crate::Hasher;
 
     const VECTORS: [(&str, &str); 7] = [
         ("", "da39a3ee5e6b4b0d3255bfef95601890afd80709"),
