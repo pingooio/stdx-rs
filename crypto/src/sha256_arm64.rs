@@ -1,7 +1,8 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use crate::sha256::SHA256_K;
 use core::arch::aarch64::*;
+
+use crate::sha256::SHA256_K;
 
 #[inline]
 pub(crate) unsafe fn process_block(state: &mut [u32; 8], block: &[u8; 64]) {

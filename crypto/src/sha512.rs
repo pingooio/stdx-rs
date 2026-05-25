@@ -1,9 +1,8 @@
-use crate::{Hash, Hasher, MAX_HASH_LENGTH};
-
 #[cfg(target_arch = "x86_64")]
 use crate::sha512_amd64;
 #[cfg(target_arch = "aarch64")]
 use crate::sha512_arm64;
+use crate::{Hash, Hasher, MAX_HASH_LENGTH};
 
 pub(crate) const SHA512_K: [u64; 80] = [
     0x428a2f98d728ae22,
@@ -141,10 +140,7 @@ pub(crate) fn process_block_scalar(state: &mut [u64; 8], block: &[u8; 128]) {
     while i < 80 {
         let s0 = w[i - 15].rotate_right(1) ^ w[i - 15].rotate_right(8) ^ (w[i - 15] >> 7);
         let s1 = w[i - 2].rotate_right(19) ^ w[i - 2].rotate_right(61) ^ (w[i - 2] >> 6);
-        w[i] = w[i - 16]
-            .wrapping_add(s0)
-            .wrapping_add(w[i - 7])
-            .wrapping_add(s1);
+        w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
         i += 1;
     }
 

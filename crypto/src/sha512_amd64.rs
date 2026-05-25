@@ -1,7 +1,8 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use crate::sha512::SHA512_K;
 use core::arch::x86_64::*;
+
+use crate::sha512::SHA512_K;
 
 #[inline]
 pub(crate) fn process_block_if_supported(state: &mut [u64; 8], block: &[u8; 128]) -> bool {
@@ -39,10 +40,7 @@ unsafe fn compress(state: &mut [u64; 8], block: &[u8; 128]) {
     while i < 80 {
         let s0 = w[i - 15].rotate_right(1) ^ w[i - 15].rotate_right(8) ^ (w[i - 15] >> 7);
         let s1 = w[i - 2].rotate_right(19) ^ w[i - 2].rotate_right(61) ^ (w[i - 2] >> 6);
-        w[i] = w[i - 16]
-            .wrapping_add(s0)
-            .wrapping_add(w[i - 7])
-            .wrapping_add(s1);
+        w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
         i += 1;
     }
 

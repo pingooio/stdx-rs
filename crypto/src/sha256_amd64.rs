@@ -1,10 +1,11 @@
 #![allow(clippy::many_single_char_names, unsafe_op_in_unsafe_fn)]
 
-use crate::sha256::SHA256_K;
 use core::arch::x86_64::*;
 
+use crate::sha256::SHA256_K;
+
 #[inline]
-pub(crate) fn process_block_if_supported(state: &mut [u32; 8], block: &[u8; 64]) -> bool {
+pub(crate) fn process_block_sha_ni(state: &mut [u32; 8], block: &[u8; 64]) -> bool {
     if std::arch::is_x86_feature_detected!("sha") {
         // SAFETY: Runtime feature detection guarantees required CPU features.
         unsafe {

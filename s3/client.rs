@@ -6,7 +6,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use crypto::{Hasher, Hmac, sha2::Sha256};
+use crypto::{Hasher, Hmac, Sha256};
 use futures_util::{Stream, StreamExt};
 use url::Url;
 

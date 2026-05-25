@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
-use crypto::{Hasher, sha2::Sha256};
+use crypto::{Hasher, Sha256};
 use quick_xml::de::from_str;
 use serde::Deserialize;
 
@@ -142,13 +142,7 @@ impl<H: HttpClient> Client<H> {
         let body = build_delete_objects_body(keys);
         let checksum_headers = delete_objects_checksum_headers(&body);
         let response = self
-            .execute_with_headers(
-                HttpMethod::Post,
-                &canonical_uri,
-                "delete=",
-                &body,
-                &checksum_headers,
-            )
+            .execute_with_headers(HttpMethod::Post, &canonical_uri, "delete=", &body, &checksum_headers)
             .await?;
         let xml_text = bytes_to_string(collect_body(response.body).await?)?;
         let xml: DeleteResultXml = from_str(&xml_text)?;
