@@ -196,48 +196,113 @@ mod tests {
     use super::Sha256;
     use crate::Hasher;
 
-    const VECTORS_SHA256: [(&str, &str); 7] = [
-        ("", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
-        ("a", "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"),
-        ("abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
-        (
-            "message digest",
-            "f7846f55cf23e14eebeab5b4e1550cad5b509e3348fbc4efa3a1413d393cb650",
-        ),
-        (
-            "abcdefghijklmnopqrstuvwxyz",
-            "71c480df93d6ae2f1efad1447c66c9525e316218cf51fc8d9ed832f2daf18b73",
-        ),
-        (
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
-            "db4bfcbd4da0cd85a60c3c37d3fbd8805c77f15fc6b1fdfe614ee0a7c8fdb4c0",
-        ),
-        (
-            "12345678901234567890123456789012345678901234567890123456789012345678901234567890",
-            "f371bc4a311f2b009eef952dd83ca80e2b60026c8e935592d0f9c308453c813e",
-        ),
+    #[derive(Clone, Copy)]
+    enum TestInput {
+        Bytes(&'static [u8]),
+        Repeated {
+            byte: u8,
+            len: usize,
+        },
+    }
+
+    #[derive(Clone, Copy)]
+    struct Sha256TestVector {
+        source: &'static str,
+        input: TestInput,
+        expected: &'static str,
+    }
+
+    const VECTORS_SHA256: [Sha256TestVector; 10] = [
+        // RFC 6234 / common SHA-256 vectors
+        Sha256TestVector {
+            source: "RFC 6234",
+            input: TestInput::Bytes(b""),
+            expected: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        },
+        Sha256TestVector {
+            source: "RFC 6234",
+            input: TestInput::Bytes(b"a"),
+            expected: "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+        },
+        Sha256TestVector {
+            source: "RFC 6234",
+            input: TestInput::Bytes(b"abc"),
+            expected: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        },
+        Sha256TestVector {
+            source: "RFC 6234",
+            input: TestInput::Bytes(b"message digest"),
+            expected: "f7846f55cf23e14eebeab5b4e1550cad5b509e3348fbc4efa3a1413d393cb650",
+        },
+        Sha256TestVector {
+            source: "RFC 6234",
+            input: TestInput::Bytes(b"abcdefghijklmnopqrstuvwxyz"),
+            expected: "71c480df93d6ae2f1efad1447c66c9525e316218cf51fc8d9ed832f2daf18b73",
+        },
+        Sha256TestVector {
+            source: "RFC 6234",
+            input: TestInput::Bytes(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"),
+            expected: "db4bfcbd4da0cd85a60c3c37d3fbd8805c77f15fc6b1fdfe614ee0a7c8fdb4c0",
+        },
+        Sha256TestVector {
+            source: "RFC 6234",
+            input: TestInput::Bytes(b"12345678901234567890123456789012345678901234567890123456789012345678901234567890"),
+            expected: "f371bc4a311f2b009eef952dd83ca80e2b60026c8e935592d0f9c308453c813e",
+        },
+        // NIST FIPS 180-4
+        Sha256TestVector {
+            source: "NIST FIPS 180-4",
+            input: TestInput::Bytes(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+            expected: "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+        },
+        Sha256TestVector {
+            source: "NIST FIPS 180-4",
+            input: TestInput::Bytes(
+                b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu",
+            ),
+            expected: "cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1",
+        },
+        Sha256TestVector {
+            source: "NIST FIPS 180-4",
+            input: TestInput::Repeated {
+                byte: b'a',
+                len: 1_000_000,
+            },
+            expected: "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
+        },
     ];
+
+    fn materialize(input: TestInput) -> Vec<u8> {
+        match input {
+            TestInput::Bytes(bytes) => bytes.to_vec(),
+            TestInput::Repeated {
+                byte,
+                len,
+            } => vec![byte; len],
+        }
+    }
 
     #[test]
     fn known_vectors_single_update() {
-        for (input, expected) in VECTORS_SHA256 {
+        for vector in VECTORS_SHA256 {
+            let input = materialize(vector.input);
             let mut hasher = Sha256::new();
-            hasher.update(input.as_bytes());
+            hasher.update(&input);
             let digest = hasher.sum();
-            assert_eq!(hex::encode(digest.as_ref()), expected);
+            assert_eq!(hex::encode(digest.as_ref()), vector.expected, "{}", vector.source);
         }
     }
 
     #[test]
     fn known_vectors_incremental() {
-        for (input, expected) in VECTORS_SHA256 {
-            let bytes = input.as_bytes();
+        for vector in VECTORS_SHA256 {
+            let bytes = materialize(vector.input);
             let mut hasher = Sha256::new();
             for chunk in bytes.chunks(3) {
                 hasher.update(chunk);
             }
             let digest = hasher.sum();
-            assert_eq!(hex::encode(digest.as_ref()), expected);
+            assert_eq!(hex::encode(digest.as_ref()), vector.expected, "{}", vector.source);
         }
     }
 
@@ -260,39 +325,4 @@ mod tests {
         }
     }
 
-    // NIST FIPS 180-4 vector: SHA-256("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")
-    #[test]
-    fn nist_448_bit_message() {
-        let input = b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
-        let mut hasher = Sha256::new();
-        hasher.update(input);
-        assert_eq!(
-            hex::encode(hasher.sum().as_ref()),
-            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
-        );
-    }
-
-    // NIST FIPS 180-4 vector: SHA-256("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu")
-    #[test]
-    fn nist_896_bit_message() {
-        let input = b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu";
-        let mut hasher = Sha256::new();
-        hasher.update(input);
-        assert_eq!(
-            hex::encode(hasher.sum().as_ref()),
-            "cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1"
-        );
-    }
-
-    // NIST vector: one million 'a' characters
-    #[test]
-    fn nist_one_million_a() {
-        let input = vec![b'a'; 1_000_000];
-        let mut hasher = Sha256::new();
-        hasher.update(&input);
-        assert_eq!(
-            hex::encode(hasher.sum().as_ref()),
-            "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
-        );
-    }
 }

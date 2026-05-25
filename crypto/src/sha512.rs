@@ -284,57 +284,113 @@ mod tests {
     use super::Sha512;
     use crate::Hasher;
 
-    const VECTORS_SHA512: [(&str, &str); 7] = [
-        (
-            "",
-            "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
-        ),
-        (
-            "a",
-            "1f40fc92da241694750979ee6cf582f2d5d7d28e18335de05abc54d0560e0f5302860c652bf08d560252aa5e74210546f369fbbbce8c12cfc7957b2652fe9a75",
-        ),
-        (
-            "abc",
-            "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f",
-        ),
-        (
-            "message digest",
-            "107dbf389d9e9f71a3a95f6c055b9251bc5268c2be16d6c13492ea45b0199f3309e16455ab1e96118e8a905d5597b72038ddb372a89826046de66687bb420e7c",
-        ),
-        (
-            "abcdefghijklmnopqrstuvwxyz",
-            "4dbff86cc2ca1bae1e16468a05cb9881c97f1753bce3619034898faa1aabe429955a1bf8ec483d7421fe3c1646613a59ed5441fb0f321389f77f48a879c7b1f1",
-        ),
-        (
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
-            "1e07be23c26a86ea37ea810c8ec7809352515a970e9253c26f536cfc7a9996c45c8370583e0a78fa4a90041d71a4ceab7423f19c71b9d5a3e01249f0bebd5894",
-        ),
-        (
-            "12345678901234567890123456789012345678901234567890123456789012345678901234567890",
-            "72ec1ef1124a45b047e8b7c75a932195135bb61de24ec0d1914042246e0aec3a2354e093d76f3048b456764346900cb130d2a4fd5dd16abb5e30bcb850dee843",
-        ),
+    #[derive(Clone, Copy)]
+    enum TestInput {
+        Bytes(&'static [u8]),
+        Repeated {
+            byte: u8,
+            len: usize,
+        },
+    }
+
+    #[derive(Clone, Copy)]
+    struct Sha512TestVector {
+        source: &'static str,
+        input: TestInput,
+        expected: &'static str,
+    }
+
+    const VECTORS_SHA512: [Sha512TestVector; 10] = [
+        // RFC 6234 / common SHA-512 vectors
+        Sha512TestVector {
+            source: "RFC 6234",
+            input: TestInput::Bytes(b""),
+            expected: "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
+        },
+        Sha512TestVector {
+            source: "RFC 6234",
+            input: TestInput::Bytes(b"a"),
+            expected: "1f40fc92da241694750979ee6cf582f2d5d7d28e18335de05abc54d0560e0f5302860c652bf08d560252aa5e74210546f369fbbbce8c12cfc7957b2652fe9a75",
+        },
+        Sha512TestVector {
+            source: "RFC 6234",
+            input: TestInput::Bytes(b"abc"),
+            expected: "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f",
+        },
+        Sha512TestVector {
+            source: "RFC 6234",
+            input: TestInput::Bytes(b"message digest"),
+            expected: "107dbf389d9e9f71a3a95f6c055b9251bc5268c2be16d6c13492ea45b0199f3309e16455ab1e96118e8a905d5597b72038ddb372a89826046de66687bb420e7c",
+        },
+        Sha512TestVector {
+            source: "RFC 6234",
+            input: TestInput::Bytes(b"abcdefghijklmnopqrstuvwxyz"),
+            expected: "4dbff86cc2ca1bae1e16468a05cb9881c97f1753bce3619034898faa1aabe429955a1bf8ec483d7421fe3c1646613a59ed5441fb0f321389f77f48a879c7b1f1",
+        },
+        Sha512TestVector {
+            source: "RFC 6234",
+            input: TestInput::Bytes(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"),
+            expected: "1e07be23c26a86ea37ea810c8ec7809352515a970e9253c26f536cfc7a9996c45c8370583e0a78fa4a90041d71a4ceab7423f19c71b9d5a3e01249f0bebd5894",
+        },
+        Sha512TestVector {
+            source: "RFC 6234",
+            input: TestInput::Bytes(b"12345678901234567890123456789012345678901234567890123456789012345678901234567890"),
+            expected: "72ec1ef1124a45b047e8b7c75a932195135bb61de24ec0d1914042246e0aec3a2354e093d76f3048b456764346900cb130d2a4fd5dd16abb5e30bcb850dee843",
+        },
+        // NIST FIPS 180-4
+        Sha512TestVector {
+            source: "NIST FIPS 180-4",
+            input: TestInput::Bytes(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+            expected: "204a8fc6dda82f0a0ced7beb8e08a41657c16ef468b228a8279be331a703c33596fd15c13b1b07f9aa1d3bea57789ca031ad85c7a71dd70354ec631238ca3445",
+        },
+        Sha512TestVector {
+            source: "NIST FIPS 180-4",
+            input: TestInput::Bytes(
+                b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu",
+            ),
+            expected: "8e959b75dae313da8cf4f72814fc143f8f7779c6eb9f7fa17299aeadb6889018501d289e4900f7e4331b99dec4b5433ac7d329eeb6dd26545e96e55b874be909",
+        },
+        Sha512TestVector {
+            source: "NIST FIPS 180-4",
+            input: TestInput::Repeated {
+                byte: b'a',
+                len: 1_000_000,
+            },
+            expected: "e718483d0ce769644e2e42c7bc15b4638e1f98b13b2044285632a803afa973ebde0ff244877ea60a4cb0432ce577c31beb009c5c2c49aa2e4eadb217ad8cc09b",
+        },
     ];
+
+    fn materialize(input: TestInput) -> Vec<u8> {
+        match input {
+            TestInput::Bytes(bytes) => bytes.to_vec(),
+            TestInput::Repeated {
+                byte,
+                len,
+            } => vec![byte; len],
+        }
+    }
 
     #[test]
     fn known_vectors_single_update() {
-        for (input, expected) in VECTORS_SHA512 {
+        for vector in VECTORS_SHA512 {
+            let input = materialize(vector.input);
             let mut hasher = Sha512::new();
-            hasher.update(input.as_bytes());
+            hasher.update(&input);
             let digest = hasher.sum();
-            assert_eq!(hex::encode(digest.as_ref()), expected);
+            assert_eq!(hex::encode(digest.as_ref()), vector.expected, "{}", vector.source);
         }
     }
 
     #[test]
     fn known_vectors_incremental() {
-        for (input, expected) in VECTORS_SHA512 {
-            let bytes = input.as_bytes();
+        for vector in VECTORS_SHA512 {
+            let bytes = materialize(vector.input);
             let mut hasher = Sha512::new();
             for chunk in bytes.chunks(5) {
                 hasher.update(chunk);
             }
             let digest = hasher.sum();
-            assert_eq!(hex::encode(digest.as_ref()), expected);
+            assert_eq!(hex::encode(digest.as_ref()), vector.expected, "{}", vector.source);
         }
     }
 
@@ -357,39 +413,4 @@ mod tests {
         }
     }
 
-    // NIST FIPS 180-4 vector: SHA-512("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")
-    #[test]
-    fn nist_448_bit_message() {
-        let input = b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
-        let mut hasher = Sha512::new();
-        hasher.update(input);
-        assert_eq!(
-            hex::encode(hasher.sum().as_ref()),
-            "204a8fc6dda82f0a0ced7beb8e08a41657c16ef468b228a8279be331a703c33596fd15c13b1b07f9aa1d3bea57789ca031ad85c7a71dd70354ec631238ca3445"
-        );
-    }
-
-    // NIST FIPS 180-4 vector: SHA-512 of the 896-bit string
-    #[test]
-    fn nist_896_bit_message() {
-        let input = b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu";
-        let mut hasher = Sha512::new();
-        hasher.update(input);
-        assert_eq!(
-            hex::encode(hasher.sum().as_ref()),
-            "8e959b75dae313da8cf4f72814fc143f8f7779c6eb9f7fa17299aeadb6889018501d289e4900f7e4331b99dec4b5433ac7d329eeb6dd26545e96e55b874be909"
-        );
-    }
-
-    // NIST vector: one million 'a' characters
-    #[test]
-    fn nist_one_million_a() {
-        let input = vec![b'a'; 1_000_000];
-        let mut hasher = Sha512::new();
-        hasher.update(&input);
-        assert_eq!(
-            hex::encode(hasher.sum().as_ref()),
-            "e718483d0ce769644e2e42c7bc15b4638e1f98b13b2044285632a803afa973ebde0ff244877ea60a4cb0432ce577c31beb009c5c2c49aa2e4eadb217ad8cc09b"
-        );
-    }
 }
