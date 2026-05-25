@@ -2,8 +2,10 @@ pub mod md5;
 mod sha256;
 pub mod sha3;
 mod sha512;
+pub mod hkdf;
 pub use sha256::Sha256;
 pub use sha512::Sha512;
+pub use hkdf::Hkdf;
 
 #[cfg(target_arch = "x86_64")]
 mod sha256_amd64;
