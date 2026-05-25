@@ -3,7 +3,7 @@ pub mod sha2;
 pub mod sha3;
 
 const MAX_HASH_LENGTH: usize = 64;
-const MAX_HASH_BLOCK_SIZE: usize = 64;
+const MAX_HASH_BLOCK_SIZE: usize = 128;
 
 pub struct Hash {
     hash: [u8; MAX_HASH_LENGTH],
