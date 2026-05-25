@@ -1,4 +1,4 @@
-use sha2::{Digest, digest::ExtendableOutput};
+use sha3::Digest;
 
 pub struct Sha3_256(sha3::Sha3_256);
 
@@ -48,13 +48,13 @@ impl Sha3_512 {
     }
 }
 
-pub struct Shake256;
+// pub struct Shake256;
 
-impl Shake256 {
-    pub fn hash(data: &[u8], output: &mut [u8]) {
-        sha3::Shake256::digest_xof(data, output);
-    }
-}
+// impl Shake256 {
+//     pub fn hash(data: &[u8], output: &mut [u8]) {
+//         sha3::::digest_xof(data, output);
+//     }
+// }
 
 #[cfg(test)]
 mod tests {
