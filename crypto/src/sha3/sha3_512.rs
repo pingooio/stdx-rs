@@ -26,7 +26,7 @@ impl Sha3_512 {
 
     #[inline]
     pub fn write(&mut self, data: &[u8]) {
-        self.keccak.update(data);
+        self.keccak.absorb(data);
     }
 
     #[inline]

@@ -1,4 +1,5 @@
 use super::shake256::{CShake256, bytepad, encode_string, right_encode};
+use crate::Xof;
 
 const KMAC256_RATE: usize = 136;
 
@@ -19,24 +20,23 @@ impl Kmac256 {
     pub fn new(key: &[u8], customization: &[u8]) -> Self {
         let mut cshake = CShake256::new(b"KMAC", customization);
         let key_padded = bytepad(&encode_string(key), KMAC256_RATE);
-        cshake.write(&key_padded);
-        return Kmac256 { cshake };
+        cshake.absobrd(&key_padded);
+        return Kmac256 {
+            cshake,
+        };
     }
 
     #[inline]
     pub fn update(&mut self, data: &[u8]) {
-        self.cshake.write(data);
+        self.cshake.absobrd(data);
     }
 
     #[inline]
     pub fn finalize_into(mut self, output: &mut [u8]) {
-        let output_bits = output
-            .len()
-            .checked_mul(8)
-            .expect("output size too large for KMAC");
+        let output_bits = output.len().checked_mul(8).expect("output size too large for KMAC");
         let encoded_output_len = right_encode(output_bits);
-        self.cshake.write(&encoded_output_len);
-        self.cshake.read(output);
+        self.cshake.absobrd(&encoded_output_len);
+        self.cshake.squeeze(output);
     }
 }
 
@@ -45,9 +45,8 @@ mod tests {
     use super::Kmac256;
 
     const KEY: [u8; 32] = [
-        0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D,
-        0x4E, 0x4F, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x5B,
-        0x5C, 0x5D, 0x5E, 0x5F,
+        0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50, 0x51,
+        0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F,
     ];
     const TAGGED_APP: &[u8] = b"My Tagged Application";
 

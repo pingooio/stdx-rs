@@ -5,7 +5,111 @@ pub(crate) const SHAKE256_RATE: usize = 136;
 const CSHAKE256_DOMAIN_SEPARATOR: u8 = 0x04;
 const SHAKE256_DOMAIN_SEPARATOR: u8 = 0x1f;
 
-// ── SP 800-185 encoding helpers ───────────────────────────────────────────────
+#[derive(Clone)]
+pub struct CShake256 {
+    keccak: Keccak,
+}
+
+impl CShake256 {
+    #[inline]
+    pub fn hash(data: &[u8], function_name: &[u8], customization: &[u8], output: &mut [u8]) {
+        let mut xof = CShake256::new(function_name, customization);
+        xof.absobrd(data);
+        xof.squeeze(output);
+    }
+
+    #[inline]
+    pub fn new(function_name: &[u8], customization: &[u8]) -> Self {
+        if function_name.is_empty() && customization.is_empty() {
+            return CShake256 {
+                keccak: Keccak::new(SHAKE256_RATE, SHAKE256_DOMAIN_SEPARATOR),
+            };
+        }
+
+        let mut keccak = Keccak::new(SHAKE256_RATE, CSHAKE256_DOMAIN_SEPARATOR);
+        let mut encoded = Vec::new();
+        encoded.extend_from_slice(&encode_string(function_name));
+        encoded.extend_from_slice(&encode_string(customization));
+        let prefix = bytepad(&encoded, SHAKE256_RATE);
+        keccak.absorb(&prefix);
+
+        return CShake256 {
+            keccak,
+        };
+    }
+}
+
+impl Xof for CShake256 {
+    #[inline]
+    fn absobrd(&mut self, data: &[u8]) {
+        self.keccak.absorb(data);
+    }
+
+    #[inline]
+    fn squeeze(&mut self, out: &mut [u8]) {
+        self.keccak.squeeze(out);
+    }
+}
+
+#[derive(Clone)]
+pub struct Shake256 {
+    cshake: CShake256,
+}
+
+impl Shake256 {
+    #[inline]
+    pub fn hash(data: &[u8], output: &mut [u8]) {
+        let mut hasher = Shake256::new();
+        hasher.absobrd(data);
+        hasher.squeeze(output);
+    }
+
+    #[inline]
+    pub fn new() -> Self {
+        return Shake256 {
+            cshake: CShake256::new(b"", b""),
+        };
+    }
+}
+
+impl Xof for Shake256 {
+    #[inline]
+    fn absobrd(&mut self, data: &[u8]) {
+        self.cshake.absobrd(data);
+    }
+
+    #[inline]
+    fn squeeze(&mut self, out: &mut [u8]) {
+        self.cshake.squeeze(out);
+    }
+}
+
+impl Hasher for Shake256 {
+    const BLOCK_SIZE: usize = SHAKE256_RATE;
+    const OUTPUT_SIZE: usize = 64;
+
+    #[inline]
+    fn new() -> Self {
+        return Shake256::new();
+    }
+
+    #[inline]
+    fn update(&mut self, data: &[u8]) {
+        self.absobrd(data);
+    }
+
+    #[inline]
+    fn sum(mut self) -> Hash {
+        let mut hash = [0u8; MAX_HASH_LENGTH];
+        self.squeeze(&mut hash[..Self::OUTPUT_SIZE]);
+        return Hash {
+            hash,
+            length: Self::OUTPUT_SIZE,
+        };
+    }
+}
+
+// SP 800-185 encoding helpers
 
 #[inline]
 pub(crate) fn left_encode(x: usize) -> Vec<u8> {
@@ -44,142 +148,6 @@ pub(crate) fn bytepad(x: &[u8], w: usize) -> Vec<u8> {
     let pad_len = (w - (out.len() % w)) % w;
     out.resize(out.len() + pad_len, 0);
     return out;
-}
-
-// ── CShake256 ─────────────────────────────────────────────────────────────────
-
-#[derive(Clone)]
-pub struct CShake256 {
-    keccak: Keccak,
-}
-
-impl CShake256 {
-    #[inline]
-    pub fn hash(data: &[u8], function_name: &[u8], customization: &[u8], output: &mut [u8]) {
-        let mut xof = CShake256::new(function_name, customization);
-        xof.write(data);
-        xof.read(output);
-    }
-
-    #[inline]
-    pub fn new(function_name: &[u8], customization: &[u8]) -> Self {
-        if function_name.is_empty() && customization.is_empty() {
-            return CShake256 {
-                keccak: Keccak::new(SHAKE256_RATE, SHAKE256_DOMAIN_SEPARATOR),
-            };
-        }
-
-        let mut keccak = Keccak::new(SHAKE256_RATE, CSHAKE256_DOMAIN_SEPARATOR);
-        let mut encoded = Vec::new();
-        encoded.extend_from_slice(&encode_string(function_name));
-        encoded.extend_from_slice(&encode_string(customization));
-        let prefix = bytepad(&encoded, SHAKE256_RATE);
-        keccak.update(&prefix);
-
-        return CShake256 { keccak };
-    }
-
-    #[inline]
-    pub fn write(&mut self, data: &[u8]) {
-        self.keccak.update(data);
-    }
-
-    #[inline]
-    pub fn read(&mut self, output: &mut [u8]) {
-        self.keccak.squeeze(output);
-    }
-}
-
-impl Xof for CShake256 {
-    #[inline]
-    fn new() -> Self {
-        return CShake256::new(b"", b"");
-    }
-
-    #[inline]
-    fn absobrd(&mut self, data: &[u8]) {
-        self.write(data);
-    }
-
-    #[inline]
-    fn squeeze(&mut self, out: &mut [u8]) {
-        self.read(out);
-    }
-}
-
-// ── Shake256 (delegates to CShake256 with empty N and S) ──────────────────────
-
-#[derive(Clone)]
-pub struct Shake256 {
-    inner: CShake256,
-}
-
-impl Shake256 {
-    #[inline]
-    pub fn hash(data: &[u8], output: &mut [u8]) {
-        let mut hasher = Shake256::new();
-        hasher.write(data);
-        hasher.read(output);
-    }
-
-    #[inline]
-    pub fn new() -> Self {
-        return Shake256 {
-            inner: CShake256::new(b"", b""),
-        };
-    }
-
-    #[inline]
-    pub fn write(&mut self, data: &[u8]) {
-        self.inner.write(data);
-    }
-
-    #[inline]
-    pub fn read(&mut self, output: &mut [u8]) {
-        self.inner.read(output);
-    }
-}
-
-impl Xof for Shake256 {
-    #[inline]
-    fn new() -> Self {
-        return Shake256::new();
-    }
-
-    #[inline]
-    fn absobrd(&mut self, data: &[u8]) {
-        self.write(data);
-    }
-
-    #[inline]
-    fn squeeze(&mut self, out: &mut [u8]) {
-        self.read(out);
-    }
-}
-
-impl Hasher for Shake256 {
-    const BLOCK_SIZE: usize = SHAKE256_RATE;
-    const OUTPUT_SIZE: usize = 64;
-
-    #[inline]
-    fn new() -> Self {
-        return Shake256::new();
-    }
-
-    #[inline]
-    fn update(&mut self, data: &[u8]) {
-        self.write(data);
-    }
-
-    #[inline]
-    fn sum(mut self) -> Hash {
-        let mut hash = [0u8; MAX_HASH_LENGTH];
-        self.inner.read(&mut hash[..Self::OUTPUT_SIZE]);
-        return Hash {
-            hash,
-            length: Self::OUTPUT_SIZE,
-        };
-    }
 }
 
 #[cfg(test)]
@@ -244,11 +212,11 @@ mod tests {
         Shake256::hash(b"", &mut one_shot);
 
         let mut shake = Shake256::new();
-        shake.write(b"");
+        shake.absobrd(b"");
         let mut first = [0u8; 64];
         let mut second = [0u8; 64];
-        shake.read(&mut first);
-        shake.read(&mut second);
+        shake.squeeze(&mut first);
+        shake.squeeze(&mut second);
 
         let mut combined = vec![0u8; 128];
         combined[..64].copy_from_slice(&first);
@@ -266,7 +234,7 @@ mod tests {
 
     #[test]
     fn xof_trait_impl() {
-        let mut xof = <Shake256 as Xof>::new();
+        let mut xof = Shake256::new();
         xof.absobrd(b"abc");
         let mut out = [0u8; 64];
         xof.squeeze(&mut out);
@@ -305,10 +273,10 @@ mod tests {
 
         let mut cshake = CShake256::new(b"", EMAIL_SIGNATURE);
         for chunk in input.chunks(9) {
-            cshake.write(chunk);
+            cshake.absobrd(chunk);
         }
         let mut streamed = [0u8; 64];
-        cshake.read(&mut streamed);
+        cshake.squeeze(&mut streamed);
         assert_eq!(streamed, one_shot);
     }
 
@@ -325,7 +293,7 @@ mod tests {
 
     #[test]
     fn cshake256_xof_trait_impl() {
-        let mut xof = <CShake256 as Xof>::new();
+        let mut xof = CShake256::new(b"", b"");
         xof.absobrd(b"abc");
         let mut out = [0u8; 64];
         xof.squeeze(&mut out);

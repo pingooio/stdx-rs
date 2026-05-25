@@ -1,3 +1,5 @@
+use std::cmp::min;
+
 pub const RHO: [u32; 24] = [
     1, 3, 6, 10, 15, 21, 28, 36, 45, 55, 2, 14, 27, 41, 56, 8, 25, 43, 62, 18, 39, 61, 20, 44,
 ];
@@ -98,14 +100,20 @@ pub fn p1600<const ROUNDS: usize>(state: &mut [u64; 25]) {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SpongeMode {
+    Absorbing,
+    Squeezing,
+}
+
 #[derive(Clone)]
 pub(crate) struct Keccak {
-    state: [u64; 25],
+    state: [u8; 200],
     rate: usize,
-    delimiter: u8,
-    absorb_pos: usize,
-    squeeze_pos: usize,
-    finalized: bool,
+    padding: u8,
+    /// the current position in the state buffer
+    pos: usize,
+    mode: SpongeMode,
 }
 
 impl Keccak {
@@ -113,68 +121,91 @@ impl Keccak {
     pub(crate) fn new(rate: usize, delimiter: u8) -> Self {
         debug_assert!(rate > 0 && rate < 200);
         return Keccak {
-            state: [0u64; 25],
+            state: [0u8; 200],
             rate,
-            delimiter,
-            absorb_pos: 0,
-            squeeze_pos: 0,
-            finalized: false,
+            padding: delimiter,
+            pos: 0,
+            mode: SpongeMode::Absorbing,
         };
     }
 
     #[inline]
-    pub(crate) fn update(&mut self, mut data: &[u8]) {
-        assert!(!self.finalized, "cannot absorb after squeeze has started");
+    pub(crate) fn absorb(&mut self, data: &[u8]) {
+        assert_eq!(self.mode, SpongeMode::Absorbing, "asbsorb can't be called after squeezing");
 
-        while !data.is_empty() {
-            let take = (self.rate - self.absorb_pos).min(data.len());
-            let mut i = 0usize;
-            while i < take {
-                xor_byte(&mut self.state, self.absorb_pos + i, data[i]);
-                i += 1;
-            }
-            self.absorb_pos += take;
-            data = &data[take..];
+        // we first need to prevent `data` to overflow into `capacity`
+        let rate_remainder = min(self.rate - self.pos, data.len());
+        self.absorb_chunk(&data[..rate_remainder]);
 
-            if self.absorb_pos == self.rate {
-                p1600::<24>(&mut self.state);
-                self.absorb_pos = 0;
-            }
+        // then we can absorbe `RATE`-sized chunks
+        for chunk in data[rate_remainder..].chunks(self.rate) {
+            self.absorb_chunk(chunk);
         }
     }
 
     #[inline]
-    fn finalize_if_needed(&mut self) {
-        if self.finalized {
-            return;
-        }
+    fn absorb_chunk(&mut self, chunk: &[u8]) {
+        // xor(&mut self.state[self.pos..RATE], &chunk);
+        xor(&mut self.state[self.pos..self.pos + chunk.len()], &chunk);
+        self.pos += chunk.len();
 
-        xor_byte(&mut self.state, self.absorb_pos, self.delimiter);
-        if (self.delimiter & 0x80) != 0 && self.absorb_pos == (self.rate - 1) {
-            p1600::<24>(&mut self.state);
+        // if the sponge is full, apply the permutation
+        if self.pos == self.rate {
+            self.permute_and_reset_pos();
         }
-        xor_byte(&mut self.state, self.rate - 1, 0x80);
-        p1600::<24>(&mut self.state);
-
-        self.absorb_pos = 0;
-        self.squeeze_pos = 0;
-        self.finalized = true;
     }
 
     #[inline]
-    pub(crate) fn squeeze(&mut self, output: &mut [u8]) {
-        self.finalize_if_needed();
+    pub fn squeeze(&mut self, out: &mut [u8]) {
+        // if we're still absorbing, pad and apply the permutation
+        if self.mode == SpongeMode::Absorbing {
+            self.pad_and_permute();
+            self.mode = SpongeMode::Squeezing;
+        }
 
-        for byte in output {
-            if self.squeeze_pos == self.rate {
-                p1600::<24>(&mut self.state);
-                self.squeeze_pos = 0;
-            }
+        // we first need to prevent `out` to overflow into `capacity`
+        let rate_remainder = min(self.rate - self.pos, out.len());
+        self.squeeze_chunk(&mut out[..rate_remainder]);
 
-            *byte = get_byte(&self.state, self.squeeze_pos);
-            self.squeeze_pos += 1;
+        // then we can squeeze `RATE`-sized chunks
+        for mut chunk in out[rate_remainder..].chunks_mut(self.rate) {
+            self.squeeze_chunk(&mut chunk);
         }
     }
+
+    #[inline]
+    fn squeeze_chunk(&mut self, out: &mut [u8]) {
+        if self.pos == self.rate {
+            self.permute_and_reset_pos();
+        }
+
+        out.copy_from_slice(&self.state[self.pos..self.pos + out.len()]);
+        self.pos += out.len();
+    }
+
+    #[inline]
+    fn pad_and_permute(&mut self) {
+        self.state[self.pos] ^= self.padding;
+        self.state[self.rate - 1] ^= 0x80;
+        self.permute_and_reset_pos();
+    }
+
+    #[inline]
+    fn permute_and_reset_pos(&mut self) {
+        // this is totally safe as long as state.len() == 200 and state remains a [u8]. We are just
+        // playing with the memory representation of the array, from [u8] to [u64].
+        let mut state: &mut [u64; 200 / 8] = unsafe { core::mem::transmute(&mut self.state) };
+        p1600::<24>(&mut state);
+        self.pos = 0;
+    }
+}
+
+/// xor dest with source. source is not modified.
+#[inline(always)]
+pub fn xor(dest: &mut [u8], source: &[u8]) {
+    dest.iter_mut()
+        .zip(source.iter())
+        .for_each(|(dest, source)| *dest ^= *source);
 }
 
 #[inline]
