@@ -10,6 +10,7 @@ pub use shake256::Shake256;
 #[cfg(test)]
 mod tests {
     use super::{Sha3_256, Sha3_512, Shake256, hash_256, hash_512};
+    use crate::{Hasher, Xof};
 
     fn vectors_sha3() -> Vec<(Vec<u8>, &'static str, &'static str)> {
         vec![
@@ -137,5 +138,31 @@ mod tests {
         combined[64..].copy_from_slice(&second);
 
         assert_eq!(combined, one_shot);
+    }
+
+    #[test]
+    fn hasher_trait_impls_for_sha3_and_shake256() {
+        for (input, expected_256, expected_512) in vectors_sha3() {
+            let digest_256 = <Sha3_256 as Hasher>::hash(&input);
+            let digest_512 = <Sha3_512 as Hasher>::hash(&input);
+            assert_eq!(hex::encode(digest_256.as_ref()), expected_256);
+            assert_eq!(hex::encode(digest_512.as_ref()), expected_512);
+        }
+
+        let expected = "369771bb2cb9d2b04c1d54cca487e372d9f187f73f7ba3f65b95c8ee7798c527f4f3c2d55c2d46a29f2e945d469c3df27853a8735271f5cc2d9e889544357116";
+        let digest = <Shake256 as Hasher>::hash(b"hello world");
+        assert_eq!(hex::encode(digest.as_ref()), expected);
+    }
+
+    #[test]
+    fn xof_trait_impl_for_shake256() {
+        let mut xof = <Shake256 as Xof>::new();
+        xof.absobrd(b"abc");
+        let mut out = [0u8; 64];
+        xof.squeeze(&mut out);
+        assert_eq!(
+            hex::encode(out),
+            "483366601360a8771c6863080cc4114d8db44530f8f1e1ee4f94ea37e78b5739d5a15bef186a5386c75744c0527e1faa9f8726e462a12a4feb06bd8801e751e4"
+        );
     }
 }

@@ -98,6 +98,7 @@ pub(crate) fn keccak_f1600(state: &mut [u64; 25]) {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct Keccak {
     state: [u64; 25],
     rate: usize,

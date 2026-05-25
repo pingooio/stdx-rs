@@ -1,8 +1,10 @@
 use super::keccak::Keccak;
+use crate::{Hash, Hasher, MAX_HASH_LENGTH};
 
 const SHA3_512_RATE: usize = 72;
 const SHA3_512_DOMAIN_SEPARATOR: u8 = 0x06;
 
+#[derive(Clone)]
 pub struct Sha3_512 {
     keccak: Keccak,
 }
@@ -32,5 +34,30 @@ impl Sha3_512 {
         let mut output = [0u8; 64];
         self.keccak.squeeze(&mut output);
         return output;
+    }
+}
+
+impl Hasher for Sha3_512 {
+    const BLOCK_SIZE: usize = SHA3_512_RATE;
+    const OUTPUT_SIZE: usize = 64;
+
+    #[inline]
+    fn new() -> Self {
+        return Sha3_512::new();
+    }
+
+    #[inline]
+    fn update(&mut self, data: &[u8]) {
+        self.write(data);
+    }
+
+    #[inline]
+    fn sum(mut self) -> Hash {
+        let mut hash = [0u8; MAX_HASH_LENGTH];
+        self.keccak.squeeze(&mut hash[..Self::OUTPUT_SIZE]);
+        return Hash {
+            hash,
+            length: Self::OUTPUT_SIZE,
+        };
     }
 }
