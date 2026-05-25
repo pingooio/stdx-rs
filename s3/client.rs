@@ -1,15 +1,13 @@
 use std::{
     collections::BTreeMap,
     fmt,
-    future::Future,
     pin::Pin,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use bytes::Bytes;
+use crypto::{Hmac, sha2::Sha256};
 use futures_util::{Stream, StreamExt};
-use hmac::{Hmac, Mac};
-use sha2::{Digest, Sha256};
 use url::Url;
 
 pub(crate) const EMPTY_PAYLOAD_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -131,7 +129,10 @@ impl HttpResponseData {
 }
 
 pub trait HttpClient: Send + Sync {
-    fn send(&self, request: HttpRequest) -> impl Future<Output = Result<HttpResponseData, HttpError>> + Send + '_;
+    fn send(
+        &self,
+        request: HttpRequest,
+    ) -> impl std::future::Future<Output = Result<HttpResponseData, HttpError>> + Send;
 }
 
 #[cfg(feature = "reqwest")]
@@ -239,7 +240,7 @@ impl<H: HttpClient> Client<H> {
         let payload_hash = if body.is_empty() {
             EMPTY_PAYLOAD_SHA256.to_string()
         } else {
-            hex_lower(&sha256(body))
+            hex::encode(&sha256(body))
         };
 
         let mut headers = vec![
@@ -281,10 +282,10 @@ impl<H: HttpClient> Client<H> {
             "AWS4-HMAC-SHA256\n{}\n{}\n{}",
             amz_datetime,
             credential_scope,
-            hex_lower(&sha256(canonical_request.as_bytes()))
+            hex::encode(&sha256(canonical_request.as_bytes()))
         );
 
-        let signature = hex_lower(&sign_v4(
+        let signature = hex::encode(&sign_v4(
             &self.credentials.secret_access_key,
             &date,
             &self.region,
@@ -404,16 +405,6 @@ fn hex_nibble_upper(value: u8) -> char {
     }
 }
 
-pub(crate) fn hex_lower(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0x0f) as usize] as char);
-    }
-    out
-}
-
 fn sign_v4(secret_access_key: &str, date: &str, region: &str, string_to_sign: &str) -> [u8; 32] {
     let k_date = hmac_sha256(format!("AWS4{secret_access_key}").as_bytes(), date.as_bytes());
     let k_region = hmac_sha256(&k_date, region.as_bytes());
@@ -423,19 +414,16 @@ fn sign_v4(secret_access_key: &str, date: &str, region: &str, string_to_sign: &s
 }
 
 pub(crate) fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
-    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts any key length for SHA-256");
+    let mut mac = Hmac::<Sha256>::new(key);
     mac.update(data);
-    let bytes = mac.finalize().into_bytes();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&bytes);
-    out
+    return mac.finalize().as_ref().try_into().unwrap();
 }
 
 pub(crate) fn sha256(data: &[u8]) -> [u8; 32] {
-    let digest = Sha256::digest(data);
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&digest);
-    out
+    use crypto::Hasher;
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    return hasher.sum().as_ref().try_into().unwrap();
 }
 
 fn amz_datetime(now: SystemTime) -> Result<(String, String), Error> {
@@ -512,11 +500,11 @@ mod tests {
     #[test]
     fn sha256_known_vectors() {
         assert_eq!(
-            hex_lower(&sha256(b"")),
+            hex::encode(&sha256(b"")),
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
         assert_eq!(
-            hex_lower(&sha256(b"abc")),
+            hex::encode(&sha256(b"abc")),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
     }
@@ -526,7 +514,7 @@ mod tests {
         let key = [0x0b; 20];
         let sig = hmac_sha256(&key, b"Hi There");
         assert_eq!(
-            hex_lower(&sig),
+            hex::encode(&sig),
             "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
         );
     }
@@ -584,7 +572,7 @@ mod tests {
 
     #[test]
     fn empty_payload_sha256_constant_is_correct() {
-        assert_eq!(EMPTY_PAYLOAD_SHA256, hex_lower(&sha256(b"")));
+        assert_eq!(EMPTY_PAYLOAD_SHA256, hex::encode(&sha256(b"")));
     }
 
     #[test]

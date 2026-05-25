@@ -11,15 +11,16 @@ default = ["reqwest"]
 reqwest = ["dep:reqwest"]
 
 [dependencies]
-base64 = "0.22"
+# async-trait = { path = "../async-trait" }
+base64 = { path = "../base64" }
 bytes = { workspace = true }
+crypto = { path = "../crypto" }
 futures-util = { workspace = true }
-hmac = "0.12.1"
+hex = { path = "../hex" }
 md-5 = "0.10.6"
 quick-xml = { version = "0.38", features = ["serialize"] }
 reqwest = { workspace = true, features = ["stream"], optional = true }
 serde = { workspace = true, features = ["derive"] }
-sha2 = "0.10.8"
 url = "2"
 
 [dev-dependencies]
