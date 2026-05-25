@@ -1,81 +1,79 @@
 use crate::{Hasher, Hmac};
 
-/// HKDF (HMAC-based Extract-and-Expand Key Derivation Function) as defined in RFC 5869.
-pub struct Hkdf<H: Hasher> {
-    _phantom: core::marker::PhantomData<H>,
+// /// HKDF (HMAC-based Extract-and-Expand Key Derivation Function) as defined in RFC 5869.
+// pub struct Hkdf<H: Hasher> {
+//     _phantom: core::marker::PhantomData<H>,
+// }
+
+/// Extract step: `PRK = HMAC-Hash(salt, IKM)`.
+///
+/// If `salt` is `None`, a string of `H::OUTPUT_SIZE` zero bytes is used.
+pub fn extract<H: Hasher>(salt: Option<&[u8]>, ikm: &[u8]) -> [u8; 64] {
+    let default_salt = [0u8; 64];
+    let salt = salt.unwrap_or(&default_salt[..H::OUTPUT_SIZE]);
+    let mut mac = Hmac::<H>::new(salt);
+    mac.update(ikm);
+    let result = mac.finalize();
+    let mut prk = [0u8; 64];
+    prk[..H::OUTPUT_SIZE].copy_from_slice(result.as_ref());
+    prk
 }
 
-impl<H: Hasher> Hkdf<H> {
-    /// Extract step: `PRK = HMAC-Hash(salt, IKM)`.
-    ///
-    /// If `salt` is `None`, a string of `H::OUTPUT_SIZE` zero bytes is used.
-    pub fn extract(salt: Option<&[u8]>, ikm: &[u8]) -> [u8; 64] {
-        let default_salt = [0u8; 64];
-        let salt = salt.unwrap_or(&default_salt[..H::OUTPUT_SIZE]);
-        let mut mac = Hmac::<H>::new(salt);
-        mac.update(ikm);
-        let result = mac.finalize();
-        let mut prk = [0u8; 64];
-        prk[..H::OUTPUT_SIZE].copy_from_slice(result.as_ref());
-        prk
+/// Expand step: `OKM = T(1) || T(2) || ...`, where
+/// `T(i) = HMAC-Hash(PRK, T(i-1) || info || i)`.
+///
+/// # Panics
+///
+/// Panics if `N > 255 * H::OUTPUT_SIZE` or if `prk.len() < H::OUTPUT_SIZE`.
+pub fn expand<H: Hasher, const N: usize>(prk: &[u8], info: &[u8]) -> [u8; N] {
+    assert!(
+        prk.len() >= H::OUTPUT_SIZE,
+        "HKDF PRK must be at least {} bytes",
+        H::OUTPUT_SIZE
+    );
+    assert!(N <= 255 * H::OUTPUT_SIZE, "HKDF output length exceeds RFC 5869 limit");
+
+    let mut okm = [0u8; N];
+    if N == 0 {
+        return okm;
     }
 
-    /// Expand step: `OKM = T(1) || T(2) || ...`, where
-    /// `T(i) = HMAC-Hash(PRK, T(i-1) || info || i)`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `N > 255 * H::OUTPUT_SIZE` or if `prk.len() < H::OUTPUT_SIZE`.
-    pub fn expand<const N: usize>(prk: &[u8], info: &[u8]) -> [u8; N] {
-        assert!(
-            prk.len() >= H::OUTPUT_SIZE,
-            "HKDF PRK must be at least {} bytes",
-            H::OUTPUT_SIZE
-        );
-        assert!(N <= 255 * H::OUTPUT_SIZE, "HKDF output length exceeds RFC 5869 limit");
+    let mut t = [0u8; 64];
+    let mut t_len = 0usize;
+    let mut offset = 0usize;
+    let mut counter = 1u8;
 
-        let mut okm = [0u8; N];
-        if N == 0 {
-            return okm;
-        }
-
-        let mut t = [0u8; 64];
-        let mut t_len = 0usize;
-        let mut offset = 0usize;
-        let mut counter = 1u8;
-
-        while offset < N {
-            let mut mac = Hmac::<H>::new(&prk[..H::OUTPUT_SIZE]);
-            mac.update(&t[..t_len]);
-            mac.update(info);
-            mac.update(&[counter]);
-            let block = mac.finalize();
-            let block_bytes = block.as_ref();
-            let chunk_len = (N - offset).min(H::OUTPUT_SIZE);
-            okm[offset..offset + chunk_len].copy_from_slice(&block_bytes[..chunk_len]);
-            t[..H::OUTPUT_SIZE].copy_from_slice(block_bytes);
-            t_len = H::OUTPUT_SIZE;
-            offset += chunk_len;
-            counter = counter.wrapping_add(1);
-        }
-
-        okm
+    while offset < N {
+        let mut mac = Hmac::<H>::new(&prk[..H::OUTPUT_SIZE]);
+        mac.update(&t[..t_len]);
+        mac.update(info);
+        mac.update(&[counter]);
+        let block = mac.finalize();
+        let block_bytes = block.as_ref();
+        let chunk_len = (N - offset).min(H::OUTPUT_SIZE);
+        okm[offset..offset + chunk_len].copy_from_slice(&block_bytes[..chunk_len]);
+        t[..H::OUTPUT_SIZE].copy_from_slice(block_bytes);
+        t_len = H::OUTPUT_SIZE;
+        offset += chunk_len;
+        counter = counter.wrapping_add(1);
     }
 
-    /// One-shot extract-then-expand.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `N > 255 * H::OUTPUT_SIZE`.
-    pub fn derive_key<const N: usize>(ikm: &[u8], info: &[u8], salt: Option<&[u8]>) -> [u8; N] {
-        let prk = Self::extract(salt, ikm);
-        Self::expand::<N>(&prk[..H::OUTPUT_SIZE], info)
-    }
+    okm
+}
+
+/// One-shot extract-then-expand.
+///
+/// # Panics
+///
+/// Panics if `N > 255 * H::OUTPUT_SIZE`.
+pub fn derive_key<H: Hasher, const N: usize>(ikm: &[u8], info: &[u8], salt: Option<&[u8]>) -> [u8; N] {
+    let prk = extract::<H>(salt, ikm);
+    expand::<H, N>(&prk[..H::OUTPUT_SIZE], info)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Hkdf;
+    use super::*;
     use crate::{Sha256, Sha512};
 
     struct TestVector {
@@ -181,19 +179,19 @@ mod tests {
             let expected_prk = decode_hex(vector.expected_prk);
             let expected_okm = decode_hex(vector.expected_okm);
 
-            let prk = Hkdf::<Sha256>::extract(salt.as_deref(), &ikm);
+            let prk = extract::<Sha256>(salt.as_deref(), &ikm);
             assert_eq!(&prk[..32], expected_prk.as_slice(), "vector {} PRK", i);
 
             let okm = match expected_okm.len() {
-                42 => Hkdf::<Sha256>::expand::<42>(&prk[..32], &info).to_vec(),
-                82 => Hkdf::<Sha256>::expand::<82>(&prk[..32], &info).to_vec(),
+                42 => expand::<Sha256, 42>(&prk[..32], &info).to_vec(),
+                82 => expand::<Sha256, 82>(&prk[..32], &info).to_vec(),
                 _ => unreachable!(),
             };
             assert_eq!(okm, expected_okm, "vector {} OKM", i);
 
             let derived = match expected_okm.len() {
-                42 => Hkdf::<Sha256>::derive_key::<42>(&ikm, &info, salt.as_deref()).to_vec(),
-                82 => Hkdf::<Sha256>::derive_key::<82>(&ikm, &info, salt.as_deref()).to_vec(),
+                42 => derive_key::<Sha256, 42>(&ikm, &info, salt.as_deref()).to_vec(),
+                82 => derive_key::<Sha256, 82>(&ikm, &info, salt.as_deref()).to_vec(),
                 _ => unreachable!(),
             };
             assert_eq!(derived, expected_okm, "vector {} derive_key OKM", i);
@@ -209,19 +207,19 @@ mod tests {
             let expected_prk = decode_hex(vector.expected_prk);
             let expected_okm = decode_hex(vector.expected_okm);
 
-            let prk = Hkdf::<Sha512>::extract(salt.as_deref(), &ikm);
+            let prk = extract::<Sha512>(salt.as_deref(), &ikm);
             assert_eq!(&prk[..64], expected_prk.as_slice(), "vector {} PRK", i);
 
             let okm = match expected_okm.len() {
-                42 => Hkdf::<Sha512>::expand::<42>(&prk[..64], &info).to_vec(),
-                82 => Hkdf::<Sha512>::expand::<82>(&prk[..64], &info).to_vec(),
+                42 => expand::<Sha512, 42>(&prk[..64], &info).to_vec(),
+                82 => expand::<Sha512, 82>(&prk[..64], &info).to_vec(),
                 _ => unreachable!(),
             };
             assert_eq!(okm, expected_okm, "vector {} OKM", i);
 
             let derived = match expected_okm.len() {
-                42 => Hkdf::<Sha512>::derive_key::<42>(&ikm, &info, salt.as_deref()).to_vec(),
-                82 => Hkdf::<Sha512>::derive_key::<82>(&ikm, &info, salt.as_deref()).to_vec(),
+                42 => derive_key::<Sha512, 42>(&ikm, &info, salt.as_deref()).to_vec(),
+                82 => derive_key::<Sha512, 82>(&ikm, &info, salt.as_deref()).to_vec(),
                 _ => unreachable!(),
             };
             assert_eq!(derived, expected_okm, "vector {} derive_key OKM", i);
@@ -231,20 +229,20 @@ mod tests {
     #[test]
     fn hkdf_zero_length_output() {
         let prk = [0u8; 32];
-        assert_eq!(Hkdf::<Sha256>::expand::<0>(&prk, b""), []);
-        assert_eq!(Hkdf::<Sha256>::derive_key::<0>(b"ikm", b"info", None), []);
+        assert_eq!(expand::<Sha256, 0>(&prk, b""), []);
+        assert_eq!(derive_key::<Sha256, 0>(b"ikm", b"info", None), []);
     }
 
     #[test]
     #[should_panic(expected = "HKDF output length exceeds RFC 5869 limit")]
     fn hkdf_expand_panics_when_output_is_too_large() {
         let prk = [0u8; 32];
-        let _ = Hkdf::<Sha256>::expand::<8161>(&prk, b"");
+        let _ = expand::<Sha256, 8161>(&prk, b"");
     }
 
     #[test]
     #[should_panic(expected = "HKDF PRK must be at least 32 bytes")]
     fn hkdf_expand_panics_when_prk_is_too_short() {
-        let _ = Hkdf::<Sha256>::expand::<32>(&[0u8; 31], b"");
+        let _ = expand::<Sha256, 32>(&[0u8; 31], b"");
     }
 }
