@@ -1,11 +1,11 @@
+pub mod hkdf;
 pub mod md5;
 mod sha256;
 pub mod sha3;
 mod sha512;
-pub mod hkdf;
+pub use hkdf::Hkdf;
 pub use sha256::Sha256;
 pub use sha512::Sha512;
-pub use hkdf::Hkdf;
 
 #[cfg(target_arch = "x86_64")]
 mod sha256_amd64;
@@ -86,10 +86,7 @@ impl<H: Hasher> Hmac<H> {
         let mut hash = H::new();
         hash.update(&inner_key[..H::BLOCK_SIZE]);
 
-        Hmac {
-            hash,
-            opad,
-        }
+        Hmac { hash, opad }
     }
 
     /// Feed message data to HMAC (can be called multiple times)
@@ -116,14 +113,8 @@ mod hmac_tests {
     #[derive(Clone, Copy)]
     enum TestInput {
         Bytes(&'static [u8]),
-        Repeated {
-            byte: u8,
-            len: usize,
-        },
-        RangeInclusive {
-            start: u8,
-            end: u8,
-        },
+        Repeated { byte: u8, len: usize },
+        RangeInclusive { start: u8, end: u8 },
     }
 
     #[derive(Clone, Copy)]
@@ -212,14 +203,8 @@ mod hmac_tests {
     fn materialize(input: TestInput) -> Vec<u8> {
         match input {
             TestInput::Bytes(bytes) => bytes.to_vec(),
-            TestInput::Repeated {
-                byte,
-                len,
-            } => vec![byte; len],
-            TestInput::RangeInclusive {
-                start,
-                end,
-            } => (start..=end).collect(),
+            TestInput::Repeated { byte, len } => vec![byte; len],
+            TestInput::RangeInclusive { start, end } => (start..=end).collect(),
         }
     }
 

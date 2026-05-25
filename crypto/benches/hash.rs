@@ -1,15 +1,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use crypto::{Hasher, Sha256, Sha512};
 
-const DATA_SIZES: [usize; 7] = [
-    64,
-    256,
-    1024,
-    16 * 1024,
-    64 * 1024,
-    1024 * 1024,
-    10 * 1024 * 1024,
-];
+const DATA_SIZES: [usize; 7] = [64, 256, 1024, 16 * 1024, 64 * 1024, 1024 * 1024, 10 * 1024 * 1024];
 
 fn bench_sha256(c: &mut Criterion) {
     let mut group = c.benchmark_group("sha256");

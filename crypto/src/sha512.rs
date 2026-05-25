@@ -373,5 +373,4 @@ mod tests {
             assert_eq!(whole_sum.as_ref(), split_sum.as_ref());
         }
     }
-
 }
