@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
-use md5::{Digest, Md5};
 use quick_xml::de::from_str;
 use serde::Deserialize;
 
@@ -140,14 +139,14 @@ impl<H: HttpClient> Client<H> {
     ) -> Result<DeleteObjectsOutput, crate::client::Error> {
         let canonical_uri = canonical_bucket_uri(bucket);
         let body = build_delete_objects_body(keys);
-        let content_md5 = delete_objects_content_md5(&body);
+        // let content_md5 = delete_objects_content_md5(&body);
         let response = self
             .execute_with_headers(
                 HttpMethod::Post,
                 &canonical_uri,
                 "delete=",
                 &body,
-                &[("content-md5".to_string(), content_md5)],
+                &[],
             )
             .await?;
         let xml_text = bytes_to_string(collect_body(response.body).await?)?;
@@ -343,11 +342,6 @@ fn build_delete_objects_body(keys: &[&str]) -> Vec<u8> {
     xml.into_bytes()
 }
 
-fn delete_objects_content_md5(body: &[u8]) -> String {
-    let digest = Md5::digest(body);
-    BASE64_STANDARD.encode(digest)
-}
-
 fn build_complete_multipart_body(parts: &[CompletedPart]) -> Vec<u8> {
     let mut xml = String::from("<CompleteMultipartUpload>");
     for part in parts {
@@ -506,56 +500,56 @@ mod tests {
         assert_eq!(parsed.errors[0].code.as_deref(), Some("AccessDenied"));
     }
 
-    #[test]
-    fn delete_objects_sets_content_md5_header() {
-        #[derive(Clone)]
-        struct CapturingHttpClient {
-            request: Arc<Mutex<Option<HttpRequest>>>,
-        }
+    // #[test]
+    // fn delete_objects_sets_content_md5_header() {
+    //     #[derive(Clone)]
+    //     struct CapturingHttpClient {
+    //         request: Arc<Mutex<Option<HttpRequest>>>,
+    //     }
 
-        impl crate::client::HttpClient for CapturingHttpClient {
-            async fn send(&self, request: HttpRequest) -> Result<HttpResponseData, crate::client::HttpError> {
-                *self.request.lock().unwrap() = Some(request);
-                Ok(HttpResponseData {
-                    status_code: 200,
-                    headers: Vec::new(),
-                    body: Box::pin(futures_util::stream::once(async {
-                        Ok(bytes::Bytes::from_static(b"<DeleteResult />"))
-                    })),
-                })
-            }
-        }
+    //     impl crate::client::HttpClient for CapturingHttpClient {
+    //         async fn send(&self, request: HttpRequest) -> Result<HttpResponseData, crate::client::HttpError> {
+    //             *self.request.lock().unwrap() = Some(request);
+    //             Ok(HttpResponseData {
+    //                 status_code: 200,
+    //                 headers: Vec::new(),
+    //                 body: Box::pin(futures_util::stream::once(async {
+    //                     Ok(bytes::Bytes::from_static(b"<DeleteResult />"))
+    //                 })),
+    //             })
+    //         }
+    //     }
 
-        let captured = Arc::new(Mutex::new(None));
-        let http = CapturingHttpClient {
-            request: Arc::clone(&captured),
-        };
-        let cfg = crate::client::ClientConfig {
-            endpoint: "http://127.0.0.1:9000",
-            credentials: StaticCredentials {
-                access_key_id: "minioadmin",
-                secret_access_key: "minioadmin",
-                session_token: "",
-            },
-            region: "auto",
-        };
-        let client = Client::with_http_client(&cfg, http).unwrap();
+    //     let captured = Arc::new(Mutex::new(None));
+    //     let http = CapturingHttpClient {
+    //         request: Arc::clone(&captured),
+    //     };
+    //     let cfg = crate::client::ClientConfig {
+    //         endpoint: "http://127.0.0.1:9000",
+    //         credentials: StaticCredentials {
+    //             access_key_id: "minioadmin",
+    //             secret_access_key: "minioadmin",
+    //             session_token: "",
+    //         },
+    //         region: "auto",
+    //     };
+    //     let client = Client::with_http_client(&cfg, http).unwrap();
 
-        Runtime::new().unwrap().block_on(async {
-            client.delete_objects("bucket", &["a", "b/c"]).await.unwrap();
-        });
+    //     Runtime::new().unwrap().block_on(async {
+    //         client.delete_objects("bucket", &["a", "b/c"]).await.unwrap();
+    //     });
 
-        let request = captured.lock().unwrap().clone().unwrap();
-        let content_md5 = request
-            .headers
-            .iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case("content-md5"))
-            .map(|(_, value)| value.as_str());
-        assert_eq!(
-            content_md5,
-            Some(delete_objects_content_md5(&build_delete_objects_body(&["a", "b/c"])).as_str())
-        );
-    }
+    //     let request = captured.lock().unwrap().clone().unwrap();
+    //     let content_md5 = request
+    //         .headers
+    //         .iter()
+    //         .find(|(name, _)| name.eq_ignore_ascii_case("content-md5"))
+    //         .map(|(_, value)| value.as_str());
+    //     assert_eq!(
+    //         content_md5,
+    //         Some(delete_objects_content_md5(&build_delete_objects_body(&["a", "b/c"])).as_str())
+    //     );
+    // }
 
     #[test]
     fn builds_and_parses_tagging_xml() {
