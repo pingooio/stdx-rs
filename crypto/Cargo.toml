@@ -8,7 +8,6 @@ authors = ["Sylvain Kerkour"]
 path = "./src/crypto.rs"
 
 [dependencies]
-sha2 = { git = "https://github.com/RustCrypto/hashes", rev = "0bdea4f919f86c17f75c6177567520010fedb735" }
 sha3 = { git = "https://github.com/RustCrypto/hashes", rev = "0bdea4f919f86c17f75c6177567520010fedb735" }
 
 [dev-dependencies]

@@ -587,7 +587,6 @@ name = "crypto"
 version = "0.1.0"
 dependencies = [
  "hex",
- "sha2 0.11.0 (git+https://github.com/RustCrypto/hashes?rev=0bdea4f919f86c17f75c6177567520010fedb735)",
  "sha3",
 ]
 
@@ -684,7 +683,7 @@ dependencies = [
 name = "embed_utils"
 version = "8.4.0"
 dependencies = [
- "sha2 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "sha2",
  "walkdir",
 ]
 
@@ -2112,16 +2111,6 @@ name = "sha2"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4"
-dependencies = [
- "cfg-if",
- "cpufeatures",
- "digest",
-]
-
-[[package]]
-name = "sha2"
-version = "0.11.0"
-source = "git+https://github.com/RustCrypto/hashes?rev=0bdea4f919f86c17f75c6177567520010fedb735#0bdea4f919f86c17f75c6177567520010fedb735"
 dependencies = [
  "cfg-if",
  "cpufeatures",
