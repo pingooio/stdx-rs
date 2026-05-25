@@ -284,42 +284,60 @@ mod tests {
     use super::Sha512;
     use crate::Hasher;
 
-    const VECTORS_SHA512: [(&str, &str); 7] = [
-        (
-            "",
-            "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
-        ),
-        (
-            "a",
-            "1f40fc92da241694750979ee6cf582f2d5d7d28e18335de05abc54d0560e0f5302860c652bf08d560252aa5e74210546f369fbbbce8c12cfc7957b2652fe9a75",
-        ),
-        (
-            "abc",
-            "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f",
-        ),
-        (
-            "message digest",
-            "107dbf389d9e9f71a3a95f6c055b9251bc5268c2be16d6c13492ea45b0199f3309e16455ab1e96118e8a905d5597b72038ddb372a89826046de66687bb420e7c",
-        ),
-        (
-            "abcdefghijklmnopqrstuvwxyz",
-            "4dbff86cc2ca1bae1e16468a05cb9881c97f1753bce3619034898faa1aabe429955a1bf8ec483d7421fe3c1646613a59ed5441fb0f321389f77f48a879c7b1f1",
-        ),
-        (
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
-            "1e07be23c26a86ea37ea810c8ec7809352515a970e9253c26f536cfc7a9996c45c8370583e0a78fa4a90041d71a4ceab7423f19c71b9d5a3e01249f0bebd5894",
-        ),
-        (
-            "12345678901234567890123456789012345678901234567890123456789012345678901234567890",
-            "72ec1ef1124a45b047e8b7c75a932195135bb61de24ec0d1914042246e0aec3a2354e093d76f3048b456764346900cb130d2a4fd5dd16abb5e30bcb850dee843",
-        ),
-    ];
+    fn vectors_sha512() -> Vec<(Vec<u8>, &'static str)> {
+        vec![
+            // RFC 6234 / common SHA-512 vectors
+            (
+                b"".to_vec(),
+                "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
+            ),
+            (
+                b"a".to_vec(),
+                "1f40fc92da241694750979ee6cf582f2d5d7d28e18335de05abc54d0560e0f5302860c652bf08d560252aa5e74210546f369fbbbce8c12cfc7957b2652fe9a75",
+            ),
+            (
+                b"abc".to_vec(),
+                "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f",
+            ),
+            (
+                b"message digest".to_vec(),
+                "107dbf389d9e9f71a3a95f6c055b9251bc5268c2be16d6c13492ea45b0199f3309e16455ab1e96118e8a905d5597b72038ddb372a89826046de66687bb420e7c",
+            ),
+            (
+                b"abcdefghijklmnopqrstuvwxyz".to_vec(),
+                "4dbff86cc2ca1bae1e16468a05cb9881c97f1753bce3619034898faa1aabe429955a1bf8ec483d7421fe3c1646613a59ed5441fb0f321389f77f48a879c7b1f1",
+            ),
+            (
+                b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".to_vec(),
+                "1e07be23c26a86ea37ea810c8ec7809352515a970e9253c26f536cfc7a9996c45c8370583e0a78fa4a90041d71a4ceab7423f19c71b9d5a3e01249f0bebd5894",
+            ),
+            (
+                b"12345678901234567890123456789012345678901234567890123456789012345678901234567890"
+                    .to_vec(),
+                "72ec1ef1124a45b047e8b7c75a932195135bb61de24ec0d1914042246e0aec3a2354e093d76f3048b456764346900cb130d2a4fd5dd16abb5e30bcb850dee843",
+            ),
+            // NIST FIPS 180-4
+            (
+                b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".to_vec(),
+                "204a8fc6dda82f0a0ced7beb8e08a41657c16ef468b228a8279be331a703c33596fd15c13b1b07f9aa1d3bea57789ca031ad85c7a71dd70354ec631238ca3445",
+            ),
+            (
+                b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu"
+                    .to_vec(),
+                "8e959b75dae313da8cf4f72814fc143f8f7779c6eb9f7fa17299aeadb6889018501d289e4900f7e4331b99dec4b5433ac7d329eeb6dd26545e96e55b874be909",
+            ),
+            (
+                vec![b'a'; 1_000_000],
+                "e718483d0ce769644e2e42c7bc15b4638e1f98b13b2044285632a803afa973ebde0ff244877ea60a4cb0432ce577c31beb009c5c2c49aa2e4eadb217ad8cc09b",
+            ),
+        ]
+    }
 
     #[test]
     fn known_vectors_single_update() {
-        for (input, expected) in VECTORS_SHA512 {
+        for (input, expected) in vectors_sha512() {
             let mut hasher = Sha512::new();
-            hasher.update(input.as_bytes());
+            hasher.update(&input);
             let digest = hasher.sum();
             assert_eq!(hex::encode(digest.as_ref()), expected);
         }
@@ -327,8 +345,7 @@ mod tests {
 
     #[test]
     fn known_vectors_incremental() {
-        for (input, expected) in VECTORS_SHA512 {
-            let bytes = input.as_bytes();
+        for (bytes, expected) in vectors_sha512() {
             let mut hasher = Sha512::new();
             for chunk in bytes.chunks(5) {
                 hasher.update(chunk);
@@ -356,4 +373,5 @@ mod tests {
             assert_eq!(whole_sum.as_ref(), split_sum.as_ref());
         }
     }
+
 }

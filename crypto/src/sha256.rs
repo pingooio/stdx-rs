@@ -196,33 +196,57 @@ mod tests {
     use super::Sha256;
     use crate::Hasher;
 
-    const VECTORS_SHA256: [(&str, &str); 7] = [
-        ("", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
-        ("a", "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"),
-        ("abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
-        (
-            "message digest",
-            "f7846f55cf23e14eebeab5b4e1550cad5b509e3348fbc4efa3a1413d393cb650",
-        ),
-        (
-            "abcdefghijklmnopqrstuvwxyz",
-            "71c480df93d6ae2f1efad1447c66c9525e316218cf51fc8d9ed832f2daf18b73",
-        ),
-        (
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
-            "db4bfcbd4da0cd85a60c3c37d3fbd8805c77f15fc6b1fdfe614ee0a7c8fdb4c0",
-        ),
-        (
-            "12345678901234567890123456789012345678901234567890123456789012345678901234567890",
-            "f371bc4a311f2b009eef952dd83ca80e2b60026c8e935592d0f9c308453c813e",
-        ),
-    ];
+    fn vectors_sha256() -> Vec<(Vec<u8>, &'static str)> {
+        vec![
+            // RFC 6234 / common SHA-256 vectors
+            (
+                b"".to_vec(),
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            ),
+            (
+                b"a".to_vec(),
+                "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+            ),
+            (
+                b"abc".to_vec(),
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            ),
+            (
+                b"message digest".to_vec(),
+                "f7846f55cf23e14eebeab5b4e1550cad5b509e3348fbc4efa3a1413d393cb650",
+            ),
+            (
+                b"abcdefghijklmnopqrstuvwxyz".to_vec(),
+                "71c480df93d6ae2f1efad1447c66c9525e316218cf51fc8d9ed832f2daf18b73",
+            ),
+            (
+                b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".to_vec(),
+                "db4bfcbd4da0cd85a60c3c37d3fbd8805c77f15fc6b1fdfe614ee0a7c8fdb4c0",
+            ),
+            (
+                b"12345678901234567890123456789012345678901234567890123456789012345678901234567890"
+                    .to_vec(),
+                "f371bc4a311f2b009eef952dd83ca80e2b60026c8e935592d0f9c308453c813e",
+            ),
+            // NIST FIPS 180-4
+            (
+                b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".to_vec(),
+                "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+            ),
+            (
+                b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu"
+                    .to_vec(),
+                "cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1",
+            ),
+            (vec![b'a'; 1_000_000], "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"),
+        ]
+    }
 
     #[test]
     fn known_vectors_single_update() {
-        for (input, expected) in VECTORS_SHA256 {
+        for (input, expected) in vectors_sha256() {
             let mut hasher = Sha256::new();
-            hasher.update(input.as_bytes());
+            hasher.update(&input);
             let digest = hasher.sum();
             assert_eq!(hex::encode(digest.as_ref()), expected);
         }
@@ -230,8 +254,7 @@ mod tests {
 
     #[test]
     fn known_vectors_incremental() {
-        for (input, expected) in VECTORS_SHA256 {
-            let bytes = input.as_bytes();
+        for (bytes, expected) in vectors_sha256() {
             let mut hasher = Sha256::new();
             for chunk in bytes.chunks(3) {
                 hasher.update(chunk);
@@ -259,4 +282,5 @@ mod tests {
             assert_eq!(whole_sum.as_ref(), split_sum.as_ref());
         }
     }
+
 }
