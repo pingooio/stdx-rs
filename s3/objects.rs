@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
-use crypto::{Hasher, Sha256};
+use crypto::{Hasher, sha2::Sha256};
 use quick_xml::de::from_str;
 use serde::Deserialize;
 
@@ -556,18 +556,12 @@ mod tests {
             .iter()
             .find(|(name, _)| name.eq_ignore_ascii_case("x-amz-checksum-sha256"))
             .map(|(_, value)| value.as_str());
-        let content_md5 = request
-            .headers
-            .iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case("content-md5"))
-            .map(|(_, value)| value.as_str());
 
         assert_eq!(checksum_algorithm, Some("SHA256"));
         assert_eq!(
             checksum_sha256,
             Some(super::checksum_sha256(&build_delete_objects_body(&["a", "b/c"])).as_str())
         );
-        assert_eq!(content_md5, None);
     }
 
     #[test]

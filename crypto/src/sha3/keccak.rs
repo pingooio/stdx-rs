@@ -208,20 +208,6 @@ pub fn xor(dest: &mut [u8], source: &[u8]) {
         .for_each(|(dest, source)| *dest ^= *source);
 }
 
-#[inline]
-fn xor_byte(state: &mut [u64; 25], index: usize, value: u8) {
-    let lane = index / 8;
-    let shift = (index % 8) * 8;
-    state[lane] ^= (value as u64) << shift;
-}
-
-#[inline]
-fn get_byte(state: &[u64; 25], index: usize) -> u8 {
-    let lane = index / 8;
-    let shift = (index % 8) * 8;
-    ((state[lane] >> shift) & 0xff) as u8
-}
-
 #[cfg(test)]
 mod tests {
     use super::p1600;
