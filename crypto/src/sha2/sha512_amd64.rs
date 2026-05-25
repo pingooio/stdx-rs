@@ -2,7 +2,7 @@
 
 use core::arch::x86_64::*;
 
-use crate::sha512::SHA512_K;
+use super::sha512::SHA512_K;
 
 #[inline]
 pub(crate) fn process_block_if_supported(state: &mut [u64; 8], block: &[u8; 128]) -> bool {

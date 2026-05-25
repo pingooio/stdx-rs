@@ -1,3 +1,10 @@
+pub mod aes256;
+#[cfg(target_arch = "x86_64")]
+pub(crate) mod aes256_amd64;
+
+pub use aes256::Aes256Gcm;
+
+// Legacy commented-out code kept for reference.
 // use aws_lc_rs::aead::{self, LessSafeKey, UnboundKey};
 
 // use super::Error;
