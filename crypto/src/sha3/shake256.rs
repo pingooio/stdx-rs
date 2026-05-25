@@ -90,6 +90,23 @@ impl CShake256 {
     }
 }
 
+impl Xof for CShake256 {
+    #[inline]
+    fn new() -> Self {
+        return CShake256::new(b"", b"");
+    }
+
+    #[inline]
+    fn absobrd(&mut self, data: &[u8]) {
+        self.write(data);
+    }
+
+    #[inline]
+    fn squeeze(&mut self, out: &mut [u8]) {
+        self.read(out);
+    }
+}
+
 // ── Shake256 (delegates to CShake256 with empty N and S) ──────────────────────
 
 #[derive(Clone)]
@@ -304,5 +321,17 @@ mod tests {
         let mut shake_out = [0u8; 64];
         Shake256::hash(input, &mut shake_out);
         assert_eq!(cshake_out, shake_out);
+    }
+
+    #[test]
+    fn cshake256_xof_trait_impl() {
+        let mut xof = <CShake256 as Xof>::new();
+        xof.absobrd(b"abc");
+        let mut out = [0u8; 64];
+        xof.squeeze(&mut out);
+        assert_eq!(
+            hex::encode(out),
+            "483366601360a8771c6863080cc4114d8db44530f8f1e1ee4f94ea37e78b5739d5a15bef186a5386c75744c0527e1faa9f8726e462a12a4feb06bd8801e751e4"
+        );
     }
 }
