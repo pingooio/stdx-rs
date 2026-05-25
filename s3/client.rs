@@ -6,7 +6,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use crypto::{Hmac, sha2::Sha256};
+use crypto::{Hasher, Hmac, sha2::Sha256};
 use futures_util::{Stream, StreamExt};
 use url::Url;
 
@@ -413,13 +413,13 @@ fn sign_v4(secret_access_key: &str, date: &str, region: &str, string_to_sign: &s
     hmac_sha256(&k_signing, string_to_sign.as_bytes())
 }
 
-pub(crate) fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
+pub(crate) fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; Sha256::OUTPUT_SIZE] {
     let mut mac = Hmac::<Sha256>::new(key);
     mac.update(data);
-    return mac.finalize().as_ref().try_into().unwrap();
+    return *mac.finalize().as_ref().as_array().unwrap();
 }
 
-pub(crate) fn sha256(data: &[u8]) -> [u8; 32] {
+pub(crate) fn sha256(data: &[u8]) -> [u8; Sha256::OUTPUT_SIZE] {
     use crypto::Hasher;
     let mut hasher = Sha256::new();
     hasher.update(data);
