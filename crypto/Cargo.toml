@@ -11,4 +11,13 @@ path = "./src/crypto.rs"
 sha3 = { git = "https://github.com/RustCrypto/hashes", rev = "0bdea4f919f86c17f75c6177567520010fedb735" }
 
 [dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
 hex = { path = "../hex" }
+
+[[bench]]
+name = "hash"
+harness = false
+
+[[bench]]
+name = "mac"
+harness = false
