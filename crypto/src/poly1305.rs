@@ -651,5 +651,4 @@ mod tests {
             assert_eq!(mac.as_slice(), expected.as_slice(), "go/crypto poly1305 vector {}", i + 1);
         }
     }
-
 }
