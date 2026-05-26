@@ -31,6 +31,7 @@
 use core::arch::x86_64::*;
 
 use crate::Error;
+use super::aes256::gf128_mul;
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -287,8 +288,10 @@ unsafe fn ctr_inc(ctr: __m128i) -> __m128i {
 unsafe fn encrypt_aesni(key: &[u8; 32], in_out: &mut [u8], nonce: &[u8; 12], aad: &[u8]) -> [u8; 16] {
     let rk = key_expand_aesni(key);
 
-    // H = AES_K(0^128); byte-swapped for GHASH multiplication.
-    let h = bswap128(aes256_enc(&rk, _mm_setzero_si128()));
+    // H = AES_K(0^128) in natural byte order.
+    let h_xmm = aes256_enc(&rk, _mm_setzero_si128());
+    let mut h = [0u8; 16];
+    _mm_storeu_si128(h.as_mut_ptr().cast(), h_xmm);
 
     // J0 = nonce ∥ 0x00000001
     let mut j0_bytes = [0u8; 16];
@@ -296,6 +299,8 @@ unsafe fn encrypt_aesni(key: &[u8; 32], in_out: &mut [u8], nonce: &[u8; 12], aad
     j0_bytes[15] = 0x01;
     let j0 = _mm_loadu_si128(j0_bytes.as_ptr().cast());
     let ej0 = aes256_enc(&rk, j0); // E(J0) in natural byte order
+    let mut ej0_bytes = [0u8; 16];
+    _mm_storeu_si128(ej0_bytes.as_mut_ptr().cast(), ej0);
 
     // CTR: starts at J0 + 1 = nonce ∥ 0x00000002
     let mut ctr = ctr_inc(j0);
@@ -319,22 +324,7 @@ unsafe fn encrypt_aesni(key: &[u8; 32], in_out: &mut [u8], nonce: &[u8; 12], aad
         in_out[i..].copy_from_slice(&out_buf[..n - i]);
     }
 
-    // GHASH (state stays in byte-swapped domain throughout)
-    let mut state = _mm_setzero_si128();
-    state = ghash_update(state, h, aad);
-    state = ghash_update(state, h, in_out);
-
-    // Length block: len(AAD) ∥ len(CT) in bits (each as big-endian u64)
-    let mut len_bytes = [0u8; 16];
-    len_bytes[..8].copy_from_slice(&((aad.len() as u64) * 8).to_be_bytes());
-    len_bytes[8..].copy_from_slice(&((in_out.len() as u64) * 8).to_be_bytes());
-    let len_block = bswap128(_mm_loadu_si128(len_bytes.as_ptr().cast()));
-    state = clmul_gcm(_mm_xor_si128(state, len_block), h);
-
-    // Tag = bswap(state) ⊕ E(J0)
-    let mut tag = [0u8; 16];
-    _mm_storeu_si128(tag.as_mut_ptr().cast(), _mm_xor_si128(bswap128(state), ej0));
-    tag
+    compute_tag_scalar(&h, aad, in_out, &ej0_bytes)
 }
 
 // ── AES-256-GCM decrypt ───────────────────────────────────────────────────────
@@ -349,27 +339,20 @@ unsafe fn decrypt_aesni(
 ) -> Result<(), Error> {
     let rk = key_expand_aesni(key);
 
-    let h = bswap128(aes256_enc(&rk, _mm_setzero_si128()));
+    let h_xmm = aes256_enc(&rk, _mm_setzero_si128());
+    let mut h = [0u8; 16];
+    _mm_storeu_si128(h.as_mut_ptr().cast(), h_xmm);
 
     let mut j0_bytes = [0u8; 16];
     j0_bytes[..12].copy_from_slice(nonce);
     j0_bytes[15] = 0x01;
     let j0 = _mm_loadu_si128(j0_bytes.as_ptr().cast());
     let ej0 = aes256_enc(&rk, j0);
+    let mut ej0_bytes = [0u8; 16];
+    _mm_storeu_si128(ej0_bytes.as_mut_ptr().cast(), ej0);
 
     // Authenticate-then-decrypt: verify tag first.
-    let mut state = _mm_setzero_si128();
-    state = ghash_update(state, h, aad);
-    state = ghash_update(state, h, in_out);
-
-    let mut len_bytes = [0u8; 16];
-    len_bytes[..8].copy_from_slice(&((aad.len() as u64) * 8).to_be_bytes());
-    len_bytes[8..].copy_from_slice(&((in_out.len() as u64) * 8).to_be_bytes());
-    let len_block = bswap128(_mm_loadu_si128(len_bytes.as_ptr().cast()));
-    state = clmul_gcm(_mm_xor_si128(state, len_block), h);
-
-    let mut computed_tag = [0u8; 16];
-    _mm_storeu_si128(computed_tag.as_mut_ptr().cast(), _mm_xor_si128(bswap128(state), ej0));
+    let computed_tag = compute_tag_scalar(&h, aad, in_out, &ej0_bytes);
 
     // Constant-time comparison
     let mut diff = 0u8;
@@ -403,6 +386,47 @@ unsafe fn decrypt_aesni(
     }
 
     Ok(())
+}
+
+#[inline]
+fn ghash_block_scalar(state: &mut [u8; 16], h: &[u8; 16], block: &[u8; 16]) {
+    for i in 0..16 {
+        state[i] ^= block[i];
+    }
+    *state = gf128_mul(state, h);
+}
+
+#[inline]
+fn ghash_update_scalar(state: &mut [u8; 16], h: &[u8; 16], data: &[u8]) {
+    let mut chunks = data.chunks_exact(16);
+    for chunk in chunks.by_ref() {
+        let block: [u8; 16] = chunk.try_into().unwrap();
+        ghash_block_scalar(state, h, &block);
+    }
+    let rem = chunks.remainder();
+    if !rem.is_empty() {
+        let mut padded = [0u8; 16];
+        padded[..rem.len()].copy_from_slice(rem);
+        ghash_block_scalar(state, h, &padded);
+    }
+}
+
+#[inline]
+fn compute_tag_scalar(h: &[u8; 16], aad: &[u8], ciphertext: &[u8], ej0: &[u8; 16]) -> [u8; 16] {
+    let mut state = [0u8; 16];
+
+    ghash_update_scalar(&mut state, h, aad);
+    ghash_update_scalar(&mut state, h, ciphertext);
+
+    let mut len_block = [0u8; 16];
+    len_block[..8].copy_from_slice(&((aad.len() as u64) * 8).to_be_bytes());
+    len_block[8..].copy_from_slice(&((ciphertext.len() as u64) * 8).to_be_bytes());
+    ghash_block_scalar(&mut state, h, &len_block);
+
+    for i in 0..16 {
+        state[i] ^= ej0[i];
+    }
+    state
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -524,12 +548,12 @@ mod tests {
         },
         // Google Tink / BoringSSL AES-256-GCM reference vector
         GcmVec {
-            key: "e3c08a8f06c6e3ad95a70557b23f75483ce33021a9c72b7025666204c69c0cc",
+            key: "0e3c08a8f06c6e3ad95a70557b23f75483ce33021a9c72b7025666204c69c0cc",
             nonce: "12153524c0895e81b2c28465",
             pt: "08000f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a0002",
             aad: "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b391aafd255522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662898015ad",
-            ct: "48df73208cdc63d716752df7794807b1b2a80794a9629114cb5ef1574698cc75ca4e0087dc79dd2f6b6ee3e2bfc4a756f",
-            tag: "d3b6e7b1671d2b79ba5e6e0a5f9fb5d1",
+            ct: "d017a35445d3b3d2a9faf8699b12114551c325744fd174cb53950ab4e33d4cfe90b3c39f9ff0f681b5339437476603bc",
+            tag: "4122cd6a136671d8fe83937439623596",
         },
     ];
 
