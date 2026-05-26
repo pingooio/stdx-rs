@@ -10,6 +10,7 @@ pub mod sha3;
 
 mod bytes;
 
+pub mod p256;
 pub use aes::Aes256Gcm;
 pub use bytes::Bytes;
 
