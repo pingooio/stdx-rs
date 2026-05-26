@@ -35,7 +35,7 @@ pub(crate) fn try_decrypt_in_place_detached(
 
 #[inline]
 fn have_features() -> bool {
-    std::arch::is_aarch64_feature_detected!("aes")
+    std::arch::is_aarch64_feature_detected!("aes") && std::arch::is_aarch64_feature_detected!("pmull")
 }
 
 type RoundKeysArm = [uint8x16_t; 15];
@@ -97,45 +97,87 @@ unsafe fn ctr_encrypt(rk: &RoundKeysArm, in_out: &mut [u8], counter: &mut [u8; 1
     }
 }
 
+#[target_feature(enable = "aes")]
 #[inline]
-fn ghash_block(state: &mut [u8; 16], h: &[u8; 16], block: &[u8; 16]) {
-    for i in 0..16 {
-        state[i] ^= block[i];
-    }
-    *state = super::aes256::gf128_mul(state, h);
+unsafe fn clmul64_pmull(a: u64, b: u64) -> u128 {
+    let product = vmull_p64(core::mem::transmute(a), core::mem::transmute(b));
+    core::mem::transmute(product)
 }
 
-fn ghash_update(state: &mut [u8; 16], h: &[u8; 16], data: &[u8]) {
-    let mut chunks = data.chunks_exact(16);
-    for chunk in chunks.by_ref() {
-        let block: [u8; 16] = chunk.try_into().unwrap();
-        ghash_block(state, h, &block);
+#[target_feature(enable = "aes")]
+#[inline]
+unsafe fn gcm_reduce(product_lo: u128, product_hi: u128) -> u128 {
+    let poly = 0x87u64;
+    let t1 = clmul64_pmull(product_hi as u64, poly);
+    let t2 = clmul64_pmull((product_hi >> 64) as u64, poly);
+    let t2_lo = t2 << 64;
+    let t2_hi = t2 >> 64;
+    let t3 = clmul64_pmull(t2_hi as u64, poly);
+    product_lo ^ t1 ^ t2_lo ^ t3
+}
+
+#[target_feature(enable = "aes")]
+#[inline]
+unsafe fn clmul_gcm_pmull(a: uint8x16_t, b: uint8x16_t) -> uint8x16_t {
+    let a_u64 = vreinterpretq_u64_u8(a);
+    let b_u64 = vreinterpretq_u64_u8(b);
+    let a_lo = vgetq_lane_u64(a_u64, 0);
+    let a_hi = vgetq_lane_u64(a_u64, 1);
+    let b_lo = vgetq_lane_u64(b_u64, 0);
+    let b_hi = vgetq_lane_u64(b_u64, 1);
+
+    let lo = clmul64_pmull(a_lo, b_lo);
+    let hi = clmul64_pmull(a_hi, b_hi);
+    let mid = clmul64_pmull(a_lo ^ a_hi, b_lo ^ b_hi);
+
+    let mid_true = mid ^ lo ^ hi;
+    let product_lo = lo ^ (mid_true << 64);
+    let product_hi = hi ^ (mid_true >> 64);
+    let reduced = gcm_reduce(product_lo, product_hi);
+
+    let out = reduced.to_le_bytes();
+    vld1q_u8(out.as_ptr())
+}
+
+#[target_feature(enable = "aes")]
+unsafe fn ghash_update_hardware(mut state: uint8x16_t, h: uint8x16_t, data: &[u8]) -> uint8x16_t {
+    let n = data.len();
+    let mut i = 0usize;
+
+    while i + 16 <= n {
+        let block = vrbitq_u8(vld1q_u8(data.as_ptr().add(i)));
+        state = clmul_gcm_pmull(veorq_u8(state, block), h);
+        i += 16;
     }
 
-    let rem = chunks.remainder();
-    if !rem.is_empty() {
+    if i < n {
         let mut padded = [0u8; 16];
-        padded[..rem.len()].copy_from_slice(rem);
-        ghash_block(state, h, &padded);
+        padded[..n - i].copy_from_slice(&data[i..]);
+        let block = vrbitq_u8(vld1q_u8(padded.as_ptr()));
+        state = clmul_gcm_pmull(veorq_u8(state, block), h);
     }
+
+    state
 }
 
-fn compute_tag(h: &[u8; 16], aad: &[u8], ciphertext: &[u8], ej0: &[u8; 16]) -> [u8; 16] {
-    let mut state = [0u8; 16];
+#[target_feature(enable = "aes")]
+unsafe fn compute_tag_hardware(h: &[u8; 16], aad: &[u8], ciphertext: &[u8], ej0: &[u8; 16]) -> [u8; 16] {
+    let h = vrbitq_u8(vld1q_u8(h.as_ptr()));
+    let mut state = vdupq_n_u8(0);
 
-    ghash_update(&mut state, h, aad);
-    ghash_update(&mut state, h, ciphertext);
+    state = ghash_update_hardware(state, h, aad);
+    state = ghash_update_hardware(state, h, ciphertext);
 
     let mut len_block = [0u8; 16];
     len_block[..8].copy_from_slice(&((aad.len() as u64) * 8).to_be_bytes());
     len_block[8..].copy_from_slice(&((ciphertext.len() as u64) * 8).to_be_bytes());
-    ghash_block(&mut state, h, &len_block);
+    let len_block = vrbitq_u8(vld1q_u8(len_block.as_ptr()));
+    state = clmul_gcm_pmull(veorq_u8(state, len_block), h);
 
-    for i in 0..16 {
-        state[i] ^= ej0[i];
-    }
-
-    state
+    let tag = veorq_u8(vrbitq_u8(state), vld1q_u8(ej0.as_ptr()));
+    let mut out = [0u8; 16];
+    vst1q_u8(out.as_mut_ptr(), tag);
+    out
 }
 
 #[target_feature(enable = "aes")]
@@ -165,7 +207,7 @@ unsafe fn encrypt_armv8(key: &[u8; 32], in_out: &mut [u8], nonce: &[u8; 12], aad
 
     ctr_encrypt(&rk, in_out, &mut ctr);
 
-    compute_tag(&h, aad, in_out, &ej0)
+    compute_tag_hardware(&h, aad, in_out, &ej0)
 }
 
 #[target_feature(enable = "aes")]
@@ -196,7 +238,7 @@ unsafe fn decrypt_armv8(
         ej0
     };
 
-    let expected_tag = compute_tag(&h, aad, in_out, &ej0);
+    let expected_tag = compute_tag_hardware(&h, aad, in_out, &ej0);
 
     let mut diff = 0u8;
     for i in 0..16 {
