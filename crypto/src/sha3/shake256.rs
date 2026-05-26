@@ -7,7 +7,7 @@ const SHAKE256_DOMAIN_SEPARATOR: u8 = 0x1f;
 
 #[derive(Clone)]
 pub struct CShake256 {
-    keccak: Keccak,
+    keccak: Keccak<24>,
 }
 
 impl CShake256 {
@@ -53,7 +53,7 @@ impl Xof for CShake256 {
 
 #[derive(Clone)]
 pub struct Shake256 {
-    keccak: Keccak,
+    keccak: Keccak<24>,
 }
 
 impl Shake256 {

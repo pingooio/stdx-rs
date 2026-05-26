@@ -6,7 +6,7 @@ const SHA3_512_DOMAIN_SEPARATOR: u8 = 0x06;
 
 #[derive(Clone)]
 pub struct Sha3_512 {
-    keccak: Keccak,
+    keccak: Keccak<24>,
 }
 
 impl Sha3_512 {

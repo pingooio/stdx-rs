@@ -111,11 +111,7 @@ pub(crate) fn key_expand(key: &[u8; 32]) -> RoundKeys {
 fn xtime(a: u8) -> u8 {
     let hi = a & 0x80;
     let b = a << 1;
-    if hi != 0 {
-        b ^ 0x1b
-    } else {
-        b
-    }
+    if hi != 0 { b ^ 0x1b } else { b }
 }
 
 #[inline(always)]
@@ -771,9 +767,11 @@ mod tests {
         let mut bad_tag = tag;
         bad_tag[0] ^= 0xff;
         let mut buf2 = buf.clone();
-        assert!(cipher
-            .decrypt_in_place_detached_soft(&mut buf2, &bad_tag, &nonce, &[])
-            .is_err());
+        assert!(
+            cipher
+                .decrypt_in_place_detached_soft(&mut buf2, &bad_tag, &nonce, &[])
+                .is_err()
+        );
     }
 
     #[test]

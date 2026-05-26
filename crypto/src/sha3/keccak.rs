@@ -107,7 +107,7 @@ pub(crate) enum SpongeMode {
 }
 
 #[derive(Clone)]
-pub(crate) struct Keccak {
+pub(crate) struct Keccak<const ROUNDS: usize> {
     state: [u8; 200],
     rate: usize,
     padding: u8,
@@ -116,7 +116,7 @@ pub(crate) struct Keccak {
     mode: SpongeMode,
 }
 
-impl Keccak {
+impl<const ROUNDS: usize> Keccak<ROUNDS> {
     #[inline]
     pub(crate) fn new(rate: usize, delimiter: u8) -> Self {
         debug_assert!(rate > 0 && rate < 200);
@@ -195,7 +195,7 @@ impl Keccak {
         // this is totally safe as long as state.len() == 200 and state remains a [u8]. We are just
         // playing with the memory representation of the array, from [u8] to [u64].
         let mut state: &mut [u64; 200 / 8] = unsafe { core::mem::transmute(&mut self.state) };
-        p1600::<24>(&mut state);
+        p1600::<ROUNDS>(&mut state);
         self.pos = 0;
     }
 }
