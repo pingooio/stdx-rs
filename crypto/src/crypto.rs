@@ -1,4 +1,8 @@
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 pub mod aes;
+pub mod chacha;
 pub mod hkdf;
 pub mod sha2;
 pub mod sha3;
@@ -11,6 +15,7 @@ pub use bytes::Bytes;
 const MAX_HASH_BLOCK_SIZE: usize = 128;
 
 pub type Hash = Bytes<64>;
+pub type Tag = Bytes<32>;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Error {
@@ -18,6 +23,44 @@ pub enum Error {
     InvalidNonce,
     InvalidCiphertext,
     Unspecified,
+}
+
+pub trait StreamCipher: Sized {
+    fn xor_keystream(&mut self, in_out: &mut [u8]);
+}
+
+pub trait Aead: Sized {
+    const TAG_SIZE: usize;
+    const NONCE_SIZE: usize;
+
+    fn encrypt_in_place_detached(&self, in_out: &mut [u8], nonce: &[u8], aad: &[u8]) -> Tag;
+    fn decrypt_in_place_detached(&self, in_out: &mut [u8], nonce: &[u8], aad: &[u8], tag: &[u8]) -> Result<(), Error>;
+
+    #[cfg(feature = "alloc")]
+    fn encrypt(&self, plaintext: &[u8], nonce: &[u8], aad: &[u8]) -> Vec<u8> {
+        let mut ciphertext = alloc::vec::Vec::with_capacity(plaintext.len() + Self::TAG_SIZE);
+        ciphertext.extend_from_slice(plaintext);
+
+        let tag = self.encrypt_in_place_detached(&mut ciphertext, nonce, aad);
+        ciphertext.extend_from_slice(tag.as_ref());
+
+        return ciphertext;
+    }
+
+    #[cfg(feature = "alloc")]
+    fn decrypt(&self, ciphertext: &[u8], nonce: &[u8], aad: &[u8]) -> Result<Vec<u8>, Error> {
+        if ciphertext.len() < Self::TAG_SIZE {
+            return Err(Error::InvalidCiphertext);
+        }
+
+        let plaintext_length = ciphertext.len() - Self::TAG_SIZE;
+        let mut plaintext = alloc::vec::Vec::with_capacity(plaintext_length);
+        plaintext.extend_from_slice(&ciphertext[..plaintext_length]);
+
+        self.decrypt_in_place_detached(&mut plaintext, &nonce, aad, &ciphertext[plaintext_length..])?;
+
+        return Ok(plaintext);
+    }
 }
 
 pub trait Hasher: Sized + Clone {

@@ -7,6 +7,16 @@ authors = ["Sylvain Kerkour"]
 [lib]
 path = "./src/crypto.rs"
 
+[features]
+default = ["std", "zeroize"]
+
+alloc = []
+std = ["alloc"]
+zeroize = ["dep:zeroize"]
+
+[dependencies]
+zeroize = { workspace = true, optional = true }
+
 [dev-dependencies]
 criterion = { workspace = true }
 hex = { path = "../hex" }
