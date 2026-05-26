@@ -517,24 +517,16 @@ impl Aes256Gcm {
     }
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ── Helper ────────────────────────────────────────────────────────────────
-
-    fn h(s: &str) -> Vec<u8> {
-        let s = s.replace(|c: char| c.is_whitespace(), "");
-        (0..s.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
-            .collect()
-    }
+    // TODO: Add tests:
+    // https://www.tuhs.org/cgi-bin/utree.pl?file=OpenBSD-4.6/regress/sys/crypto/aes/vectors/ecbnk48.txt
+    // https://android.googlesource.com/platform/libcore/+/1db6bf619611525020518a180f0ee82c8cd50af2/luni/src/test/resources/crypto/aes-cbc.csv
 
     fn hb<const N: usize>(s: &str) -> [u8; N] {
-        let v = h(s);
+        let v = hex::decode(s).unwrap();
         assert_eq!(v.len(), N, "wrong hex length for '{s}'");
         v.try_into().unwrap()
     }
@@ -588,6 +580,7 @@ mod tests {
     /// NIST Known Answer Test (KAT) – a few AES-256 single-block KATs.
     #[test]
     fn aes256_kat_vectors() {
+        // key, plaintext, ciphertext
         let vectors: &[([u8; 32], [u8; 16], [u8; 16])] = &[
             // All-zero key and plaintext
             ([0u8; 32], [0u8; 16], hb("dc95c078a2408989ad48a21492842087")),
@@ -723,9 +716,9 @@ mod tests {
     fn run_gcm_vector_soft(v: &GcmVector) {
         let key: [u8; 32] = hb(v.key);
         let nonce: [u8; 12] = hb(v.nonce);
-        let pt = h(v.pt);
-        let aad = h(v.aad);
-        let expected_ct = h(v.ct);
+        let pt = hex::decode(v.pt).unwrap();
+        let aad = hex::decode(v.aad).unwrap();
+        let expected_ct = hex::decode(v.ct).unwrap();
         let expected_tag: [u8; 16] = hb(v.tag);
 
         let cipher = Aes256Gcm::new(&key);
@@ -789,7 +782,7 @@ mod tests {
     fn gcm_empty_plaintext_nonempty_aad_soft() {
         let key: [u8; 32] = hb("feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308");
         let nonce: [u8; 12] = hb("cafebabefacedbaddecaf888");
-        let aad = h("feedfacedeadbeeffeedfacedeadbeef");
+        let aad = hex::decode("feedfacedeadbeeffeedfacedeadbeef").unwrap();
         let cipher = Aes256Gcm::new(&key);
         let mut buf: Vec<u8> = vec![];
         let tag = cipher.encrypt_in_place_detached_soft(&mut buf, &nonce, &aad);
@@ -805,9 +798,9 @@ mod tests {
         for v in NIST_GCM_VECTORS {
             let key: [u8; 32] = hb(v.key);
             let nonce: [u8; 12] = hb(v.nonce);
-            let pt = h(v.pt);
-            let aad = h(v.aad);
-            let expected_ct = h(v.ct);
+            let pt = hex::decode(v.pt).unwrap();
+            let aad = hex::decode(v.aad).unwrap();
+            let expected_ct = hex::decode(v.ct).unwrap();
             let expected_tag: [u8; 16] = hb(v.tag);
 
             let cipher = Aes256Gcm::new(&key);

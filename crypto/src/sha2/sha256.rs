@@ -1,7 +1,7 @@
-#[cfg(target_arch = "aarch64")]
-use super::sha256_arm64;
 #[cfg(target_arch = "x86_64")]
 use super::sha256_amd64;
+#[cfg(target_arch = "aarch64")]
+use super::sha256_arm64;
 use crate::{Hash, Hasher};
 
 pub(crate) const SHA256_K: [u32; 64] = [

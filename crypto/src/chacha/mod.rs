@@ -40,6 +40,8 @@ use chacha_avx512::chacha_avx512;
 #[cfg(feature = "zeroize")]
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+use crate::StreamCipher;
+
 /// The number of 32-bit words that compose ChaCha's state.
 const STATE_WORDS: usize = 16;
 
@@ -106,9 +108,19 @@ impl<const ROUNDS: usize> ChaCha<ROUNDS> {
         };
     }
 
+    /// Set the ChaCha counter (words 12 and 13). It can be used to move forward and backward in the
+    /// keystream.
+    pub fn set_counter(&mut self, counter: u64) {
+        inject_counter_into_state(&mut self.state, counter);
+        // setting the counter "realigns" the keystream to the beginning of a block.
+        self.last_keystream_block_index = 0;
+    }
+}
+
+impl<const ROUNDS: usize> StreamCipher for ChaCha<ROUNDS> {
     /// XOR `plaintext` with the ChaCha keystream.
-    pub fn xor_keystream(&mut self, mut plaintext: &mut [u8]) {
-        if plaintext.len() == 0 {
+    fn xor_keystream(&mut self, mut in_out: &mut [u8]) {
+        if in_out.len() == 0 {
             return;
         }
 
@@ -116,15 +128,15 @@ impl<const ROUNDS: usize> ChaCha<ROUNDS> {
         if self.last_keystream_block_index != 0 {
             let remaining_keystream = &self.last_keystream_block[self.last_keystream_block_index..];
 
-            plaintext
+            in_out
                 .iter_mut()
                 .zip(remaining_keystream)
                 .for_each(|(plaintext, keystream)| *plaintext ^= *keystream);
 
-            if plaintext.len() > remaining_keystream.len() {
-                plaintext = &mut plaintext[remaining_keystream.len()..];
-            } else if plaintext.len() < remaining_keystream.len() {
-                self.last_keystream_block_index += plaintext.len();
+            if in_out.len() > remaining_keystream.len() {
+                in_out = &mut in_out[remaining_keystream.len()..];
+            } else if in_out.len() < remaining_keystream.len() {
+                self.last_keystream_block_index += in_out.len();
                 return;
             } else {
                 // plaintext.len() == remaining_keystream.len()
@@ -132,19 +144,19 @@ impl<const ROUNDS: usize> ChaCha<ROUNDS> {
                 return;
             }
         }
-        self.last_keystream_block_index = plaintext.len() % BLOCK_SIZE;
+        self.last_keystream_block_index = in_out.len() % BLOCK_SIZE;
 
         // aarch64 assumes that NEON is always available
         #[cfg(target_arch = "aarch64")]
-        if plaintext.len() >= 128 {
-            chacha_neon::<ROUNDS>(&mut self.state, plaintext, &mut self.last_keystream_block);
+        if in_out.len() >= 128 {
+            chacha_neon::<ROUNDS>(&mut self.state, in_out, &mut self.last_keystream_block);
             return;
         }
 
         // wasm32 only supports compile-time features detection
         #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
         if plaintext.len() >= 128 {
-            chacha_wasm_simd128::<ROUNDS>(&mut self.state, plaintext, &mut self.last_keystream_block);
+            chacha_wasm_simd128::<ROUNDS>(&mut self.state, in_out, &mut self.last_keystream_block);
             return;
         }
 
@@ -152,14 +164,14 @@ impl<const ROUNDS: usize> ChaCha<ROUNDS> {
         #[cfg(feature = "std")]
         {
             #[cfg(target_arch = "x86_64")]
-            if is_x86_feature_detected!("avx512f") && plaintext.len() >= 128 {
-                chacha_avx512::<ROUNDS>(&mut self.state, plaintext, &mut self.last_keystream_block);
+            if is_x86_feature_detected!("avx512f") && in_out.len() >= 128 {
+                chacha_avx512::<ROUNDS>(&mut self.state, in_out, &mut self.last_keystream_block);
                 return;
             }
 
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            if is_x86_feature_detected!("avx2") && plaintext.len() >= 128 {
-                chacha_avx2::<ROUNDS>(&mut self.state, plaintext, &mut self.last_keystream_block);
+            if is_x86_feature_detected!("avx2") && in_out.len() >= 128 {
+                chacha_avx2::<ROUNDS>(&mut self.state, in_out, &mut self.last_keystream_block);
                 return;
             }
         }
@@ -168,28 +180,20 @@ impl<const ROUNDS: usize> ChaCha<ROUNDS> {
         #[cfg(not(feature = "std"))]
         {
             #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-            if plaintext.len() >= 128 {
-                chacha_avx512::<ROUNDS>(&mut self.state, plaintext, &mut self.last_keystream_block);
+            if in_out.len() >= 128 {
+                chacha_avx512::<ROUNDS>(&mut self.state, in_out, &mut self.last_keystream_block);
                 return;
             }
 
             #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
             if plaintext.len() >= 128 {
-                chacha_avx2::<ROUNDS>(&mut self.state, plaintext, &mut self.last_keystream_block);
+                chacha_avx2::<ROUNDS>(&mut self.state, in_out, &mut self.last_keystream_block);
                 return;
             }
         }
 
         // fallback for when SIMD acceleration is not available
-        chacha_generic::<ROUNDS>(&mut self.state, &mut self.last_keystream_block, plaintext);
-    }
-
-    /// Set the ChaCha counter (words 12 and 13). It can be used to move forward and backward in the
-    /// keystream.
-    pub fn set_counter(&mut self, counter: u64) {
-        inject_counter_into_state(&mut self.state, counter);
-        // setting the counter "realigns" the keystream to the beginning of a block.
-        self.last_keystream_block_index = 0;
+        chacha_generic::<ROUNDS>(&mut self.state, &mut self.last_keystream_block, in_out);
     }
 }
 
@@ -296,6 +300,7 @@ fn inject_counter_into_state(state: &mut [u32; STATE_WORDS], counter: u64) {
 #[cfg(test)]
 mod test {
     use super::{ChaCha8, ChaCha12, ChaCha20};
+    use crate::StreamCipher;
 
     struct Test {
         key: [u8; 32],

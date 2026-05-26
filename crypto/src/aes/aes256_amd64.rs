@@ -30,8 +30,8 @@
 #[allow(clippy::many_single_char_names)]
 use core::arch::x86_64::*;
 
-use crate::Error;
 use super::aes256::gf128_mul;
+use crate::Error;
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
