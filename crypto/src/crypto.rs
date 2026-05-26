@@ -1,6 +1,17 @@
+pub mod aes;
 pub mod hkdf;
 pub mod sha2;
 pub mod sha3;
+
+pub use aes::Aes256Gcm;
+
+#[derive(Debug, Clone, Copy)]
+pub enum Error {
+    InvalidKey,
+    InvalidNonce,
+    InvalidCiphertext,
+    Unspecified,
+}
 
 const MAX_HASH_LENGTH: usize = 64;
 const MAX_HASH_BLOCK_SIZE: usize = 128;
