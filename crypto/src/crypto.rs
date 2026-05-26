@@ -4,6 +4,7 @@ extern crate alloc;
 pub mod aes;
 pub mod chacha;
 pub mod hkdf;
+pub mod poly1305;
 pub mod sha2;
 pub mod sha3;
 
