@@ -111,7 +111,11 @@ pub(crate) fn key_expand(key: &[u8; 32]) -> RoundKeys {
 fn xtime(a: u8) -> u8 {
     let hi = a & 0x80;
     let b = a << 1;
-    if hi != 0 { b ^ 0x1b } else { b }
+    if hi != 0 {
+        b ^ 0x1b
+    } else {
+        b
+    }
 }
 
 #[inline(always)]
@@ -431,9 +435,15 @@ impl Aes256Gcm {
     /// * `aad`   – additional authenticated data (not encrypted)
     #[inline]
     pub fn encrypt_in_place_detached(&self, in_out: &mut [u8], nonce: &[u8; 12], aad: &[u8]) -> [u8; 16] {
-        // Try hardware-accelerated path on x86-64
+        // Try hardware-accelerated path on x86-64.
         #[cfg(target_arch = "x86_64")]
         if let Some(tag) = super::aes256_amd64::try_encrypt_in_place_detached(&self.key, in_out, nonce, aad) {
+            return tag;
+        }
+
+        // Try hardware-accelerated path on arm64.
+        #[cfg(target_arch = "aarch64")]
+        if let Some(tag) = super::aes256_arm64::try_encrypt_in_place_detached(&self.key, in_out, nonce, aad) {
             return tag;
         }
 
@@ -451,9 +461,15 @@ impl Aes256Gcm {
         nonce: &[u8; 12],
         aad: &[u8],
     ) -> Result<(), Error> {
-        // Try hardware-accelerated path on x86-64
+        // Try hardware-accelerated path on x86-64.
         #[cfg(target_arch = "x86_64")]
         if let Some(result) = super::aes256_amd64::try_decrypt_in_place_detached(&self.key, in_out, tag, nonce, aad) {
+            return result;
+        }
+
+        // Try hardware-accelerated path on arm64.
+        #[cfg(target_arch = "aarch64")]
+        if let Some(result) = super::aes256_arm64::try_decrypt_in_place_detached(&self.key, in_out, tag, nonce, aad) {
             return result;
         }
 
@@ -755,11 +771,9 @@ mod tests {
         let mut bad_tag = tag;
         bad_tag[0] ^= 0xff;
         let mut buf2 = buf.clone();
-        assert!(
-            cipher
-                .decrypt_in_place_detached_soft(&mut buf2, &bad_tag, &nonce, &[])
-                .is_err()
-        );
+        assert!(cipher
+            .decrypt_in_place_detached_soft(&mut buf2, &bad_tag, &nonce, &[])
+            .is_err());
     }
 
     #[test]
