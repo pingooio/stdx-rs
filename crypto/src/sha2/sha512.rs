@@ -1,7 +1,7 @@
 #[cfg(target_arch = "aarch64")]
 use super::sha512_arm64;
 #[cfg(target_arch = "x86_64")]
-use crate::sha512_amd64;
+use super::sha512_amd64;
 use crate::{Hash, Hasher};
 
 pub(crate) const SHA512_K: [u64; 80] = [
