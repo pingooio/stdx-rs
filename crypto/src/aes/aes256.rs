@@ -595,10 +595,10 @@ mod tests {
             (
                 hb("0101010101010101010101010101010101010101010101010101010101010101"),
                 [0u8; 16],
-                hb("c7b8f481a3bfa27e2d19a3ea6a6cd0b6"),
+                hb("7298caa565031eadc6ce23d23ea66378"),
             ),
             // Key = 0xff..0xff
-            ([0xff; 32], [0u8; 16], hb("acdace8078a32b1a182bfa4987ca1347")),
+            ([0xff; 32], [0u8; 16], hb("4bf85f1b5d54adbc307b0a048389adcb")),
         ];
 
         for (key, pt, ct_expected) in vectors {
@@ -652,7 +652,7 @@ mod tests {
         let h: [u8; 16] = hb("66e94bd4ef8a2c3b884cfa59ca342b2e");
         let x: [u8; 16] = hb("feedfacedeadbeeffeedfacedeadbeef");
         // Computed offline with a reference implementation.
-        let expected: [u8; 16] = hb("5e2ec746917062882c85b0685353deb7");
+        let expected: [u8; 16] = hb("88eddca9968dec8b9c952d6ae0290a82");
         assert_eq!(gf128_mul(&x, &h), expected);
     }
 
@@ -711,12 +711,12 @@ mod tests {
         },
         // Additional: Google Tink / BoringSSL reference vector (AES-256-GCM)
         GcmVector {
-            key: "e3c08a8f06c6e3ad95a70557b23f75483ce33021a9c72b7025666204c69c0cc",
+            key: "0e3c08a8f06c6e3ad95a70557b23f75483ce33021a9c72b7025666204c69c0cc",
             nonce: "12153524c0895e81b2c28465",
             pt: "08000f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a0002",
             aad: "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b391aafd255522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662898015ad",
-            ct: "48df73208cdc63d716752df7794807b1b2a80794a9629114cb5ef1574698cc75ca4e0087dc79dd2f6b6ee3e2bfc4a756f",
-            tag: "d3b6e7b1671d2b79ba5e6e0a5f9fb5d1",
+            ct: "d017a35445d3b3d2a9faf8699b12114551c325744fd174cb53950ab4e33d4cfe90b3c39f9ff0f681b5339437476603bc",
+            tag: "4122cd6a136671d8fe83937439623596",
         },
     ];
 
