@@ -15,6 +15,7 @@ std = ["alloc"]
 zeroize = ["dep:zeroize"]
 
 [dependencies]
+p256 = { version = "0.14", default-features = false, features = ["arithmetic", "ecdh", "ecdsa", "sha256"] }
 zeroize = { workspace = true, optional = true }
 
 [dev-dependencies]
