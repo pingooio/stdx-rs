@@ -5,10 +5,10 @@
 /// GCM uses a big-endian polynomial ring: bit 0 of byte 0 = coefficient of x^127.
 /// PCLMULQDQ uses little-endian polynomial order: bit 0 of SSE lane = coefficient of x^0.
 ///
-/// To bridge this, every GCM block is **byte-reversed** with `_mm_shuffle_epi8`
-/// before any carry-less multiplication.  After byte-reversal, SSE bit k equals the
-/// GCM coefficient of x^k, so PCLMULQDQ directly computes GCM multiplication and
-/// the reduction polynomial is the natural P(x) = x^128 + x^7 + x^2 + x + 1.
+/// To bridge this, every GCM block is transformed by **reversing bits in each byte**
+/// with `_mm_shuffle_epi8` nibble lookups before carry-less multiplication.
+/// In that transformed domain, PCLMULQDQ directly computes GHASH multiplication with
+/// reduction polynomial P(x) = x^128 + x^7 + x^2 + x + 1.
 ///
 /// ## Reduction
 ///
@@ -30,7 +30,6 @@
 #[allow(clippy::many_single_char_names)]
 use core::arch::x86_64::*;
 
-use super::aes256::gf128_mul;
 use crate::Error;
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -78,19 +77,24 @@ fn have_features() -> bool {
         && std::arch::is_x86_feature_detected!("sse4.1")
 }
 
-// ── 128-bit byte-swap ─────────────────────────────────────────────────────────
+// ── 128-bit per-byte bit-reversal ────────────────────────────────────────────
 //
-// Reverses the byte order of a 128-bit SSE value using SSSE3 `pshufb`.
-// This maps each GCM block so that SSE bit k = GCM coefficient of x^k,
-// making PCLMULQDQ directly compute GCM field multiplication.
+// Reverses bits in each byte of a 128-bit SSE value using SSSE3 `pshufb`.
+// This maps each GCM block to the polynomial bit ordering used by PCLMULQDQ.
 
 #[target_feature(enable = "ssse3")]
 #[inline]
-unsafe fn bswap128(x: __m128i) -> __m128i {
-    // _mm_set_epi8 takes args from HIGH byte to LOW byte.
-    // This mask reverses byte order: dst byte 15 = src byte 0, …, dst byte 0 = src byte 15.
-    let mask = _mm_set_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
-    _mm_shuffle_epi8(x, mask)
+unsafe fn bitreverse_per_byte(x: __m128i) -> __m128i {
+    // reverse4[n] = bit-reversal of 4-bit nibble n
+    let reverse4 = _mm_setr_epi8(0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15);
+    let low_nibble_mask = _mm_set1_epi8(0x0f_u8 as i8);
+
+    let lo = _mm_and_si128(x, low_nibble_mask);
+    let hi = _mm_and_si128(_mm_srli_epi16(x, 4), low_nibble_mask);
+
+    let rev_lo = _mm_shuffle_epi8(reverse4, lo);
+    let rev_hi = _mm_shuffle_epi8(reverse4, hi);
+    _mm_or_si128(_mm_slli_epi16(rev_lo, 4), rev_hi)
 }
 
 // ── AES-256 key expansion (AES-NI) ────────────────────────────────────────────
@@ -235,22 +239,22 @@ unsafe fn clmul_gcm(a: __m128i, b: __m128i) -> __m128i {
 
 // ── GHASH ─────────────────────────────────────────────────────────────────────
 //
-// The GHASH state and hash key H are kept in byte-swapped form throughout.
-// Input blocks are byte-swapped before being XOR'd into the state.
-// After all blocks are processed, the state is byte-swapped back to obtain
+// The GHASH state and hash key H are kept in bit-reversed-per-byte form.
+// Input blocks are transformed likewise before being XOR'd into the state.
+// After all blocks are processed, the state is transformed back to obtain
 // the GCM GHASH result.
 
 /// Feed a byte slice into the running GHASH state.
 ///
-/// `state` and `h` are in the byte-swapped domain.
-/// Each input block is byte-swapped before processing.
+/// `state` and `h` are in the per-byte-bit-reversed domain.
+/// Each input block is transformed before processing.
 #[target_feature(enable = "pclmulqdq,ssse3,sse2")]
 unsafe fn ghash_update(mut state: __m128i, h: __m128i, data: &[u8]) -> __m128i {
     let n = data.len();
     let mut i = 0;
 
     while i + 16 <= n {
-        let block = bswap128(_mm_loadu_si128(data.as_ptr().add(i).cast()));
+        let block = bitreverse_per_byte(_mm_loadu_si128(data.as_ptr().add(i).cast()));
         state = clmul_gcm(_mm_xor_si128(state, block), h);
         i += 16;
     }
@@ -258,7 +262,7 @@ unsafe fn ghash_update(mut state: __m128i, h: __m128i, data: &[u8]) -> __m128i {
     if i < n {
         let mut buf = [0u8; 16];
         buf[..n - i].copy_from_slice(&data[i..]);
-        let block = bswap128(_mm_loadu_si128(buf.as_ptr().cast()));
+        let block = bitreverse_per_byte(_mm_loadu_si128(buf.as_ptr().cast()));
         state = clmul_gcm(_mm_xor_si128(state, block), h);
     }
 
@@ -324,7 +328,7 @@ unsafe fn encrypt_aesni(key: &[u8; 32], in_out: &mut [u8], nonce: &[u8; 12], aad
         in_out[i..].copy_from_slice(&out_buf[..n - i]);
     }
 
-    compute_tag_scalar(&h, aad, in_out, &ej0_bytes)
+    compute_tag_hardware(&h, aad, in_out, &ej0_bytes)
 }
 
 // ── AES-256-GCM decrypt ───────────────────────────────────────────────────────
@@ -352,7 +356,7 @@ unsafe fn decrypt_aesni(
     _mm_storeu_si128(ej0_bytes.as_mut_ptr().cast(), ej0);
 
     // Authenticate-then-decrypt: verify tag first.
-    let computed_tag = compute_tag_scalar(&h, aad, in_out, &ej0_bytes);
+    let computed_tag = compute_tag_hardware(&h, aad, in_out, &ej0_bytes);
 
     // Constant-time comparison
     let mut diff = 0u8;
@@ -388,45 +392,25 @@ unsafe fn decrypt_aesni(
     Ok(())
 }
 
+#[target_feature(enable = "pclmulqdq,ssse3,sse2")]
 #[inline]
-fn ghash_block_scalar(state: &mut [u8; 16], h: &[u8; 16], block: &[u8; 16]) {
-    for i in 0..16 {
-        state[i] ^= block[i];
-    }
-    *state = gf128_mul(state, h);
-}
+unsafe fn compute_tag_hardware(h: &[u8; 16], aad: &[u8], ciphertext: &[u8], ej0: &[u8; 16]) -> [u8; 16] {
+    let h = bitreverse_per_byte(_mm_loadu_si128(h.as_ptr().cast()));
+    let mut state = _mm_setzero_si128();
 
-#[inline]
-fn ghash_update_scalar(state: &mut [u8; 16], h: &[u8; 16], data: &[u8]) {
-    let mut chunks = data.chunks_exact(16);
-    for chunk in chunks.by_ref() {
-        let block: [u8; 16] = chunk.try_into().unwrap();
-        ghash_block_scalar(state, h, &block);
-    }
-    let rem = chunks.remainder();
-    if !rem.is_empty() {
-        let mut padded = [0u8; 16];
-        padded[..rem.len()].copy_from_slice(rem);
-        ghash_block_scalar(state, h, &padded);
-    }
-}
-
-#[inline]
-fn compute_tag_scalar(h: &[u8; 16], aad: &[u8], ciphertext: &[u8], ej0: &[u8; 16]) -> [u8; 16] {
-    let mut state = [0u8; 16];
-
-    ghash_update_scalar(&mut state, h, aad);
-    ghash_update_scalar(&mut state, h, ciphertext);
+    state = ghash_update(state, h, aad);
+    state = ghash_update(state, h, ciphertext);
 
     let mut len_block = [0u8; 16];
     len_block[..8].copy_from_slice(&((aad.len() as u64) * 8).to_be_bytes());
     len_block[8..].copy_from_slice(&((ciphertext.len() as u64) * 8).to_be_bytes());
-    ghash_block_scalar(&mut state, h, &len_block);
+    let len_block = bitreverse_per_byte(_mm_loadu_si128(len_block.as_ptr().cast()));
+    state = clmul_gcm(_mm_xor_si128(state, len_block), h);
 
-    for i in 0..16 {
-        state[i] ^= ej0[i];
-    }
-    state
+    let tag = _mm_xor_si128(bitreverse_per_byte(state), _mm_loadu_si128(ej0.as_ptr().cast()));
+    let mut out = [0u8; 16];
+    _mm_storeu_si128(out.as_mut_ptr().cast(), tag);
+    out
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
