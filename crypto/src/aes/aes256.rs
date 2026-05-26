@@ -672,6 +672,8 @@ mod tests {
         tag: &'static str,
     }
 
+    include!("aes256_gcm_vectors.rs");
+
     /// NIST SP 800-38D Appendix B – test cases for AES-256-GCM.
     ///
     /// These are the canonical NIST test vectors.  Each vector specifies:
@@ -777,7 +779,7 @@ mod tests {
 
     #[test]
     fn nist_gcm_test_vectors_soft() {
-        for v in NIST_GCM_VECTORS {
+        for v in NIST_GCM_VECTORS.iter().chain(EXTRA_GCM_VECTORS.iter()) {
             run_gcm_vector_soft(v);
         }
     }
@@ -833,7 +835,7 @@ mod tests {
 
     #[test]
     fn nist_gcm_test_vectors_dispatch() {
-        for v in NIST_GCM_VECTORS {
+        for v in NIST_GCM_VECTORS.iter().chain(EXTRA_GCM_VECTORS.iter()) {
             let key: [u8; 32] = hb(v.key);
             let nonce: [u8; 12] = hb(v.nonce);
             let pt = hex::decode(v.pt).unwrap();
