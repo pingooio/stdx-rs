@@ -1,7 +1,6 @@
 use crate::Error;
 use ::p256::{
     EncodedPoint, PublicKey, SecretKey,
-    ecdh::diffie_hellman,
     ecdsa::{
         Signature, SigningKey, VerifyingKey,
         signature::{Signer, Verifier},
@@ -12,7 +11,6 @@ use ::p256::{
 pub const PRIVATE_KEY_SIZE: usize = 32;
 pub const PUBLIC_KEY_COMPRESSED_SIZE: usize = 33;
 pub const PUBLIC_KEY_UNCOMPRESSED_SIZE: usize = 65;
-pub const SHARED_SECRET_SIZE: usize = 32;
 pub const SIGNATURE_SIZE: usize = 64;
 
 fn parse_secret_key(private_key: &[u8; PRIVATE_KEY_SIZE]) -> Result<SecretKey, Error> {
@@ -36,19 +34,6 @@ pub fn derive_public_key_compressed(
     let encoded = secret_key.public_key().to_encoded_point(true);
     let mut out = [0u8; PUBLIC_KEY_COMPRESSED_SIZE];
     out.copy_from_slice(encoded.as_bytes());
-    Ok(out)
-}
-
-pub fn ecdh_shared_secret(
-    private_key: &[u8; PRIVATE_KEY_SIZE],
-    peer_public_key: &[u8],
-) -> Result<[u8; SHARED_SECRET_SIZE], Error> {
-    let secret_key = parse_secret_key(private_key)?;
-    let peer_public_key = PublicKey::from_sec1_bytes(peer_public_key).map_err(|_| Error::InvalidKey)?;
-
-    let shared_secret = diffie_hellman(secret_key.to_nonzero_scalar(), peer_public_key.as_affine());
-    let mut out = [0u8; SHARED_SECRET_SIZE];
-    out.copy_from_slice(shared_secret.raw_secret_bytes().as_slice());
     Ok(out)
 }
 
@@ -78,36 +63,6 @@ pub fn is_valid_public_key(public_key: &[u8]) -> bool {
 mod tests {
     use super::*;
 
-    struct EcdhVector {
-        private_key: &'static str,
-        peer_x: &'static str,
-        peer_y: &'static str,
-        expected_shared_secret: &'static str,
-    }
-
-    // NIST CAVP SP 800-56A ECCCDH vectors as mirrored in BoringSSL:
-    // https://github.com/google/boringssl/blob/master/crypto/ecdh/ecdh_tests.txt
-    const ECDH_VECTORS: [EcdhVector; 3] = [
-        EcdhVector {
-            private_key: "7d7dc5f71eb29ddaf80d6214632eeae03d9058af1fb6d22ed80badb62bc1a534",
-            peer_x: "700c48f77f56584c5cc632ca65640db91b6bacce3a4df6b42ce7cc838833d287",
-            peer_y: "db71e509e3fd9b060ddb20ba5c51dcc5948d46fbf640dfe0441782cab85fa4ac",
-            expected_shared_secret: "46fc62106420ff012e54a434fbdd2d25ccc5852060561e68040dd7778997bd7b",
-        },
-        EcdhVector {
-            private_key: "38f65d6dce47676044d58ce5139582d568f64bb16098d179dbab07741dd5caf5",
-            peer_x: "809f04289c64348c01515eb03d5ce7ac1a8cb9498f5caa50197e58d43a86a7ae",
-            peer_y: "b29d84e811197f25eba8f5194092cb6ff440e26d4421011372461f579271cda3",
-            expected_shared_secret: "057d636096cb80b67a8c038c890e887d1adfa4195e9b3ce241c8a778c59cda67",
-        },
-        EcdhVector {
-            private_key: "1accfaf1b97712b85a6f54b148985a1bdc4c9bec0bd258cad4b3d603f49f32c8",
-            peer_x: "a2339c12d4a03c33546de533268b4ad667debf458b464d77443636440ee7fec3",
-            peer_y: "ef48a3ab26e20220bcda2c1851076839dae88eae962869a497bf73cb66faf536",
-            expected_shared_secret: "2d457b78b4614132477618a5b077965ec90730a8c81a1c75d6d4ec68005d67ec",
-        },
-    ];
-
     fn decode_hex<const N: usize>(hex_bytes: &str) -> [u8; N] {
         let bytes = hex::decode(hex_bytes).unwrap();
         assert_eq!(bytes.len(), N);
@@ -126,8 +81,7 @@ mod tests {
 
     #[test]
     fn derive_public_key_generator_matches_sec1_base_point() {
-        let private_key = [0u8; 31].map(|_| 0);
-        let mut private_key = private_key;
+        let mut private_key = [0u8; 32];
         private_key[31] = 1;
         let derived = derive_public_key_uncompressed(&private_key).unwrap();
         let expected = decode_hex::<65>(
@@ -182,21 +136,9 @@ mod tests {
     }
 
     #[test]
-    fn ecdh_vectors_match_nist_cavp() {
-        for vector in ECDH_VECTORS {
-            let private_key = decode_hex::<32>(vector.private_key);
-            let peer_public_key = uncompressed_public_key(vector.peer_x, vector.peer_y);
-            let expected = decode_hex::<32>(vector.expected_shared_secret);
-            let actual = ecdh_shared_secret(&private_key, &peer_public_key).unwrap();
-            assert_eq!(actual, expected);
-        }
-    }
-
-    #[test]
     fn invalid_inputs_are_rejected() {
         let invalid_private_key = [0u8; PRIVATE_KEY_SIZE];
         assert!(derive_public_key_uncompressed(&invalid_private_key).is_err());
-        assert!(ecdh_shared_secret(&invalid_private_key, &[0x04; PUBLIC_KEY_UNCOMPRESSED_SIZE]).is_err());
         assert!(ecdsa_sign(&invalid_private_key, b"msg").is_err());
 
         let private_key = decode_hex::<32>("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721");
