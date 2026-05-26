@@ -672,6 +672,8 @@ mod tests {
         tag: &'static str,
     }
 
+    include!("aes256_gcm_vectors.rs");
+
     /// NIST SP 800-38D Appendix B – test cases for AES-256-GCM.
     ///
     /// These are the canonical NIST test vectors.  Each vector specifies:
@@ -723,6 +725,32 @@ mod tests {
             ct: "d017a35445d3b3d2a9faf8699b12114551c325744fd174cb53950ab4e33d4cfe90b3c39f9ff0f681b5339437476603bc",
             tag: "4122cd6a136671d8fe83937439623596",
         },
+        // Additional: Google Wycheproof AES-GCM vectors (valid, keySize=256).
+        GcmVector {
+            key: "92ace3e348cd821092cd921aa3546374299ab46209691bc28b8752d17f123c20",
+            nonce: "00112233445566778899aabb",
+            pt: "00010203040506070809",
+            aad: "00000000ffffffff",
+            ct: "e27abdd2d2a53d2f136b",
+            tag: "9a4a2579529301bcfb71c78d4060f52c",
+        },
+        GcmVector {
+            key: "cc56b680552eb75008f5484b4cb803fa5063ebd6eab91f6ab6aef4916a766273",
+            nonce: "99e23ec48985bccdeeab60f1",
+            pt: "2a",
+            aad: "",
+            ct: "06",
+            tag: "633c1e9703ef744ffffb40edf9d14355",
+        },
+        // Additional: pyca/cryptography CAVS AES-GCM vectors (gcmEncryptExtIV256.rsp).
+        GcmVector {
+            key: "78dc4e0aaf52d935c3c01eea57428f00ca1fd475f5da86a49c8dd73d68c8e223",
+            nonce: "d79cf22d504cc793c3fb6c8a",
+            pt: "",
+            aad: "b96baa8c1c75a671bfb2d08d06be5f36",
+            ct: "",
+            tag: "3e5d486aa2e30b22e040b85723a06e76",
+        },
     ];
 
     fn run_gcm_vector_soft(v: &GcmVector) {
@@ -751,7 +779,7 @@ mod tests {
 
     #[test]
     fn nist_gcm_test_vectors_soft() {
-        for v in NIST_GCM_VECTORS {
+        for v in NIST_GCM_VECTORS.iter().chain(EXTRA_GCM_VECTORS.iter()) {
             run_gcm_vector_soft(v);
         }
     }
@@ -807,7 +835,7 @@ mod tests {
 
     #[test]
     fn nist_gcm_test_vectors_dispatch() {
-        for v in NIST_GCM_VECTORS {
+        for v in NIST_GCM_VECTORS.iter().chain(EXTRA_GCM_VECTORS.iter()) {
             let key: [u8; 32] = hb(v.key);
             let nonce: [u8; 12] = hb(v.nonce);
             let pt = hex::decode(v.pt).unwrap();
