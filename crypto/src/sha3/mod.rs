@@ -8,6 +8,6 @@ mod shake256;
 mod keccak_arm64;
 
 pub use kmac::Kmac256;
-pub use sha3_256::{Sha3_256, hash_256};
-pub use sha3_512::{Sha3_512, hash_512};
+pub use sha3_256::Sha3_256;
+pub use sha3_512::Sha3_512;
 pub use shake256::{CShake256, Shake256};

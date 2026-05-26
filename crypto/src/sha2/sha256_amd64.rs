@@ -49,6 +49,7 @@ unsafe fn schedule_rounds16(r: usize, abef: &mut __m128i, cdgh: &mut __m128i, w:
     }
 }
 
+#[inline]
 #[target_feature(enable = "ssse3")]
 unsafe fn read_block(block: &[u8; 64]) -> [__m128i; 4] {
     let block_ptr: *const __m128i = block.as_ptr().cast();

@@ -1,5 +1,5 @@
 use super::keccak::Keccak;
-use crate::{Hash, Hasher, MAX_HASH_LENGTH, Xof};
+use crate::{Hash, Hasher, Xof, bytes::Bytes};
 
 pub(crate) const SHAKE256_RATE: usize = 136;
 const CSHAKE256_DOMAIN_SEPARATOR: u8 = 0x04;
@@ -14,7 +14,7 @@ impl CShake256 {
     #[inline]
     pub fn hash(data: &[u8], function_name: &[u8], customization: &[u8], output: &mut [u8]) {
         let mut xof = CShake256::new(function_name, customization);
-        xof.absobrd(data);
+        xof.absorb(data);
         xof.squeeze(output);
     }
 
@@ -41,7 +41,7 @@ impl CShake256 {
 
 impl Xof for CShake256 {
     #[inline]
-    fn absobrd(&mut self, data: &[u8]) {
+    fn absorb(&mut self, data: &[u8]) {
         self.keccak.absorb(data);
     }
 
@@ -53,34 +53,34 @@ impl Xof for CShake256 {
 
 #[derive(Clone)]
 pub struct Shake256 {
-    cshake: CShake256,
+    keccak: Keccak,
 }
 
 impl Shake256 {
     #[inline]
     pub fn hash(data: &[u8], output: &mut [u8]) {
         let mut hasher = Shake256::new();
-        hasher.absobrd(data);
+        hasher.absorb(data);
         hasher.squeeze(output);
     }
 
     #[inline]
     pub fn new() -> Self {
         return Shake256 {
-            cshake: CShake256::new(b"", b""),
+            keccak: Keccak::new(SHAKE256_RATE, SHAKE256_DOMAIN_SEPARATOR),
         };
     }
 }
 
 impl Xof for Shake256 {
     #[inline]
-    fn absobrd(&mut self, data: &[u8]) {
-        self.cshake.absobrd(data);
+    fn absorb(&mut self, data: &[u8]) {
+        self.keccak.absorb(data);
     }
 
     #[inline]
     fn squeeze(&mut self, out: &mut [u8]) {
-        self.cshake.squeeze(out);
+        self.keccak.squeeze(out);
     }
 }
 
@@ -95,58 +95,66 @@ impl Hasher for Shake256 {
 
     #[inline]
     fn update(&mut self, data: &[u8]) {
-        self.absobrd(data);
+        self.absorb(data);
     }
 
     #[inline]
     fn sum(mut self) -> Hash {
-        let mut hash = [0u8; MAX_HASH_LENGTH];
-        self.squeeze(&mut hash[..Self::OUTPUT_SIZE]);
-        return Hash {
-            hash,
-            length: Self::OUTPUT_SIZE,
-        };
+        let mut hash = Hash::with_length(Self::OUTPUT_SIZE);
+        self.squeeze(hash.as_mut());
+        return hash;
     }
 }
 
 // SP 800-185 encoding helpers
 
+type EncodedBytes = Bytes<9>;
+
 #[inline]
-pub(crate) fn left_encode(x: usize) -> Vec<u8> {
+pub(crate) fn left_encode(x: usize) -> EncodedBytes {
     let bytes = x.to_be_bytes();
     let first_non_zero = bytes.iter().position(|&b| b != 0).unwrap_or(bytes.len() - 1);
     let n = bytes.len() - first_non_zero;
-    let mut out = Vec::with_capacity(1 + n);
+
+    let mut out = Bytes::new();
     out.push(n as u8);
-    out.extend_from_slice(&bytes[first_non_zero..]);
+    out.append(&bytes[first_non_zero..]);
     return out;
 }
 
 #[inline]
-pub(crate) fn right_encode(x: usize) -> Vec<u8> {
-    let mut out = left_encode(x);
+pub(crate) fn right_encode(x: usize) -> EncodedBytes {
+    let mut bytes = left_encode(x);
+    let out = bytes.as_mut();
     let n = out[0];
     out[0] = out[1];
     for i in 1..(n as usize) {
         out[i] = out[i + 1];
     }
     out[n as usize] = n;
-    return out;
+    return bytes;
 }
 
 #[inline]
 pub(crate) fn encode_string(s: &[u8]) -> Vec<u8> {
-    let mut out = left_encode(s.len() * 8);
+    let encoded = left_encode(s.len() * 8);
+    let mut out = Vec::with_capacity(s.len() + encoded.len());
+    out.extend_from_slice(encoded.as_ref());
     out.extend_from_slice(s);
     return out;
 }
 
 #[inline]
 pub(crate) fn bytepad(x: &[u8], w: usize) -> Vec<u8> {
-    let mut out = left_encode(w);
+    let encoded = left_encode(w);
+    // the length of left_encode(w) || X
+    let wx_length = encoded.len() + x.len();
+    let pad_length = (w - (wx_length % w)) % w;
+
+    let mut out = Vec::with_capacity(wx_length + pad_length);
+    out.extend_from_slice(encoded.as_ref());
     out.extend_from_slice(x);
-    let pad_len = (w - (out.len() % w)) % w;
-    out.resize(out.len() + pad_len, 0);
+    out.resize(out.len() + pad_length, 0);
     return out;
 }
 
@@ -212,7 +220,7 @@ mod tests {
         Shake256::hash(b"", &mut one_shot);
 
         let mut shake = Shake256::new();
-        shake.absobrd(b"");
+        shake.absorb(b"");
         let mut first = [0u8; 64];
         let mut second = [0u8; 64];
         shake.squeeze(&mut first);
@@ -235,7 +243,7 @@ mod tests {
     #[test]
     fn xof_trait_impl() {
         let mut xof = Shake256::new();
-        xof.absobrd(b"abc");
+        xof.absorb(b"abc");
         let mut out = [0u8; 64];
         xof.squeeze(&mut out);
         assert_eq!(
@@ -273,7 +281,7 @@ mod tests {
 
         let mut cshake = CShake256::new(b"", EMAIL_SIGNATURE);
         for chunk in input.chunks(9) {
-            cshake.absobrd(chunk);
+            cshake.absorb(chunk);
         }
         let mut streamed = [0u8; 64];
         cshake.squeeze(&mut streamed);
@@ -294,7 +302,7 @@ mod tests {
     #[test]
     fn cshake256_xof_trait_impl() {
         let mut xof = CShake256::new(b"", b"");
-        xof.absobrd(b"abc");
+        xof.absorb(b"abc");
         let mut out = [0u8; 64];
         xof.squeeze(&mut out);
         assert_eq!(

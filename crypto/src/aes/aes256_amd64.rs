@@ -284,12 +284,7 @@ unsafe fn ctr_inc(ctr: __m128i) -> __m128i {
 // ── AES-256-GCM encrypt ───────────────────────────────────────────────────────
 
 #[target_feature(enable = "aes,pclmulqdq,ssse3,sse4.1,sse2")]
-unsafe fn encrypt_aesni(
-    key: &[u8; 32],
-    in_out: &mut [u8],
-    nonce: &[u8; 12],
-    aad: &[u8],
-) -> [u8; 16] {
+unsafe fn encrypt_aesni(key: &[u8; 32], in_out: &mut [u8], nonce: &[u8; 12], aad: &[u8]) -> [u8; 16] {
     let rk = key_expand_aesni(key);
 
     // H = AES_K(0^128); byte-swapped for GHASH multiplication.
@@ -418,7 +413,10 @@ mod tests {
 
     fn h(s: &str) -> Vec<u8> {
         let s = s.replace(|c: char| c.is_whitespace(), "");
-        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
     }
 
     fn hb<const N: usize>(s: &str) -> [u8; N] {
@@ -440,8 +438,7 @@ mod tests {
     fn aesni_key_expand_matches_soft() {
         skip_unless_aesni!();
 
-        let key: [u8; 32] =
-            hb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+        let key: [u8; 32] = hb("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
         let soft_rk = crate::aes::aes256::key_expand(&key);
         let ni_rk = unsafe { key_expand_aesni(&key) };
 
@@ -458,8 +455,7 @@ mod tests {
     fn aesni_ecb_vectors() {
         skip_unless_aesni!();
 
-        let key: [u8; 32] =
-            hb("603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4");
+        let key: [u8; 32] = hb("603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4");
         let ni_rk = unsafe { key_expand_aesni(&key) };
 
         let vectors: &[([u8; 16], [u8; 16])] = &[
@@ -555,8 +551,7 @@ mod tests {
             assert_eq!(tag, exp_tag, "AES-NI tag key={}", v.key);
 
             let mut buf2 = exp_ct.clone();
-            unsafe { decrypt_aesni(&key, &mut buf2, &exp_tag, &nonce, &aad) }
-                .expect("AES-NI decrypt failed");
+            unsafe { decrypt_aesni(&key, &mut buf2, &exp_tag, &nonce, &aad) }.expect("AES-NI decrypt failed");
             assert_eq!(buf2, pt, "AES-NI pt  key={}", v.key);
         }
     }
@@ -578,8 +573,7 @@ mod tests {
     fn aesni_matches_soft() {
         skip_unless_aesni!();
 
-        let key: [u8; 32] =
-            hb("feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308");
+        let key: [u8; 32] = hb("feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308");
         let nonce: [u8; 12] = hb("cafebabefacedbaddecaf888");
         let aad = h("feedfacedeadbeeffeedfacedeadbeef");
         let pt: Vec<u8> = (0u8..=255u8).collect();
@@ -606,8 +600,7 @@ mod tests {
 
         let mut buf = pt.clone();
         let tag = unsafe { encrypt_aesni(&key, &mut buf, &nonce, aad) };
-        unsafe { decrypt_aesni(&key, &mut buf, &tag, &nonce, aad) }
-            .expect("large roundtrip decrypt failed");
+        unsafe { decrypt_aesni(&key, &mut buf, &tag, &nonce, aad) }.expect("large roundtrip decrypt failed");
         assert_eq!(buf, pt);
     }
 }

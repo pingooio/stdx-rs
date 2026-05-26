@@ -63,7 +63,12 @@ fn rot_word(w: [u8; 4]) -> [u8; 4] {
 
 #[inline(always)]
 fn sub_word(w: [u8; 4]) -> [u8; 4] {
-    [SBOX[w[0] as usize], SBOX[w[1] as usize], SBOX[w[2] as usize], SBOX[w[3] as usize]]
+    [
+        SBOX[w[0] as usize],
+        SBOX[w[1] as usize],
+        SBOX[w[2] as usize],
+        SBOX[w[3] as usize],
+    ]
 }
 
 /// Expand a 256-bit key into 15 AES round keys (FIPS 197 §5.2, Nk=8, Nr=14).
@@ -286,7 +291,11 @@ pub(crate) fn decrypt_block(rk: &RoundKeys, block: &[u8; 16]) -> [u8; 16] {
 fn gf128_mul_x(v: u128) -> u128 {
     let carry = v & 1; // coefficient of x^127 before shift
     let shifted = v >> 1;
-    if carry != 0 { shifted ^ (0xe1u128 << 120) } else { shifted }
+    if carry != 0 {
+        shifted ^ (0xe1u128 << 120)
+    } else {
+        shifted
+    }
 }
 
 /// Multiply two GCM elements in GF(2^128).
@@ -410,7 +419,10 @@ impl Aes256Gcm {
 
     /// Create a new `Aes256Gcm` instance from a 32-byte key.
     pub fn new(key: &[u8; 32]) -> Self {
-        Aes256Gcm { key: *key, round_keys: key_expand(key) }
+        Aes256Gcm {
+            key: *key,
+            round_keys: key_expand(key),
+        }
     }
 
     /// Encrypt `in_out` in-place and return the 16-byte authentication tag.
@@ -449,12 +461,7 @@ impl Aes256Gcm {
     }
 
     /// Pure-Rust encrypt implementation.
-    pub(crate) fn encrypt_in_place_detached_soft(
-        &self,
-        in_out: &mut [u8],
-        nonce: &[u8; 12],
-        aad: &[u8],
-    ) -> [u8; 16] {
+    pub(crate) fn encrypt_in_place_detached_soft(&self, in_out: &mut [u8], nonce: &[u8; 12], aad: &[u8]) -> [u8; 16] {
         let rk = &self.round_keys;
         let h = encrypt_block(rk, &[0u8; 16]);
 
@@ -520,7 +527,10 @@ mod tests {
 
     fn h(s: &str) -> Vec<u8> {
         let s = s.replace(|c: char| c.is_whitespace(), "");
-        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
     }
 
     fn hb<const N: usize>(s: &str) -> [u8; N] {
@@ -580,11 +590,7 @@ mod tests {
     fn aes256_kat_vectors() {
         let vectors: &[([u8; 32], [u8; 16], [u8; 16])] = &[
             // All-zero key and plaintext
-            (
-                [0u8; 32],
-                [0u8; 16],
-                hb("dc95c078a2408989ad48a21492842087"),
-            ),
+            ([0u8; 32], [0u8; 16], hb("dc95c078a2408989ad48a21492842087")),
             // Key = 0x01..0x20, PT = 0
             (
                 hb("0101010101010101010101010101010101010101010101010101010101010101"),
@@ -592,11 +598,7 @@ mod tests {
                 hb("c7b8f481a3bfa27e2d19a3ea6a6cd0b6"),
             ),
             // Key = 0xff..0xff
-            (
-                [0xff; 32],
-                [0u8; 16],
-                hb("acdace8078a32b1a182bfa4987ca1347"),
-            ),
+            ([0xff; 32], [0u8; 16], hb("acdace8078a32b1a182bfa4987ca1347")),
         ];
 
         for (key, pt, ct_expected) in vectors {
@@ -624,7 +626,9 @@ mod tests {
 
     #[test]
     fn gf128_mul_zero() {
-        let h = [0x66, 0xe9, 0x4b, 0xd4, 0xef, 0x8a, 0x2c, 0x3b, 0x88, 0x4c, 0xfa, 0x59, 0xca, 0x34, 0x2b, 0x2e];
+        let h = [
+            0x66, 0xe9, 0x4b, 0xd4, 0xef, 0x8a, 0x2c, 0x3b, 0x88, 0x4c, 0xfa, 0x59, 0xca, 0x34, 0x2b, 0x2e,
+        ];
         let zero = [0u8; 16];
         assert_eq!(gf128_mul(&zero, &h), zero);
         assert_eq!(gf128_mul(&h, &zero), zero);
@@ -734,7 +738,8 @@ mod tests {
 
         // Decrypt
         let mut buf2 = expected_ct.clone();
-        cipher.decrypt_in_place_detached_soft(&mut buf2, &expected_tag, &nonce, &aad)
+        cipher
+            .decrypt_in_place_detached_soft(&mut buf2, &expected_tag, &nonce, &aad)
             .expect("decrypt failed");
         assert_eq!(buf2, pt, "plaintext mismatch after decrypt for key={}", v.key);
     }
@@ -757,7 +762,11 @@ mod tests {
         let mut bad_tag = tag;
         bad_tag[0] ^= 0xff;
         let mut buf2 = buf.clone();
-        assert!(cipher.decrypt_in_place_detached_soft(&mut buf2, &bad_tag, &nonce, &[]).is_err());
+        assert!(
+            cipher
+                .decrypt_in_place_detached_soft(&mut buf2, &bad_tag, &nonce, &[])
+                .is_err()
+        );
     }
 
     #[test]
@@ -770,7 +779,9 @@ mod tests {
         let cipher = Aes256Gcm::new(&key);
         let mut buf = plaintext.clone();
         let tag = cipher.encrypt_in_place_detached_soft(&mut buf, &nonce, aad);
-        cipher.decrypt_in_place_detached_soft(&mut buf, &tag, &nonce, aad).expect("decrypt failed");
+        cipher
+            .decrypt_in_place_detached_soft(&mut buf, &tag, &nonce, aad)
+            .expect("decrypt failed");
         assert_eq!(buf, plaintext);
     }
 
@@ -782,7 +793,9 @@ mod tests {
         let cipher = Aes256Gcm::new(&key);
         let mut buf: Vec<u8> = vec![];
         let tag = cipher.encrypt_in_place_detached_soft(&mut buf, &nonce, &aad);
-        cipher.decrypt_in_place_detached_soft(&mut buf, &tag, &nonce, &aad).expect("decrypt failed");
+        cipher
+            .decrypt_in_place_detached_soft(&mut buf, &tag, &nonce, &aad)
+            .expect("decrypt failed");
     }
 
     // ── Dispatching wrappers (use hardware path when available) ───────────────
@@ -805,7 +818,8 @@ mod tests {
             assert_eq!(tag, expected_tag, "dispatch tag mismatch key={}", v.key);
 
             let mut buf2 = expected_ct.clone();
-            cipher.decrypt_in_place_detached(&mut buf2, &expected_tag, &nonce, &aad)
+            cipher
+                .decrypt_in_place_detached(&mut buf2, &expected_tag, &nonce, &aad)
                 .expect("dispatch decrypt failed");
             assert_eq!(buf2, pt);
         }

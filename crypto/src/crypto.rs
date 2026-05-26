@@ -3,7 +3,14 @@ pub mod hkdf;
 pub mod sha2;
 pub mod sha3;
 
+mod bytes;
+
 pub use aes::Aes256Gcm;
+pub use bytes::Bytes;
+
+const MAX_HASH_BLOCK_SIZE: usize = 128;
+
+pub type Hash = Bytes<64>;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Error {
@@ -11,21 +18,6 @@ pub enum Error {
     InvalidNonce,
     InvalidCiphertext,
     Unspecified,
-}
-
-const MAX_HASH_LENGTH: usize = 64;
-const MAX_HASH_BLOCK_SIZE: usize = 128;
-
-pub struct Hash {
-    hash: [u8; MAX_HASH_LENGTH],
-    length: usize,
-}
-
-impl AsRef<[u8]> for Hash {
-    #[inline]
-    fn as_ref(&self) -> &[u8] {
-        &self.hash[..self.length]
-    }
 }
 
 pub trait Hasher: Sized + Clone {
@@ -47,7 +39,7 @@ pub trait Hasher: Sized + Clone {
 }
 
 pub trait Xof: Sized + Send + Sync {
-    fn absobrd(&mut self, data: &[u8]);
+    fn absorb(&mut self, data: &[u8]);
     fn squeeze(&mut self, out: &mut [u8]);
 }
 

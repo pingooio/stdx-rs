@@ -1,8 +1,8 @@
 #[cfg(target_arch = "aarch64")]
 use super::sha512_arm64;
 #[cfg(target_arch = "x86_64")]
-use super::sha512_amd64;
-use crate::{Hash, Hasher, MAX_HASH_LENGTH};
+use crate::sha512_amd64;
+use crate::{Hash, Hasher};
 
 pub(crate) const SHA512_K: [u64; 80] = [
     0x428a2f98d728ae22,
@@ -97,6 +97,7 @@ pub struct Sha512 {
 
 impl Sha512 {
     #[inline]
+    #[allow(unreachable_code)]
     fn process_block(&mut self, block: &[u8; 128]) {
         #[cfg(target_arch = "x86_64")]
         {
@@ -266,16 +267,12 @@ impl Hasher for Sha512 {
             self.process_block(&block);
         }
 
-        let mut hash = [0u8; MAX_HASH_LENGTH];
-        for (i, word) in self.state.iter().enumerate() {
-            let offset = i * 8;
-            hash[offset..offset + 8].copy_from_slice(&word.to_be_bytes());
+        let mut hash = Hash::new();
+        for word in self.state.iter() {
+            hash.append(&word.to_be_bytes());
         }
 
-        return Hash {
-            hash,
-            length: Self::OUTPUT_SIZE,
-        };
+        return hash;
     }
 }
 

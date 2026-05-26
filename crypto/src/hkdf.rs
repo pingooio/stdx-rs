@@ -1,17 +1,15 @@
-use crate::{Hasher, Hmac};
+use crate::{Hash, Hasher, Hmac};
+
+const DEFAULT_SALT: [u8; 64] = [0u8; 64];
 
 /// Extract step: `PRK = HMAC-Hash(salt, IKM)`.
 ///
 /// If `salt` is `None`, a string of `H::OUTPUT_SIZE` zero bytes is used.
-pub fn extract<H: Hasher>(salt: Option<&[u8]>, ikm: &[u8]) -> [u8; 64] {
-    let default_salt = [0u8; 64];
-    let salt = salt.unwrap_or(&default_salt[..H::OUTPUT_SIZE]);
+pub fn extract<H: Hasher>(salt: Option<&[u8]>, ikm: &[u8]) -> Hash {
+    let salt = salt.unwrap_or(&DEFAULT_SALT[..H::OUTPUT_SIZE]);
     let mut mac = Hmac::<H>::new(salt);
     mac.update(ikm);
-    let result = mac.finalize();
-    let mut prk = [0u8; 64];
-    prk[..H::OUTPUT_SIZE].copy_from_slice(result.as_ref());
-    prk
+    return mac.finalize();
 }
 
 /// Expand step: `OKM = T(1) || T(2) || ...`, where
@@ -63,7 +61,7 @@ pub fn expand<H: Hasher, const N: usize>(prk: &[u8], info: &[u8]) -> [u8; N] {
 /// Panics if `N > 255 * H::OUTPUT_SIZE`.
 pub fn derive_key<H: Hasher, const N: usize>(ikm: &[u8], info: &[u8], salt: Option<&[u8]>) -> [u8; N] {
     let prk = extract::<H>(salt, ikm);
-    expand::<H, N>(&prk[..H::OUTPUT_SIZE], info)
+    expand::<H, N>(prk.as_ref(), info)
 }
 
 #[cfg(test)]
@@ -175,11 +173,11 @@ mod tests {
             let expected_okm = decode_hex(vector.expected_okm);
 
             let prk = extract::<Sha256>(salt.as_deref(), &ikm);
-            assert_eq!(&prk[..32], expected_prk.as_slice(), "vector {} PRK", i);
+            assert_eq!(prk.as_ref(), expected_prk.as_slice(), "vector {} PRK", i);
 
             let okm = match expected_okm.len() {
-                42 => expand::<Sha256, 42>(&prk[..32], &info).to_vec(),
-                82 => expand::<Sha256, 82>(&prk[..32], &info).to_vec(),
+                42 => expand::<Sha256, 42>(prk.as_ref(), &info).to_vec(),
+                82 => expand::<Sha256, 82>(prk.as_ref(), &info).to_vec(),
                 _ => unreachable!(),
             };
             assert_eq!(okm, expected_okm, "vector {} OKM", i);
@@ -203,11 +201,11 @@ mod tests {
             let expected_okm = decode_hex(vector.expected_okm);
 
             let prk = extract::<Sha512>(salt.as_deref(), &ikm);
-            assert_eq!(&prk[..64], expected_prk.as_slice(), "vector {} PRK", i);
+            assert_eq!(prk.as_ref(), expected_prk.as_slice(), "vector {} PRK", i);
 
             let okm = match expected_okm.len() {
-                42 => expand::<Sha512, 42>(&prk[..64], &info).to_vec(),
-                82 => expand::<Sha512, 82>(&prk[..64], &info).to_vec(),
+                42 => expand::<Sha512, 42>(prk.as_ref(), &info).to_vec(),
+                82 => expand::<Sha512, 82>(prk.as_ref(), &info).to_vec(),
                 _ => unreachable!(),
             };
             assert_eq!(okm, expected_okm, "vector {} OKM", i);

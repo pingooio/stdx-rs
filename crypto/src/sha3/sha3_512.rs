@@ -1,5 +1,5 @@
 use super::keccak::Keccak;
-use crate::{Hash, Hasher, MAX_HASH_LENGTH};
+use crate::{Hash, Hasher};
 
 const SHA3_512_RATE: usize = 72;
 const SHA3_512_DOMAIN_SEPARATOR: u8 = 0x06;
@@ -7,13 +7,6 @@ const SHA3_512_DOMAIN_SEPARATOR: u8 = 0x06;
 #[derive(Clone)]
 pub struct Sha3_512 {
     keccak: Keccak,
-}
-
-#[inline]
-pub fn hash_512(data: &[u8]) -> [u8; 64] {
-    let mut hasher = Sha3_512::new();
-    hasher.write(data);
-    return hasher.sum();
 }
 
 impl Sha3_512 {
@@ -53,18 +46,15 @@ impl Hasher for Sha3_512 {
 
     #[inline]
     fn sum(mut self) -> Hash {
-        let mut hash = [0u8; MAX_HASH_LENGTH];
-        self.keccak.squeeze(&mut hash[..Self::OUTPUT_SIZE]);
-        return Hash {
-            hash,
-            length: Self::OUTPUT_SIZE,
-        };
+        let mut hash = Hash::with_length(Self::OUTPUT_SIZE);
+        self.keccak.squeeze(hash.as_mut());
+        return hash;
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Sha3_512, hash_512};
+    use super::Sha3_512;
     use crate::Hasher;
 
     fn vectors_sha3_512() -> Vec<(Vec<u8>, &'static str)> {
@@ -99,7 +89,7 @@ mod tests {
     #[test]
     fn known_vectors_single_update() {
         for (input, expected) in vectors_sha3_512() {
-            assert_eq!(hex::encode(hash_512(&input)), expected);
+            assert_eq!(hex::encode(Sha3_512::hash(&input)), expected);
         }
     }
 

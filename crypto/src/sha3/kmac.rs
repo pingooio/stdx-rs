@@ -20,7 +20,7 @@ impl Kmac256 {
     pub fn new(key: &[u8], customization: &[u8]) -> Self {
         let mut cshake = CShake256::new(b"KMAC", customization);
         let key_padded = bytepad(&encode_string(key), KMAC256_RATE);
-        cshake.absobrd(&key_padded);
+        cshake.absorb(&key_padded);
         return Kmac256 {
             cshake,
         };
@@ -28,14 +28,14 @@ impl Kmac256 {
 
     #[inline]
     pub fn update(&mut self, data: &[u8]) {
-        self.cshake.absobrd(data);
+        self.cshake.absorb(data);
     }
 
     #[inline]
     pub fn finalize_into(mut self, output: &mut [u8]) {
         let output_bits = output.len().checked_mul(8).expect("output size too large for KMAC");
         let encoded_output_len = right_encode(output_bits);
-        self.cshake.absobrd(&encoded_output_len);
+        self.cshake.absorb(encoded_output_len.as_ref());
         self.cshake.squeeze(output);
     }
 }

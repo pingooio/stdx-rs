@@ -1,8 +1,8 @@
 #[cfg(target_arch = "aarch64")]
 use super::sha256_arm64;
 #[cfg(target_arch = "x86_64")]
-use super::sha256_amd64;
-use crate::{Hash, Hasher, MAX_HASH_LENGTH};
+use crate::sha256_amd64;
+use crate::{Hash, Hasher};
 
 pub(crate) const SHA256_K: [u32; 64] = [
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98,
@@ -86,6 +86,7 @@ pub(crate) fn process_block_scalar(state: &mut [u32; 8], block: &[u8; 64]) {
 
 impl Sha256 {
     #[inline]
+    #[allow(unreachable_code)]
     fn process_block(&mut self, block: &[u8; 64]) {
         #[cfg(target_arch = "x86_64")]
         {
@@ -178,16 +179,12 @@ impl Hasher for Sha256 {
             self.process_block(&block);
         }
 
-        let mut hash = [0u8; MAX_HASH_LENGTH];
-        for (i, word) in self.state.iter().enumerate() {
-            let offset = i * 4;
-            hash[offset..offset + 4].copy_from_slice(&word.to_be_bytes());
+        let mut hash = Hash::new();
+        for word in self.state.iter() {
+            hash.append(&word.to_be_bytes());
         }
 
-        return Hash {
-            hash,
-            length: Self::OUTPUT_SIZE,
-        };
+        return hash;
     }
 }
 
