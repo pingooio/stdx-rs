@@ -95,6 +95,12 @@ pub struct Hmac<H: Hasher> {
 }
 
 impl<H: Hasher> Hmac<H> {
+    pub fn mac(key: &[u8], data: &[u8]) -> Hash {
+        let mut mac = Self::new(key);
+        mac.update(data);
+        return mac.finalize();
+    }
+
     pub fn new(key: &[u8]) -> Self {
         let mut key_block = [0u8; MAX_HASH_BLOCK_SIZE];
 
