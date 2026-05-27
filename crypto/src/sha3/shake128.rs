@@ -58,7 +58,7 @@ mod tests {
             (
                 b"abc".to_vec(),
                 32,
-                "5881092dd818bf5cf8a3ddb793fbcba74097d5c526a6d35f97b83351940f2cc",
+                "5881092dd818bf5cf8a3ddb793fbcba74097d5c526a6d35f97b83351940f2cc8",
             ),
             (
                 b"The quick brown fox jumps over the lazy dog".to_vec(),

@@ -696,6 +696,7 @@ dependencies = [
 name = "crypto"
 version = "0.1.0"
 dependencies = [
+ "aws-lc-rs",
  "big_number",
  "criterion",
  "hex",

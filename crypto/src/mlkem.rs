@@ -151,10 +151,12 @@ mod tests {
     #[test]
     fn ml_kem_768_decapsulation_rejects_tampered_ciphertext() {
         let (private_key, public_key) = ml_kem_768_generate_keypair().unwrap();
-        let (mut ciphertext, _) = ml_kem_768_encapsulate(&public_key).unwrap();
+        let (mut ciphertext, encapsulated_secret) = ml_kem_768_encapsulate(&public_key).unwrap();
 
         ciphertext[0] ^= 0x80;
 
-        assert!(ml_kem_768_decapsulate(&private_key, &ciphertext).is_err());
+        let decapsulated_secret = ml_kem_768_decapsulate(&private_key, &ciphertext).unwrap();
+
+        assert_ne!(encapsulated_secret, decapsulated_secret);
     }
 }
