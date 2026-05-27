@@ -2,6 +2,8 @@
 resolver = "2"
 
 members = [
+    "tools/crypt",
+
     "bel",
     "bel/benchmarks",
     "bel/fuzz",
