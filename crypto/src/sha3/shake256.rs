@@ -33,9 +33,7 @@ impl CShake256 {
         let prefix = bytepad(&encoded, SHAKE256_RATE);
         keccak.absorb(&prefix);
 
-        return CShake256 {
-            keccak,
-        };
+        return CShake256 { keccak };
     }
 }
 

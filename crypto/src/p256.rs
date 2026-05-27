@@ -1,161 +1,62 @@
 use crate::{EllipticCurveError, Hasher, hmac::Hmac, sha2::Sha256};
+use big_number::Uint;
 
 pub const PRIVATE_KEY_SIZE: usize = 32;
 pub const PUBLIC_KEY_COMPRESSED_SIZE: usize = 33;
 pub const PUBLIC_KEY_UNCOMPRESSED_SIZE: usize = 65;
 pub const SIGNATURE_SIZE: usize = 64;
 
-const MODULUS_P: U256 = U256([
+type U256 = Uint<256, 4>;
+
+const MODULUS_P: U256 = U256::from_limbs([
     0xffff_ffff_ffff_ffff,
     0x0000_0000_ffff_ffff,
     0x0000_0000_0000_0000,
     0xffff_ffff_0000_0001,
 ]);
-const MODULUS_N: U256 = U256([
+const MODULUS_N: U256 = U256::from_limbs([
     0xf3b9_cac2_fc63_2551,
     0xbce6_faad_a717_9e84,
     0xffff_ffff_ffff_ffff,
     0xffff_ffff_0000_0000,
 ]);
-const P_MINUS_TWO: U256 = U256([
+const P_MINUS_TWO: U256 = U256::from_limbs([
     0xffff_ffff_ffff_fffd,
     0x0000_0000_ffff_ffff,
     0x0000_0000_0000_0000,
     0xffff_ffff_0000_0001,
 ]);
-const P_PLUS_ONE_OVER_FOUR: U256 = U256([
+const P_PLUS_ONE_OVER_FOUR: U256 = U256::from_limbs([
     0x0000_0000_0000_0000,
     0x0000_0000_4000_0000,
     0x4000_0000_0000_0000,
     0x3fff_ffff_c000_0000,
 ]);
-const N_MINUS_TWO: U256 = U256([
+const N_MINUS_TWO: U256 = U256::from_limbs([
     0xf3b9_cac2_fc63_254f,
     0xbce6_faad_a717_9e84,
     0xffff_ffff_ffff_ffff,
     0xffff_ffff_0000_0000,
 ]);
 
-const CURVE_B: FieldElement = FieldElement(U256([
+const CURVE_B: FieldElement = FieldElement(U256::from_limbs([
     0x3bce_3c3e_27d2_604b,
     0x651d_06b0_cc53_b0f6,
     0xb3eb_bd55_7698_86bc,
     0x5ac6_35d8_aa3a_93e7,
 ]));
-const GENERATOR_X: FieldElement = FieldElement(U256([
+const GENERATOR_X: FieldElement = FieldElement(U256::from_limbs([
     0xf4a1_3945_d898_c296,
     0x7703_7d81_2deb_33a0,
     0xf8bc_e6e5_63a4_40f2,
     0x6b17_d1f2_e12c_4247,
 ]));
-const GENERATOR_Y: FieldElement = FieldElement(U256([
+const GENERATOR_Y: FieldElement = FieldElement(U256::from_limbs([
     0xcbb6_4068_37bf_51f5,
     0x2bce_3357_6b31_5ece,
     0x8ee7_eb4a_7c0f_9e16,
     0x4fe3_42e2_fe1a_7f9b,
 ]));
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct U256([u64; 4]);
-
-impl U256 {
-    const ZERO: Self = Self([0, 0, 0, 0]);
-    const ONE: Self = Self([1, 0, 0, 0]);
-
-    #[inline]
-    fn from_be_bytes(bytes: &[u8; 32]) -> Self {
-        let mut limbs = [0u64; 4];
-        let mut i = 0;
-        while i < 4 {
-            let start = 24 - i * 8;
-            limbs[i] = u64::from_be_bytes(bytes[start..start + 8].try_into().unwrap());
-            i += 1;
-        }
-        Self(limbs)
-    }
-
-    #[inline]
-    fn to_be_bytes(self) -> [u8; 32] {
-        let mut out = [0u8; 32];
-        let mut i = 0;
-        while i < 4 {
-            let start = 24 - i * 8;
-            out[start..start + 8].copy_from_slice(&self.0[i].to_be_bytes());
-            i += 1;
-        }
-        out
-    }
-
-    #[inline]
-    fn bit(&self, index: usize) -> bool {
-        ((self.0[index / 64] >> (index % 64)) & 1) == 1
-    }
-
-    #[inline]
-    fn is_zero(&self) -> bool {
-        (self.0[0] | self.0[1] | self.0[2] | self.0[3]) == 0
-    }
-
-    #[inline]
-    fn add_raw(&self, rhs: &Self) -> (Self, u64) {
-        let (r0, c0) = adc(self.0[0], rhs.0[0], 0);
-        let (r1, c1) = adc(self.0[1], rhs.0[1], c0);
-        let (r2, c2) = adc(self.0[2], rhs.0[2], c1);
-        let (r3, c3) = adc(self.0[3], rhs.0[3], c2);
-        (Self([r0, r1, r2, r3]), c3)
-    }
-
-    #[inline]
-    fn sub_raw(&self, rhs: &Self) -> (Self, u64) {
-        let (r0, b0) = sbb(self.0[0], rhs.0[0], 0);
-        let (r1, b1) = sbb(self.0[1], rhs.0[1], b0);
-        let (r2, b2) = sbb(self.0[2], rhs.0[2], b1);
-        let (r3, b3) = sbb(self.0[3], rhs.0[3], b2);
-        (Self([r0, r1, r2, r3]), b3)
-    }
-
-    #[inline]
-    fn ge(&self, rhs: &Self) -> bool {
-        let (_, borrow) = self.sub_raw(rhs);
-        borrow == 0
-    }
-
-    #[inline]
-    fn select(a: &Self, b: &Self, choice: bool) -> Self {
-        let mask = mask(choice);
-        Self([
-            ct_select_u64(a.0[0], b.0[0], mask),
-            ct_select_u64(a.0[1], b.0[1], mask),
-            ct_select_u64(a.0[2], b.0[2], mask),
-            ct_select_u64(a.0[3], b.0[3], mask),
-        ])
-    }
-
-    #[inline]
-    fn add_mod(&self, rhs: &Self, modulus: &Self) -> Self {
-        let (sum, carry) = self.add_raw(rhs);
-        let (reduced, borrow) = sum.sub_raw(modulus);
-        Self::select(&sum, &reduced, carry == 1 || borrow == 0)
-    }
-
-    #[inline]
-    fn sub_mod(&self, rhs: &Self, modulus: &Self) -> Self {
-        let (diff, borrow) = self.sub_raw(rhs);
-        let (corrected, _) = diff.add_raw(modulus);
-        Self::select(&diff, &corrected, borrow == 1)
-    }
-
-    #[inline]
-    fn double_mod(&self, modulus: &Self) -> Self {
-        self.add_mod(self, modulus)
-    }
-
-    #[inline]
-    fn mul_mod(&self, rhs: &Self, modulus: &Self) -> Self {
-        let product = mul_wide(self, rhs);
-        reduce_wide(&product, modulus)
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct FieldElement(U256);
@@ -166,13 +67,17 @@ impl FieldElement {
 
     #[inline]
     fn from_bytes(bytes: &[u8; 32]) -> Option<Self> {
-        let value = U256::from_be_bytes(bytes);
-        if value.ge(&MODULUS_P) { None } else { Some(Self(value)) }
+        let value = U256::from_be_slice(bytes);
+        if value.ct_ge(&MODULUS_P) {
+            None
+        } else {
+            Some(Self(value))
+        }
     }
 
     #[inline]
     fn to_bytes(self) -> [u8; 32] {
-        self.0.to_be_bytes()
+        self.0.to_be_bytes_fixed::<32>()
     }
 
     #[inline]
@@ -182,7 +87,7 @@ impl FieldElement {
 
     #[inline]
     fn is_odd(&self) -> bool {
-        (self.0.0[0] & 1) == 1
+        self.0.is_odd()
     }
 
     #[inline]
@@ -218,7 +123,7 @@ impl FieldElement {
     #[inline]
     fn negate(self) -> Self {
         let (diff, _) = MODULUS_P.sub_raw(&self.0);
-        Self(U256::select(&diff, &U256::ZERO, self.is_zero()))
+        Self(U256::ct_select(&U256::ZERO, &diff, self.is_zero()))
     }
 
     #[inline]
@@ -229,7 +134,7 @@ impl FieldElement {
             i -= 1;
             result = result.square();
             let product = result.mul(self);
-            result = Self::select(&result, &product, exponent.bit(i));
+            result = Self::select(&product, &result, exponent.bit(i));
         }
         result
     }
@@ -255,7 +160,7 @@ impl FieldElement {
 
     #[inline]
     fn select(a: &Self, b: &Self, choice: bool) -> Self {
-        Self(U256::select(&a.0, &b.0, choice))
+        Self(U256::ct_select(&a.0, &b.0, choice))
     }
 }
 
@@ -268,8 +173,8 @@ impl Scalar {
 
     #[inline]
     fn from_bytes(bytes: &[u8; 32]) -> Option<Self> {
-        let value = U256::from_be_bytes(bytes);
-        if value.is_zero() || value.ge(&MODULUS_N) {
+        let value = U256::from_be_slice(bytes);
+        if value.is_zero() || value.ct_ge(&MODULUS_N) {
             None
         } else {
             Some(Self(value))
@@ -278,8 +183,8 @@ impl Scalar {
 
     #[inline]
     fn from_hash(hash: &[u8; 32]) -> Self {
-        let value = U256::from_be_bytes(hash);
-        let reduced = if value.ge(&MODULUS_N) {
+        let value = U256::from_be_slice(hash);
+        let reduced = if value.ct_ge(&MODULUS_N) {
             value.sub_raw(&MODULUS_N).0
         } else {
             value
@@ -289,7 +194,7 @@ impl Scalar {
 
     #[inline]
     fn to_bytes(self) -> [u8; 32] {
-        self.0.to_be_bytes()
+        self.0.to_be_bytes_fixed::<32>()
     }
 
     #[inline]
@@ -334,14 +239,14 @@ impl Scalar {
             i -= 1;
             result = result.mul(result);
             let product = result.mul(self);
-            result = Scalar::select(&result, &product, exponent.bit(i));
+            result = Scalar::select(&product, &result, exponent.bit(i));
         }
         result.0
     }
 
     #[inline]
     fn select(a: &Self, b: &Self, choice: bool) -> Self {
-        Self(U256::select(&a.0, &b.0, choice))
+        Self(U256::ct_select(&a.0, &b.0, choice))
     }
 }
 
@@ -367,11 +272,7 @@ impl AffinePoint {
 
     #[inline]
     fn new(x: FieldElement, y: FieldElement) -> Option<Self> {
-        let point = Self {
-            x,
-            y,
-            infinity: false,
-        };
+        let point = Self { x, y, infinity: false };
         if point.is_on_curve() { Some(point) } else { None }
     }
 
@@ -416,7 +317,7 @@ impl AffinePoint {
                 let y = rhs.sqrt()?;
                 let y_is_odd = y.is_odd();
                 let select_neg = y_is_odd != (bytes[0] == 0x03);
-                let y = FieldElement::select(&y, &y.negate(), select_neg);
+                let y = FieldElement::select(&y.negate(), &y, select_neg);
                 Self::new(x, y)
             }
             _ => None,
@@ -551,91 +452,8 @@ impl ProjectivePoint {
         let x = x_frag.sub(bxz6_part.mul(yz2));
         let z = yz2.mul(yy).double().double();
 
-        Self {
-            x,
-            y,
-            z,
-        }
+        Self { x, y, z }
     }
-}
-
-#[inline]
-fn adc(a: u64, b: u64, carry: u64) -> (u64, u64) {
-    let sum = (a as u128) + (b as u128) + (carry as u128);
-    (sum as u64, (sum >> 64) as u64)
-}
-
-#[inline]
-fn sbb(a: u64, b: u64, borrow: u64) -> (u64, u64) {
-    let (r1, b1) = a.overflowing_sub(b);
-    let (r2, b2) = r1.overflowing_sub(borrow);
-    (r2, (b1 as u64) | (b2 as u64))
-}
-
-#[inline]
-fn mac(acc: u64, a: u64, b: u64, carry: u64) -> (u64, u64) {
-    let value = (acc as u128) + (a as u128) * (b as u128) + (carry as u128);
-    (value as u64, (value >> 64) as u64)
-}
-
-fn mul_wide(lhs: &U256, rhs: &U256) -> [u64; 8] {
-    let mut out = [0u64; 8];
-    let mut i = 0;
-    while i < 4 {
-        let mut carry = 0u64;
-        let mut j = 0;
-        while j < 4 {
-            let idx = i + j;
-            let (word, next_carry) = mac(out[idx], lhs.0[i], rhs.0[j], carry);
-            out[idx] = word;
-            carry = next_carry;
-            j += 1;
-        }
-        let mut idx = i + 4;
-        let mut carry_word = carry;
-        while carry_word != 0 {
-            let (word, next_carry) = adc(out[idx], 0, carry_word);
-            out[idx] = word;
-            carry_word = next_carry;
-            idx += 1;
-        }
-        i += 1;
-    }
-    out
-}
-
-fn reduce_wide(product: &[u64; 8], modulus: &U256) -> U256 {
-    let mut rem = U256::ZERO;
-    let mut bit_index = 512usize;
-    while bit_index > 0 {
-        bit_index -= 1;
-
-        let bit = ((product[bit_index / 64] >> (bit_index % 64)) & 1) as u64;
-        let mut shifted = [0u64; 4];
-        let mut carry = bit;
-        let mut i = 0;
-        while i < 4 {
-            let next = rem.0[i] >> 63;
-            shifted[i] = (rem.0[i] << 1) | carry;
-            carry = next;
-            i += 1;
-        }
-
-        let shifted = U256(shifted);
-        let (reduced, borrow) = shifted.sub_raw(modulus);
-        rem = U256::select(&shifted, &reduced, carry == 1 || borrow == 0);
-    }
-    rem
-}
-
-#[inline]
-fn mask(choice: bool) -> u64 {
-    0u64.wrapping_sub(choice as u64)
-}
-
-#[inline]
-fn ct_select_u64(a: u64, b: u64, mask: u64) -> u64 {
-    a ^ ((a ^ b) & mask)
 }
 
 fn scalar_mul_generator(scalar: &Scalar) -> ProjectivePoint {
@@ -649,7 +467,7 @@ fn scalar_mul_affine(base: &AffinePoint, scalar: &Scalar) -> ProjectivePoint {
         bit -= 1;
         acc = acc.double();
         let candidate = acc.add_mixed(base);
-        acc = ProjectivePoint::select(&acc, &candidate, scalar.bit(bit));
+        acc = ProjectivePoint::select(&candidate, &acc, scalar.bit(bit));
     }
     acc
 }

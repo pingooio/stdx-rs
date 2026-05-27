@@ -4,7 +4,7 @@
 /// - Favours speed over constant-time execution (table-driven S-box lookups).
 /// - The x86-64 code path (aes256_amd64) dispatches to AES-NI + PCLMULQDQ
 ///   at runtime and is used whenever the required CPU features are present.
-use crate::EllipticCurveError;
+use crate::AeadError;
 
 // ── AES constants ─────────────────────────────────────────────────────────────
 
@@ -480,7 +480,7 @@ impl Aes256Gcm {
         tag: &[u8; 16],
         nonce: &[u8; 12],
         aad: &[u8],
-    ) -> Result<(), EllipticCurveError> {
+    ) -> Result<(), AeadError> {
         // we assume that AES instructions are always present on aarch64
         #[cfg(target_arch = "aarch64")]
         {
@@ -544,7 +544,7 @@ impl Aes256Gcm {
         tag: &[u8; 16],
         nonce: &[u8; 12],
         aad: &[u8],
-    ) -> Result<(), EllipticCurveError> {
+    ) -> Result<(), AeadError> {
         let rk = &self.round_keys;
         let h = encrypt_block(rk, &[0u8; 16]);
 
@@ -563,7 +563,7 @@ impl Aes256Gcm {
             diff |= expected_tag[i] ^ tag[i];
         }
         if diff != 0 {
-            return Err(EllipticCurveError::Unspecified);
+            return Err(AeadError::InvalidCiphertext);
         }
 
         let mut ctr = j0;

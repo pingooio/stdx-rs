@@ -30,7 +30,7 @@
 #[allow(clippy::many_single_char_names)]
 use core::arch::x86_64::*;
 
-use crate::Error;
+use crate::AeadError;
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -59,7 +59,7 @@ pub(crate) fn try_decrypt_in_place_detached(
     tag: &[u8; 16],
     nonce: &[u8; 12],
     aad: &[u8],
-) -> Option<Result<(), Error>> {
+) -> Option<Result<(), AeadError>> {
     if !have_features() {
         return None;
     }
@@ -340,7 +340,7 @@ pub(crate) unsafe fn decrypt_aesni(
     tag: &[u8; 16],
     nonce: &[u8; 12],
     aad: &[u8],
-) -> Result<(), Error> {
+) -> Result<(), AeadError> {
     let rk = key_expand_aesni(key);
 
     let h_xmm = aes256_enc(&rk, _mm_setzero_si128());
@@ -364,7 +364,7 @@ pub(crate) unsafe fn decrypt_aesni(
         diff |= computed_tag[k] ^ tag[k];
     }
     if diff != 0 {
-        return Err(Error::Unspecified);
+        return Err(AeadError::InvalidCiphertext);
     }
 
     // CTR decrypt
