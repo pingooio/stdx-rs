@@ -19,6 +19,9 @@ zeroize = { workspace = true, optional = true }
 thiserror = { path = "../thiserror" }
 big_number = { path = "../big_number" }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+aws-lc-rs = { workspace = true }
+
 [dev-dependencies]
 criterion = { workspace = true }
 hex = { path = "../hex" }

@@ -53,7 +53,7 @@ mod tests {
             (
                 b"".to_vec(),
                 64,
-                "7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef263ec4b3e03f9be15b4c6b82dc765f91dc2e2716f7a225ad2f7fc6f00abfe4c92ae",
+                "7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef263cb1eea988004b93103cfb0aeefd2a686e01fa4a58e8a3639ca8a1e3f9ae57e2",
             ),
             (
                 b"abc".to_vec(),

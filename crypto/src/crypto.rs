@@ -6,6 +6,8 @@ pub mod chacha;
 pub mod ed25519;
 pub mod hkdf;
 pub mod hmac;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod mlkem;
 pub mod poly1305;
 pub mod sha2;
 pub mod sha3;
