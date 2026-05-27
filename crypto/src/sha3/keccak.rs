@@ -1,5 +1,8 @@
 use std::cmp::min;
 
+#[cfg(feature = "zeroize")]
+use zeroize::{Zeroize, ZeroizeOnDrop};
+
 pub const RHO: [u32; 24] = [
     1, 3, 6, 10, 15, 21, 28, 36, 45, 55, 2, 14, 27, 41, 56, 8, 25, 43, 62, 18, 39, 61, 20, 44,
 ];
@@ -35,78 +38,15 @@ pub const ROUND_CONSTANTS: [u64; 24] = [
     0x8000000080008008,
 ];
 
-#[cfg(all(target_arch = "aarch64"))]
-pub fn p1600<const ROUNDS: usize>(state: &mut [u64; 25]) {
-    // if std::arch::is_aarch64_feature_detected!("sha3") {
-    unsafe {
-        super::keccak_arm64::p1600_armv8::<ROUNDS>(state);
-    }
-    // }
-}
-
-#[cfg(not(all(target_arch = "aarch64")))]
-#[allow(unused_assignments, non_upper_case_globals)]
-/// Generic (no harware-specific optimizations) Keccak-p sponge function
-pub fn p1600<const ROUNDS: usize>(state: &mut [u64; 25]) {
-    debug_assert!(ROUNDS <= 24, "A round_count greater than 24 is not supported.");
-
-    // https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf#page=25
-    // "the rounds of KECCAK-p[b, nr] match the last rounds of KECCAK-f[b]"
-    let round_consts: &[u64] = &ROUND_CONSTANTS[(24 - ROUNDS)..];
-
-    // not unrolling this loop may results in a smaller function, plus
-    // it may positively influences performance due to the smaller number of instructions
-    for &rc in round_consts {
-        let mut array = [0u64; 5];
-
-        // Theta
-        for x in 0..5 {
-            for y in 0..5 {
-                array[x] ^= state[5 * y + x];
-            }
-        }
-
-        for x in 0..5 {
-            let t1 = array[(x + 4) % 5];
-            let t2 = array[(x + 1) % 5].rotate_left(1);
-            for y in 0..5 {
-                state[5 * y + x] ^= t1 ^ t2;
-            }
-        }
-
-        // Rho and pi
-        let mut last = state[1];
-        for x in 0..24 {
-            array[0] = state[PI[x]];
-            state[PI[x]] = last.rotate_left(RHO[x]);
-            last = array[0];
-        }
-
-        // Chi
-        for y_step in 0..5 {
-            let y = 5 * y_step;
-
-            array.copy_from_slice(&state[y..][..5]);
-
-            for x in 0..5 {
-                let t1 = !array[(x + 1) % 5];
-                let t2 = array[(x + 2) % 5];
-                state[y + x] = array[x] ^ (t1 & t2);
-            }
-        }
-
-        // Iota
-        state[0] ^= rc;
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
 pub(crate) enum SpongeMode {
     Absorbing,
     Squeezing,
 }
 
 #[derive(Clone)]
+#[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
 pub(crate) struct Keccak<const ROUNDS: usize> {
     state: [u8; 200],
     rate: usize,
@@ -116,6 +56,7 @@ pub(crate) struct Keccak<const ROUNDS: usize> {
     mode: SpongeMode,
 }
 
+// A sponge construction based on Keccak p1600
 impl<const ROUNDS: usize> Keccak<ROUNDS> {
     #[inline]
     pub(crate) fn new(rate: usize, delimiter: u8) -> Self {
@@ -197,6 +138,68 @@ impl<const ROUNDS: usize> Keccak<ROUNDS> {
         let mut state: &mut [u64; 200 / 8] = unsafe { core::mem::transmute(&mut self.state) };
         p1600::<ROUNDS>(&mut state);
         self.pos = 0;
+    }
+}
+
+/// The Keccak-p sponge function for a 1600-bit state
+#[allow(unreachable_code)]
+pub fn p1600<const ROUNDS: usize>(state: &mut [u64; 25]) {
+    debug_assert!(ROUNDS <= 24, "A round_count greater than 24 is not supported.");
+
+    // we assume that the SHA-3 instructions are always preseent for aarch64
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        super::keccak_arm64::p1600_armv8::<ROUNDS>(state);
+        return;
+    }
+
+    // https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf#page=25
+    // "the rounds of KECCAK-p[b, nr] match the last rounds of KECCAK-f[b]"
+    let round_consts: &[u64] = &ROUND_CONSTANTS[(24 - ROUNDS)..];
+
+    // not unrolling this loop may results in a smaller function, plus
+    // it may positively influences performance due to the smaller number of instructions
+    for &rc in round_consts {
+        let mut array = [0u64; 5];
+
+        // Theta
+        for x in 0..5 {
+            for y in 0..5 {
+                array[x] ^= state[5 * y + x];
+            }
+        }
+
+        for x in 0..5 {
+            let t1 = array[(x + 4) % 5];
+            let t2 = array[(x + 1) % 5].rotate_left(1);
+            for y in 0..5 {
+                state[5 * y + x] ^= t1 ^ t2;
+            }
+        }
+
+        // Rho and pi
+        let mut last = state[1];
+        for x in 0..24 {
+            array[0] = state[PI[x]];
+            state[PI[x]] = last.rotate_left(RHO[x]);
+            last = array[0];
+        }
+
+        // Chi
+        for y_step in 0..5 {
+            let y = 5 * y_step;
+
+            array.copy_from_slice(&state[y..][..5]);
+
+            for x in 0..5 {
+                let t1 = !array[(x + 1) % 5];
+                let t2 = array[(x + 2) % 5];
+                state[y + x] = array[x] ^ (t1 & t2);
+            }
+        }
+
+        // Iota
+        state[0] ^= rc;
     }
 }
 

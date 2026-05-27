@@ -289,7 +289,7 @@ unsafe fn ctr_inc(ctr: __m128i) -> __m128i {
 // ── AES-256-GCM encrypt ───────────────────────────────────────────────────────
 
 #[target_feature(enable = "aes,pclmulqdq,ssse3,sse4.1,sse2")]
-unsafe fn encrypt_aesni(key: &[u8; 32], in_out: &mut [u8], nonce: &[u8; 12], aad: &[u8]) -> [u8; 16] {
+pub(crate) unsafe fn encrypt_aesni(key: &[u8; 32], in_out: &mut [u8], nonce: &[u8; 12], aad: &[u8]) -> [u8; 16] {
     let rk = key_expand_aesni(key);
 
     // H = AES_K(0^128) in natural byte order.
@@ -334,7 +334,7 @@ unsafe fn encrypt_aesni(key: &[u8; 32], in_out: &mut [u8], nonce: &[u8; 12], aad
 // ── AES-256-GCM decrypt ───────────────────────────────────────────────────────
 
 #[target_feature(enable = "aes,pclmulqdq,ssse3,sse4.1,sse2")]
-unsafe fn decrypt_aesni(
+pub(crate) unsafe fn decrypt_aesni(
     key: &[u8; 32],
     in_out: &mut [u8],
     tag: &[u8; 16],

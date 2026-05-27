@@ -4,7 +4,7 @@
 /// - Favours speed over constant-time execution (table-driven S-box lookups).
 /// - The x86-64 code path (aes256_amd64) dispatches to AES-NI + PCLMULQDQ
 ///   at runtime and is used whenever the required CPU features are present.
-use crate::Error;
+use crate::EllipticCurveError;
 
 // ── AES constants ─────────────────────────────────────────────────────────────
 
@@ -430,17 +430,40 @@ impl Aes256Gcm {
     /// * `nonce` – 12-byte nonce (must be unique per (key, plaintext) pair)
     /// * `aad`   – additional authenticated data (not encrypted)
     #[inline]
+    #[allow(unreachable_code)]
     pub fn encrypt_in_place_detached(&self, in_out: &mut [u8], nonce: &[u8; 12], aad: &[u8]) -> [u8; 16] {
-        // Try hardware-accelerated path on x86-64.
-        #[cfg(target_arch = "x86_64")]
-        if let Some(tag) = super::aes256_amd64::try_encrypt_in_place_detached(&self.key, in_out, nonce, aad) {
-            return tag;
+        // we assume that AES instructions are always present on aarch64
+        #[cfg(target_arch = "aarch64")]
+        {
+            use crate::aes::aes256_arm64::encrypt_armv8;
+            unsafe { return encrypt_armv8(&self.key, in_out, nonce, aad) }
         }
 
-        // Try hardware-accelerated path on arm64.
-        #[cfg(target_arch = "aarch64")]
-        if let Some(tag) = super::aes256_arm64::try_encrypt_in_place_detached(&self.key, in_out, nonce, aad) {
-            return tag;
+        // runtime detection of CPU features for x86 and x86_64 when the "std" feature is enabled
+        #[cfg(feature = "std")]
+        {
+            #[cfg(target_arch = "x86_64")]
+            {
+                use crate::aes::aes256_amd64::encrypt_aesni;
+                if std::arch::is_x86_feature_detected!("aes")
+                    && std::arch::is_x86_feature_detected!("pclmulqdq")
+                    && std::arch::is_x86_feature_detected!("ssse3")
+                    && std::arch::is_x86_feature_detected!("sse4.1")
+                {
+                    unsafe { return encrypt_aesni(&self.key, in_out, nonce, aad) }
+                }
+            }
+        }
+
+        #[cfg(not(feature = "std"))]
+        {
+            #[cfg(enable = "aes,pclmulqdq,ssse3,sse4.1,sse2")]
+            {
+                use crate::aes::aes256_amd64::encrypt_aesni;
+                unsafe {
+                    return encrypt_aesni(&self.key, in_out, nonce, aad);
+                }
+            }
         }
 
         self.encrypt_in_place_detached_soft(in_out, nonce, aad)
@@ -450,23 +473,45 @@ impl Aes256Gcm {
     ///
     /// Returns `Err(Error::Unspecified)` if the tag does not match.
     #[inline]
+    #[allow(unreachable_code)]
     pub fn decrypt_in_place_detached(
         &self,
         in_out: &mut [u8],
         tag: &[u8; 16],
         nonce: &[u8; 12],
         aad: &[u8],
-    ) -> Result<(), Error> {
-        // Try hardware-accelerated path on x86-64.
-        #[cfg(target_arch = "x86_64")]
-        if let Some(result) = super::aes256_amd64::try_decrypt_in_place_detached(&self.key, in_out, tag, nonce, aad) {
-            return result;
+    ) -> Result<(), EllipticCurveError> {
+        // we assume that AES instructions are always present on aarch64
+        #[cfg(target_arch = "aarch64")]
+        {
+            use crate::aes::aes256_arm64::decrypt_armv8;
+            unsafe { return decrypt_armv8(&self.key, in_out, tag, nonce, aad) }
         }
 
-        // Try hardware-accelerated path on arm64.
-        #[cfg(target_arch = "aarch64")]
-        if let Some(result) = super::aes256_arm64::try_decrypt_in_place_detached(&self.key, in_out, tag, nonce, aad) {
-            return result;
+        #[cfg(feature = "std")]
+        {
+            #[cfg(target_arch = "x86_64")]
+            {
+                use crate::aes::aes256_amd64::decrypt_aesni;
+                if std::arch::is_x86_feature_detected!("aes")
+                    && std::arch::is_x86_feature_detected!("pclmulqdq")
+                    && std::arch::is_x86_feature_detected!("ssse3")
+                    && std::arch::is_x86_feature_detected!("sse4.1")
+                {
+                    unsafe { return decrypt_aesni(&self.key, in_out, tag, nonce, aad) }
+                }
+            }
+        }
+
+        #[cfg(not(feature = "std"))]
+        {
+            #[cfg(enable = "aes,pclmulqdq,ssse3,sse4.1,sse2")]
+            {
+                use crate::aes::aes256_amd64::decrypt_aesni;
+                unsafe {
+                    return decrypt_aesni(&self.key, in_out, tag, nonce, aad);
+                }
+            }
         }
 
         self.decrypt_in_place_detached_soft(in_out, tag, nonce, aad)
@@ -499,7 +544,7 @@ impl Aes256Gcm {
         tag: &[u8; 16],
         nonce: &[u8; 12],
         aad: &[u8],
-    ) -> Result<(), Error> {
+    ) -> Result<(), EllipticCurveError> {
         let rk = &self.round_keys;
         let h = encrypt_block(rk, &[0u8; 16]);
 
@@ -518,7 +563,7 @@ impl Aes256Gcm {
             diff |= expected_tag[i] ^ tag[i];
         }
         if diff != 0 {
-            return Err(Error::Unspecified);
+            return Err(EllipticCurveError::Unspecified);
         }
 
         let mut ctr = j0;

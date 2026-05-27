@@ -16,6 +16,7 @@ zeroize = ["dep:zeroize"]
 
 [dependencies]
 zeroize = { workspace = true, optional = true }
+thiserror = { path = "../thiserror" }
 
 [dev-dependencies]
 criterion = { workspace = true }

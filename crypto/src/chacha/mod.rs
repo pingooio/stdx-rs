@@ -2,15 +2,9 @@
 #[cfg(target_arch = "aarch64")]
 mod chacha_neon;
 
-#[cfg(target_arch = "aarch64")]
-use chacha_neon::chacha_neon;
-
 // import if the target runtime supports the feature
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 mod chacha_wasm_simd128;
-
-#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-use chacha_wasm_simd128::chacha_wasm_simd128;
 
 // import if runtime CPU features detection is enabled or if the target CPU supports the feature
 #[cfg(any(
@@ -19,12 +13,6 @@ use chacha_wasm_simd128::chacha_wasm_simd128;
 ))]
 mod chacha_avx2;
 
-#[cfg(any(
-    all(target_arch = "x86_64", feature = "std"),
-    all(target_arch = "x86_64", target_feature = "avx2")
-))]
-use chacha_avx2::chacha_avx2;
-
 // import if runtime CPU features detection is enabled or if the target CPU supports the feature
 #[cfg(any(
     all(target_arch = "x86_64", feature = "std"),
@@ -32,11 +20,6 @@ use chacha_avx2::chacha_avx2;
 ))]
 mod chacha_avx512;
 
-#[cfg(any(
-    all(target_arch = "x86_64", feature = "std"),
-    all(target_arch = "x86_64", target_feature = "avx512f")
-))]
-use chacha_avx512::chacha_avx512;
 #[cfg(feature = "zeroize")]
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -149,13 +132,15 @@ impl<const ROUNDS: usize> StreamCipher for ChaCha<ROUNDS> {
         // aarch64 assumes that NEON is always available
         #[cfg(target_arch = "aarch64")]
         if in_out.len() >= 128 {
+            use chacha_neon::chacha_neon;
             chacha_neon::<ROUNDS>(&mut self.state, in_out, &mut self.last_keystream_block);
             return;
         }
 
         // wasm32 only supports compile-time features detection
         #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-        if plaintext.len() >= 128 {
+        if in_out.len() >= 128 {
+            use chacha_wasm_simd128::chacha_wasm_simd128;
             chacha_wasm_simd128::<ROUNDS>(&mut self.state, in_out, &mut self.last_keystream_block);
             return;
         }
@@ -165,12 +150,14 @@ impl<const ROUNDS: usize> StreamCipher for ChaCha<ROUNDS> {
         {
             #[cfg(target_arch = "x86_64")]
             if is_x86_feature_detected!("avx512f") && in_out.len() >= 128 {
+                use chacha_avx512::chacha_avx512;
                 chacha_avx512::<ROUNDS>(&mut self.state, in_out, &mut self.last_keystream_block);
                 return;
             }
 
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             if is_x86_feature_detected!("avx2") && in_out.len() >= 128 {
+                use chacha_avx2::chacha_avx2;
                 chacha_avx2::<ROUNDS>(&mut self.state, in_out, &mut self.last_keystream_block);
                 return;
             }
@@ -181,12 +168,14 @@ impl<const ROUNDS: usize> StreamCipher for ChaCha<ROUNDS> {
         {
             #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
             if in_out.len() >= 128 {
+                use chacha_avx512::chacha_avx512;
                 chacha_avx512::<ROUNDS>(&mut self.state, in_out, &mut self.last_keystream_block);
                 return;
             }
 
             #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
-            if plaintext.len() >= 128 {
+            if in_out.len() >= 128 {
+                use chacha_avx2::chacha_avx2;
                 chacha_avx2::<ROUNDS>(&mut self.state, in_out, &mut self.last_keystream_block);
                 return;
             }

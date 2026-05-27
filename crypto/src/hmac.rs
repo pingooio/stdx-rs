@@ -1,118 +1,220 @@
+use crate::{Hash, Hasher, MAX_HASH_BLOCK_SIZE};
 
-// use aws_lc_rs::hmac::{self, Context, Key};
+#[derive(Clone)]
+pub struct Hmac<H: Hasher> {
+    hash: H,
+    opad: [u8; MAX_HASH_BLOCK_SIZE],
+}
 
-// pub struct HmacSha256 {
-//     ctx: Context,
-// }
+impl<H: Hasher> Hmac<H> {
+    #[inline]
+    pub fn mac(key: &[u8], data: &[u8]) -> Hash {
+        let mut mac = Self::new(key);
+        mac.update(data);
+        return mac.finalize();
+    }
 
-// impl HmacSha256 {
-//     pub const SIGNATURE_SIZE: usize = 32;
+    pub fn new(key: &[u8]) -> Self {
+        let mut key_block = [0u8; MAX_HASH_BLOCK_SIZE];
 
-//     #[inline]
-//     pub fn sign(key: &[u8], data: &[u8]) -> [u8; 32] {
-//         let hmac_key = Key::new(hmac::HMAC_SHA256, key);
-//         return hmac::sign(&hmac_key, data).as_ref().try_into().unwrap();
-//     }
+        // normalize key to block size
+        if key.len() > H::BLOCK_SIZE {
+            let mut h = H::new();
+            h.update(key);
+            let hashed = h.sum();
+            let hashed_bytes = hashed.as_ref();
+            key_block[..hashed_bytes.len()].copy_from_slice(hashed_bytes);
+        } else {
+            key_block[..key.len()].copy_from_slice(key);
+        }
 
-//     #[inline]
-//     pub fn new(key: &[u8]) -> Self {
-//         let hmac_key = Key::new(hmac::HMAC_SHA256, key);
-//         return HmacSha256 {
-//             ctx: Context::with_key(&hmac_key),
-//         };
-//     }
+        // inner pad = key ^ 0x36
+        let mut inner_key = [0u8; MAX_HASH_BLOCK_SIZE];
+        for i in 0..H::BLOCK_SIZE {
+            inner_key[i] = key_block[i] ^ 0x36;
+        }
 
-//     #[inline]
-//     pub fn write(&mut self, data: &[u8]) {
-//         self.ctx.update(data);
-//     }
+        // outer pad = key ^ 0x5c
+        let mut opad = [0u8; MAX_HASH_BLOCK_SIZE];
+        for i in 0..H::BLOCK_SIZE {
+            opad[i] = key_block[i] ^ 0x5c;
+        }
 
-//     #[inline]
-//     pub fn sum(self) -> [u8; 32] {
-//         return self.ctx.sign().as_ref().try_into().unwrap();
-//     }
-// }
+        // initialize inner hash: create a fresh instance and feed inner pad
+        let mut hash = H::new();
+        hash.update(&inner_key[..H::BLOCK_SIZE]);
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
+        Hmac {
+            hash,
+            opad,
+        }
+    }
 
-//     const HELLO_WORLD_SIGNATURE: &str = "6ec035d91dc104db569a01a4d8c16fb13f125dc298992edfb8e66d3a837fe0c5";
+    /// Feed message data to HMAC (can be called multiple times)
+    pub fn update(&mut self, data: &[u8]) {
+        self.hash.update(data);
+    }
 
-//     #[test]
-//     fn hello_world_signature() {
-//         let signature = HmacSha256::sign(b"hello world", b"hello world");
+    /// Finalize and return HMAC tag. This consumes the Hmac state.
+    pub fn finalize(self) -> Hash {
+        let inner_sum = self.hash.sum();
 
-//         assert_eq!(hex::encode(&signature), HELLO_WORLD_SIGNATURE);
-//     }
+        // compute outer hash using a fresh instance
+        let mut outer = H::new();
+        outer.update(&self.opad[..H::BLOCK_SIZE]);
+        outer.update(inner_sum.as_ref());
+        outer.sum()
+    }
+}
 
-//     #[test]
-//     fn hello_world_signer() {
-//         let mut hasher = HmacSha256::new(b"hello world");
-//         hasher.write(b"hello ");
-//         hasher.write(b"world");
+#[cfg(test)]
+mod hmac_tests {
+    use crate::{
+        hmac::Hmac,
+        sha2::{Sha256, Sha512},
+    };
 
-//         let signature = hasher.sum();
+    #[derive(Clone, Copy)]
+    enum TestInput {
+        Bytes(&'static [u8]),
+        Repeated { byte: u8, len: usize },
+        RangeInclusive { start: u8, end: u8 },
+    }
 
-//         assert_eq!(hex::encode(&signature), HELLO_WORLD_SIGNATURE);
-//     }
-// }
+    #[derive(Clone, Copy)]
+    struct HmacTestVector {
+        source: &'static str,
+        key: TestInput,
+        data: TestInput,
+        expected_sha256: &'static str,
+        expected_sha512: &'static str,
+    }
 
-// use aws_lc_rs::hmac::{self, Context, Key};
+    const HMAC_TEST_VECTORS: [HmacTestVector; 6] = [
+        // RFC 4231 TC1
+        HmacTestVector {
+            source: "RFC 4231 TC1",
+            key: TestInput::Repeated {
+                byte: 0x0b,
+                len: 20,
+            },
+            data: TestInput::Bytes(b"Hi There"),
+            expected_sha256: "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7",
+            expected_sha512: "87aa7cdea5ef619d4ff0b4241a1d6cb02379f4e2ce4ec2787ad0b30545e17cdedaa833b7d6b8a702038b274eaea3f4e4be9d914eeb61f1702e696c203a126854",
+        },
+        // RFC 4231 TC2
+        HmacTestVector {
+            source: "RFC 4231 TC2",
+            key: TestInput::Bytes(b"Jefe"),
+            data: TestInput::Bytes(b"what do ya want for nothing?"),
+            expected_sha256: "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843",
+            expected_sha512: "164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea2505549758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737",
+        },
+        // RFC 4231 TC3
+        HmacTestVector {
+            source: "RFC 4231 TC3",
+            key: TestInput::Repeated {
+                byte: 0xaa,
+                len: 20,
+            },
+            data: TestInput::Repeated {
+                byte: 0xdd,
+                len: 50,
+            },
+            expected_sha256: "773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe",
+            expected_sha512: "fa73b0089d56a284efb0f0756c890be9b1b5dbdd8ee81a3655f83e33b2279d39bf3e848279a722c806b485a47e67c807b946a337bee8942674278859e13292fb",
+        },
+        // RFC 4231 TC4
+        HmacTestVector {
+            source: "RFC 4231 TC4",
+            key: TestInput::RangeInclusive {
+                start: 0x01,
+                end: 0x19,
+            },
+            data: TestInput::Repeated {
+                byte: 0xcd,
+                len: 50,
+            },
+            expected_sha256: "82558a389a443c0ea4cc819899f2083a85f0faa3e578f8077a2e3ff46729665b",
+            expected_sha512: "b0ba465637458c6990e5a8c5f61d4af7e576d97ff94b872de76f8050361ee3dba91ca5c11aa25eb4d679275cc5788063a5f19741120c4f2de2adebeb10a298dd",
+        },
+        // RFC 4231 TC6 (TC5 is truncated-output only)
+        HmacTestVector {
+            source: "RFC 4231 TC6",
+            key: TestInput::Repeated {
+                byte: 0xaa,
+                len: 131,
+            },
+            data: TestInput::Bytes(b"Test Using Larger Than Block-Size Key - Hash Key First"),
+            expected_sha256: "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54",
+            expected_sha512: "80b24263c7c1a3ebb71493c1dd7be8b49b46d1f41b4aeec1121b013783f8f3526b56d037e05f2598bd0fd2215d6a1e5295e64f73f63f0aec8b915a985d786598",
+        },
+        // RFC 4231 TC7
+        HmacTestVector {
+            source: "RFC 4231 TC7",
+            key: TestInput::Repeated {
+                byte: 0xaa,
+                len: 131,
+            },
+            data: TestInput::Bytes(
+                b"This is a test using a larger than block-size key and a larger than block-size data. The key needs to be hashed before being used by the HMAC algorithm.",
+            ),
+            expected_sha256: "9b09ffa71b942fcb27635fbcd5b0e944bfdc63644f0713938a7f51535c3a35e2",
+            expected_sha512: "e37b6a775dc87dbaa4dfa9f96e5e3ffddebd71f8867289865df5a32d20cdc944b6022cac3c4982b10d5eeb55c3e4de15134676fb6de0446065c97440fa8c6a58",
+        },
+    ];
 
-// pub struct HmacSha512 {
-//     ctx: Context,
-// }
+    fn materialize(input: TestInput) -> Vec<u8> {
+        match input {
+            TestInput::Bytes(bytes) => bytes.to_vec(),
+            TestInput::Repeated {
+                byte,
+                len,
+            } => vec![byte; len],
+            TestInput::RangeInclusive {
+                start,
+                end,
+            } => (start..=end).collect(),
+        }
+    }
 
-// impl HmacSha512 {
-//     pub const SIGNATURE_SIZE: usize = 64;
+    fn hmac256(key: &[u8], data: &[u8]) -> String {
+        let mut mac = Hmac::<Sha256>::new(key);
+        mac.update(data);
+        hex::encode(mac.finalize().as_ref())
+    }
 
-//     #[inline]
-//     pub fn sign(key: &[u8], data: &[u8]) -> [u8; 64] {
-//         let hmac_key = Key::new(hmac::HMAC_SHA512, key);
-//         return hmac::sign(&hmac_key, data).as_ref().try_into().unwrap();
-//     }
+    fn hmac512(key: &[u8], data: &[u8]) -> String {
+        let mut mac = Hmac::<Sha512>::new(key);
+        mac.update(data);
+        hex::encode(mac.finalize().as_ref())
+    }
 
-//     #[inline]
-//     pub fn new(key: &[u8]) -> Self {
-//         let hmac_key = Key::new(hmac::HMAC_SHA512, key);
-//         return HmacSha512 {
-//             ctx: Context::with_key(&hmac_key),
-//         };
-//     }
+    #[test]
+    fn hmac_vectors() {
+        for vector in HMAC_TEST_VECTORS {
+            let key = materialize(vector.key);
+            let data = materialize(vector.data);
 
-//     #[inline]
-//     pub fn write(&mut self, data: &[u8]) {
-//         self.ctx.update(data);
-//     }
+            let single256 = hmac256(&key, &data);
+            let single512 = hmac512(&key, &data);
 
-//     #[inline]
-//     pub fn sum(self) -> [u8; 64] {
-//         return self.ctx.sign().as_ref().try_into().unwrap();
-//     }
-// }
+            assert_eq!(single256, vector.expected_sha256, "{}", vector.source);
+            assert_eq!(single512, vector.expected_sha512, "{}", vector.source);
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
+            let mut mac256 = Hmac::<Sha256>::new(&key);
+            for chunk in data.chunks(7) {
+                mac256.update(chunk);
+            }
+            let incremental256 = hex::encode(mac256.finalize().as_ref());
+            assert_eq!(incremental256, single256, "{} incremental sha256", vector.source);
 
-//     const HELLO_WORLD_SIGNATURE: &str = "dce414cb1ac4e7d400ebe75f437ba90ada41c339874276b0807b7a8d9d73b56dbde7898e99c4ed92659f30ccd40c712ee517fc229012cffcd798d9ef7e357dd8";
-
-//     #[test]
-//     fn hello_world_signature() {
-//         let signature = HmacSha512::sign(b"hello world", b"hello world");
-
-//         assert_eq!(hex::encode(&signature), HELLO_WORLD_SIGNATURE);
-//     }
-
-//     #[test]
-//     fn hello_world_signer() {
-//         let mut hasher = HmacSha512::new(b"hello world");
-//         hasher.write(b"hello ");
-//         hasher.write(b"world");
-
-//         let signature = hasher.sum();
-
-//         assert_eq!(hex::encode(&signature), HELLO_WORLD_SIGNATURE);
-//     }
-// }
+            let mut mac512 = Hmac::<Sha512>::new(&key);
+            for chunk in data.chunks(13) {
+                mac512.update(chunk);
+            }
+            let incremental512 = hex::encode(mac512.finalize().as_ref());
+            assert_eq!(incremental512, single512, "{} incremental sha512", vector.source);
+        }
+    }
+}

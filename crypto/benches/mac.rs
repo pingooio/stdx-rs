@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use crypto::{
-    Hmac,
+    hmac::Hmac,
     poly1305::poly1305_mac,
     sha2::{Sha256, Sha512},
     sha3::Kmac256,

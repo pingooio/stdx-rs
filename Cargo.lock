@@ -582,6 +582,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "hex",
+ "thiserror 1.0.61",
  "zeroize",
 ]
 

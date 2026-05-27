@@ -1,4 +1,4 @@
-use crate::{Error, Hasher, Hmac, sha2::Sha256};
+use crate::{EllipticCurveError, Hasher, hmac::Hmac, sha2::Sha256};
 
 pub const PRIVATE_KEY_SIZE: usize = 32;
 pub const PUBLIC_KEY_COMPRESSED_SIZE: usize = 33;
@@ -167,11 +167,7 @@ impl FieldElement {
     #[inline]
     fn from_bytes(bytes: &[u8; 32]) -> Option<Self> {
         let value = U256::from_be_bytes(bytes);
-        if value.ge(&MODULUS_P) {
-            None
-        } else {
-            Some(Self(value))
-        }
+        if value.ge(&MODULUS_P) { None } else { Some(Self(value)) }
     }
 
     #[inline]
@@ -376,11 +372,7 @@ impl AffinePoint {
             y,
             infinity: false,
         };
-        if point.is_on_curve() {
-            Some(point)
-        } else {
-            None
-        }
+        if point.is_on_curve() { Some(point) } else { None }
     }
 
     #[inline]
@@ -559,7 +551,11 @@ impl ProjectivePoint {
         let x = x_frag.sub(bxz6_part.mul(yz2));
         let z = yz2.mul(yy).double().double();
 
-        Self { x, y, z }
+        Self {
+            x,
+            y,
+            z,
+        }
     }
 }
 
@@ -658,20 +654,16 @@ fn scalar_mul_affine(base: &AffinePoint, scalar: &Scalar) -> ProjectivePoint {
     acc
 }
 
+#[inline]
 fn hash_message(message: &[u8]) -> [u8; 32] {
     let digest = Sha256::hash(message);
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&digest.as_ref()[..32]);
-    out
+    return digest.as_ref().try_into().unwrap();
 }
 
+#[inline]
 fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
-    let mut mac = Hmac::<Sha256>::new(key);
-    mac.update(data);
-    let tag = mac.finalize();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&tag.as_ref()[..32]);
-    out
+    let mac = Hmac::<Sha256>::mac(key, data);
+    return mac.as_ref().try_into().unwrap();
 }
 
 fn bits2octets(hash: &[u8; 32]) -> [u8; 32] {
@@ -712,48 +704,54 @@ fn rfc6979_generate_k(private_key: &Scalar, message_hash: &[u8; 32]) -> Scalar {
     }
 }
 
-fn parse_private_key(private_key: &[u8; PRIVATE_KEY_SIZE]) -> Result<Scalar, Error> {
-    Scalar::from_bytes(private_key).ok_or(Error::InvalidKey)
+fn parse_private_key(private_key: &[u8; PRIVATE_KEY_SIZE]) -> Result<Scalar, EllipticCurveError> {
+    Scalar::from_bytes(private_key).ok_or(EllipticCurveError::InvalidKey)
 }
 
-fn parse_public_key(public_key: &[u8]) -> Result<AffinePoint, Error> {
-    AffinePoint::from_sec1_bytes(public_key).ok_or(Error::InvalidKey)
+fn parse_public_key(public_key: &[u8]) -> Result<AffinePoint, EllipticCurveError> {
+    AffinePoint::from_sec1_bytes(public_key).ok_or(EllipticCurveError::InvalidKey)
 }
 
 pub fn derive_public_key_uncompressed(
     private_key: &[u8; PRIVATE_KEY_SIZE],
-) -> Result<[u8; PUBLIC_KEY_UNCOMPRESSED_SIZE], Error> {
+) -> Result<[u8; PUBLIC_KEY_UNCOMPRESSED_SIZE], EllipticCurveError> {
     let scalar = parse_private_key(private_key)?;
-    let point = scalar_mul_generator(&scalar).to_affine().ok_or(Error::Unspecified)?;
+    let point = scalar_mul_generator(&scalar)
+        .to_affine()
+        .ok_or(EllipticCurveError::Unspecified)?;
     Ok(point.to_uncompressed_bytes())
 }
 
 pub fn derive_public_key_compressed(
     private_key: &[u8; PRIVATE_KEY_SIZE],
-) -> Result<[u8; PUBLIC_KEY_COMPRESSED_SIZE], Error> {
+) -> Result<[u8; PUBLIC_KEY_COMPRESSED_SIZE], EllipticCurveError> {
     let scalar = parse_private_key(private_key)?;
-    let point = scalar_mul_generator(&scalar).to_affine().ok_or(Error::Unspecified)?;
+    let point = scalar_mul_generator(&scalar)
+        .to_affine()
+        .ok_or(EllipticCurveError::Unspecified)?;
     Ok(point.to_compressed_bytes())
 }
 
 pub fn ecdsa_sign(
     private_key: &[u8; PRIVATE_KEY_SIZE],
     message: &[u8],
-) -> Result<[u8; SIGNATURE_SIZE], Error> {
+) -> Result<[u8; SIGNATURE_SIZE], EllipticCurveError> {
     let private_scalar = parse_private_key(private_key)?;
     let message_hash = hash_message(message);
     let z = Scalar::from_hash(&message_hash);
 
     let mut k = rfc6979_generate_k(&private_scalar, &message_hash);
     loop {
-        let r_point = scalar_mul_generator(&k).to_affine().ok_or(Error::Unspecified)?;
+        let r_point = scalar_mul_generator(&k)
+            .to_affine()
+            .ok_or(EllipticCurveError::Unspecified)?;
         let r = Scalar::from_hash(&r_point.x.to_bytes());
         if r.is_zero() {
             k = rfc6979_generate_k(&k, &message_hash);
             continue;
         }
 
-        let kinv = k.invert().ok_or(Error::Unspecified)?;
+        let kinv = k.invert().ok_or(EllipticCurveError::Unspecified)?;
         let s = kinv.mul(z.add(r.mul(private_scalar)));
         if s.is_zero() {
             k = rfc6979_generate_k(&k, &message_hash);
@@ -767,24 +765,28 @@ pub fn ecdsa_sign(
     }
 }
 
-pub fn ecdsa_verify(public_key: &[u8], message: &[u8], signature: &[u8; SIGNATURE_SIZE]) -> Result<(), Error> {
+pub fn ecdsa_verify(
+    public_key: &[u8],
+    message: &[u8],
+    signature: &[u8; SIGNATURE_SIZE],
+) -> Result<(), EllipticCurveError> {
     let public = parse_public_key(public_key)?;
-    let r = Scalar::from_bytes(signature[..32].try_into().unwrap()).ok_or(Error::Unspecified)?;
-    let s = Scalar::from_bytes(signature[32..].try_into().unwrap()).ok_or(Error::Unspecified)?;
+    let r = Scalar::from_bytes(signature[..32].try_into().unwrap()).ok_or(EllipticCurveError::Unspecified)?;
+    let s = Scalar::from_bytes(signature[32..].try_into().unwrap()).ok_or(EllipticCurveError::Unspecified)?;
     let z = Scalar::from_hash(&hash_message(message));
 
-    let w = s.invert().ok_or(Error::Unspecified)?;
+    let w = s.invert().ok_or(EllipticCurveError::Unspecified)?;
     let u1 = z.mul(w);
     let u2 = r.mul(w);
 
     let point = scalar_mul_generator(&u1).add(&scalar_mul_affine(&public, &u2));
-    let affine = point.to_affine().ok_or(Error::Unspecified)?;
+    let affine = point.to_affine().ok_or(EllipticCurveError::Unspecified)?;
     let x_mod_n = Scalar::from_hash(&affine.x.to_bytes());
 
     if x_mod_n == r {
         Ok(())
     } else {
-        Err(Error::Unspecified)
+        Err(EllipticCurveError::Unspecified)
     }
 }
 
@@ -884,18 +886,33 @@ mod tests {
         buf[33..65].copy_from_slice(&x);
         buf[65..97].copy_from_slice(&h1);
         k = hmac_sha256(&k, &buf);
-        assert_eq!(k, decode_hex::<32>("122db1de98dae4dfa33f2da8e98494c80bff807b479fd79261b37e25f267ee58"));
+        assert_eq!(
+            k,
+            decode_hex::<32>("122db1de98dae4dfa33f2da8e98494c80bff807b479fd79261b37e25f267ee58")
+        );
         v = hmac_sha256(&k, &v);
-        assert_eq!(v, decode_hex::<32>("c9947803a747fc60c23535fdcc13b5ca566b48221ca67d4964d22daa48275844"));
+        assert_eq!(
+            v,
+            decode_hex::<32>("c9947803a747fc60c23535fdcc13b5ca566b48221ca67d4964d22daa48275844")
+        );
 
         buf[..32].copy_from_slice(&v);
         buf[32] = 0x01;
         k = hmac_sha256(&k, &buf);
-        assert_eq!(k, decode_hex::<32>("b6d4f98ebae70aa15a2238ade4e20ab323fc1e777d22f0c582d8ef2e6ba73569"));
+        assert_eq!(
+            k,
+            decode_hex::<32>("b6d4f98ebae70aa15a2238ade4e20ab323fc1e777d22f0c582d8ef2e6ba73569")
+        );
         v = hmac_sha256(&k, &v);
-        assert_eq!(v, decode_hex::<32>("bae57fe256de2de806b10635497237e7bae96754582566384c47c6c3416494d1"));
+        assert_eq!(
+            v,
+            decode_hex::<32>("bae57fe256de2de806b10635497237e7bae96754582566384c47c6c3416494d1")
+        );
         v = hmac_sha256(&k, &v);
-        assert_eq!(v, decode_hex::<32>("a6e3c57dd01abe90086538398355dd4c3b17aa873382b0f24d6129493d8aad60"));
+        assert_eq!(
+            v,
+            decode_hex::<32>("a6e3c57dd01abe90086538398355dd4c3b17aa873382b0f24d6129493d8aad60")
+        );
     }
 
     #[test]
