@@ -1,0 +1,17 @@
+[package]
+name = "term"
+version = "0.1.0"
+edition = "2024"
+authors = ["Sylvain Kerkour"]
+
+[lib]
+path = "./term.rs"
+
+[dependencies]
+thiserror = { path = "../thiserror" }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
