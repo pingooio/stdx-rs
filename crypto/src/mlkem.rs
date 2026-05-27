@@ -245,16 +245,13 @@ fn indcpa_keypair_derand<const K: usize>(
     let noise_seed = array_ref_32(&seed_output[32..64]);
     let matrix = gen_matrix::<K>(public_seed, false);
 
-    let mut nonce = 0u8;
     let mut skpv = PolyVec::<K>::default();
     let mut e = PolyVec::<K>::default();
-    for poly in skpv.vec.iter_mut() {
-        *poly = poly_getnoise(noise_seed, nonce, params.eta1);
-        nonce = nonce.wrapping_add(1);
+    for (index, poly) in skpv.vec.iter_mut().enumerate() {
+        *poly = poly_getnoise(noise_seed, index as u8, params.eta1);
     }
-    for poly in e.vec.iter_mut() {
-        *poly = poly_getnoise(noise_seed, nonce, params.eta1);
-        nonce = nonce.wrapping_add(1);
+    for (index, poly) in e.vec.iter_mut().enumerate() {
+        *poly = poly_getnoise(noise_seed, (K + index) as u8, params.eta1);
     }
 
     polyvec_ntt(&mut skpv);
@@ -289,18 +286,15 @@ fn indcpa_enc<const K: usize>(
     let at = gen_matrix::<K>(&seed, true);
     let k = poly_frommsg(message);
 
-    let mut nonce = 0u8;
     let mut sp = PolyVec::<K>::default();
     let mut ep = PolyVec::<K>::default();
-    for poly in sp.vec.iter_mut() {
-        *poly = poly_getnoise(coins, nonce, params.eta1);
-        nonce = nonce.wrapping_add(1);
+    for (index, poly) in sp.vec.iter_mut().enumerate() {
+        *poly = poly_getnoise(coins, index as u8, params.eta1);
     }
-    for poly in ep.vec.iter_mut() {
-        *poly = poly_getnoise(coins, nonce, 2);
-        nonce = nonce.wrapping_add(1);
+    for (index, poly) in ep.vec.iter_mut().enumerate() {
+        *poly = poly_getnoise(coins, (K + index) as u8, 2);
     }
-    let epp = poly_getnoise(coins, nonce, 2);
+    let epp = poly_getnoise(coins, (2 * K) as u8, 2);
 
     polyvec_ntt(&mut sp);
 
