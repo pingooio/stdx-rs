@@ -44,7 +44,10 @@ impl<H: Hasher> Hmac<H> {
         let mut hash = H::new();
         hash.update(&inner_key[..H::BLOCK_SIZE]);
 
-        Hmac { hash, opad }
+        Hmac {
+            hash,
+            opad,
+        }
     }
 
     /// Feed message data to HMAC (can be called multiple times)
@@ -164,8 +167,14 @@ mod hmac_tests {
     fn materialize(input: TestInput) -> Vec<u8> {
         match input {
             TestInput::Bytes(bytes) => bytes.to_vec(),
-            TestInput::Repeated { byte, len } => vec![byte; len],
-            TestInput::RangeInclusive { start, end } => (start..=end).collect(),
+            TestInput::Repeated {
+                byte,
+                len,
+            } => vec![byte; len],
+            TestInput::RangeInclusive {
+                start,
+                end,
+            } => (start..=end).collect(),
         }
     }
 

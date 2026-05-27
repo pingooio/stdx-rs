@@ -1,5 +1,6 @@
-use crate::{EllipticCurveError, Hasher, hmac::Hmac, sha2::Sha256};
 use big_number::Uint;
+
+use crate::{EllipticCurveError, Hasher, hmac::Hmac, sha2::Sha256};
 
 pub const PRIVATE_KEY_SIZE: usize = 32;
 pub const PUBLIC_KEY_COMPRESSED_SIZE: usize = 33;
@@ -272,7 +273,11 @@ impl AffinePoint {
 
     #[inline]
     fn new(x: FieldElement, y: FieldElement) -> Option<Self> {
-        let point = Self { x, y, infinity: false };
+        let point = Self {
+            x,
+            y,
+            infinity: false,
+        };
         if point.is_on_curve() { Some(point) } else { None }
     }
 
@@ -452,7 +457,11 @@ impl ProjectivePoint {
         let x = x_frag.sub(bxz6_part.mul(yz2));
         let z = yz2.mul(yy).double().double();
 
-        Self { x, y, z }
+        Self {
+            x,
+            y,
+            z,
+        }
     }
 }
 

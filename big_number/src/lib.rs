@@ -5,8 +5,11 @@ extern crate alloc;
 
 #[cfg(feature = "alloc")]
 use alloc::{string::String, vec::Vec};
-use core::fmt;
-use core::ops::{Add, Div, Mul, Neg, Rem, Sub};
+
+use core::{
+    fmt,
+    ops::{Add, Div, Mul, Neg, Rem, Sub},
+};
 
 pub const MAX_LIMBS: usize = 64;
 
@@ -84,7 +87,9 @@ const fn uint_from_u128<const BITS: usize, const LIMBS: usize>(value: u128) -> U
     if LIMBS > 1 {
         limbs[1] = (value >> 64) as u64;
     }
-    Uint { limbs }
+    Uint {
+        limbs,
+    }
 }
 
 fn u128_to_word(value: u128) -> u64 {
@@ -96,7 +101,9 @@ fn i128_abs_to_word(value: i128) -> (u64, bool) {
 }
 
 impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
-    pub const ZERO: Self = Self { limbs: [0u64; LIMBS] };
+    pub const ZERO: Self = Self {
+        limbs: [0u64; LIMBS],
+    };
     pub const ONE: Self = Self::from_u64(1);
     pub const MAX: Self = Self {
         limbs: [u64::MAX; LIMBS],
@@ -104,7 +111,9 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
 
     #[inline]
     pub const fn from_limbs(limbs: [u64; LIMBS]) -> Self {
-        Self { limbs }
+        Self {
+            limbs,
+        }
     }
 
     #[inline]
@@ -113,7 +122,9 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
         if LIMBS > 0 {
             limbs[0] = v;
         }
-        Self { limbs }
+        Self {
+            limbs,
+        }
     }
 
     #[inline]
@@ -128,7 +139,9 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
             limbs[i] = u64::from_be_bytes(limb);
             i += 1;
         }
-        Self { limbs }
+        Self {
+            limbs,
+        }
     }
 
     #[inline]
@@ -143,7 +156,9 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
             limbs[i] = u64::from_le_bytes(limb);
             i += 1;
         }
-        Self { limbs }
+        Self {
+            limbs,
+        }
     }
 
     #[cfg(feature = "alloc")]
@@ -245,7 +260,9 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
             limbs[i] = ct_select_u64(a.limbs[i], b.limbs[i], choice);
             i += 1;
         }
-        Self { limbs }
+        Self {
+            limbs,
+        }
     }
 
     #[inline]
@@ -259,7 +276,12 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
             carry = next_carry;
             i += 1;
         }
-        (Self { limbs: out }, carry)
+        (
+            Self {
+                limbs: out,
+            },
+            carry,
+        )
     }
 
     #[inline]
@@ -273,7 +295,12 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
             borrow = next_borrow;
             i += 1;
         }
-        (Self { limbs: out }, borrow)
+        (
+            Self {
+                limbs: out,
+            },
+            borrow,
+        )
     }
 
     #[inline]
@@ -339,7 +366,9 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
                 carry = next;
                 i += 1;
             }
-            let shifted_rem = Self { limbs: shifted };
+            let shifted_rem = Self {
+                limbs: shifted,
+            };
             let (reduced, borrow) = shifted_rem.sub_raw(modulus);
             rem = Self::ct_select(&reduced, &shifted_rem, carry == 1 || borrow == 0);
         }
@@ -367,7 +396,12 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
             carry = next_carry;
             i += 1;
         }
-        (Self { limbs: out }, carry)
+        (
+            Self {
+                limbs: out,
+            },
+            carry,
+        )
     }
 
     #[inline]
@@ -385,7 +419,12 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
             borrow = next_borrow;
             i += 1;
         }
-        (Self { limbs: out }, borrow)
+        (
+            Self {
+                limbs: out,
+            },
+            borrow,
+        )
     }
 
     #[inline]
@@ -399,7 +438,12 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
             carry = next_carry;
             i += 1;
         }
-        (Self { limbs: out }, carry)
+        (
+            Self {
+                limbs: out,
+            },
+            carry,
+        )
     }
 
     #[inline]
@@ -414,7 +458,12 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
             out[i] = (dividend / word as u128) as u64;
             rem = (dividend % word as u128) as u64;
         }
-        (Self { limbs: out }, rem)
+        (
+            Self {
+                limbs: out,
+            },
+            rem,
+        )
     }
 
     pub fn from_str_radix(src: &str, radix: u32) -> Result<Self, Error> {
@@ -590,7 +639,9 @@ impl<const BITS: usize, const LIMBS: usize> Mul for Uint<BITS, LIMBS> {
             limbs[i] = product[i];
             i += 1;
         }
-        Self { limbs }
+        Self {
+            limbs,
+        }
     }
 }
 

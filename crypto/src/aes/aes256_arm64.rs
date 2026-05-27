@@ -2,7 +2,7 @@
 
 use core::arch::aarch64::*;
 
-use crate::EllipticCurveError;
+use crate::AeadError;
 
 // #[inline]
 // fn have_features() -> bool {
@@ -178,7 +178,7 @@ pub(crate) unsafe fn decrypt_armv8(
     tag: &[u8; 16],
     nonce: &[u8; 12],
     aad: &[u8],
-) -> Result<(), EllipticCurveError> {
+) -> Result<(), AeadError> {
     let rk = key_expand_armv8(key);
 
     let h = {
@@ -206,7 +206,7 @@ pub(crate) unsafe fn decrypt_armv8(
         diff |= expected_tag[i] ^ tag[i];
     }
     if diff != 0 {
-        return Err(EllipticCurveError::Unspecified);
+        return Err(AeadError::InvalidCiphertext);
     }
 
     let mut ctr = j0;

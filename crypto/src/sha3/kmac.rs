@@ -21,7 +21,9 @@ impl Kmac256 {
         let mut cshake = CShake256::new(b"KMAC", customization);
         let key_padded = bytepad(&encode_string(key), KMAC256_RATE);
         cshake.absorb(&key_padded);
-        return Kmac256 { cshake };
+        return Kmac256 {
+            cshake,
+        };
     }
 
     #[inline]
