@@ -1022,6 +1022,21 @@ mod tests {
     }
 
     #[test]
+    fn ml_kem_768_kat_convention_check() {
+        // KAT vector 0 from post-quantum-cryptography/KAT/MLKEM/kat_MLKEM_768.rsp
+        // If pk_prefix matches, our impl uses the same convention as the KAT
+        let d = hex::decode("6dbbc4375136df3b07f7c70e639e223e177e7fd53b161b3f4d57791794f12624").unwrap();
+        let z = hex::decode("f696484048ec21f96cf50a56d0759c448f3779752f0383d37449690694cf7a68").unwrap();
+        let mut coins = [0u8; 64];
+        coins[..32].copy_from_slice(&d);
+        coins[32..].copy_from_slice(&z);
+        let (_, pk) = crypto_kem_keypair_derand::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_PUBLIC_KEY_SIZE>(&ML_KEM_768, &coins);
+        eprintln!("KAT check pk prefix: {}", hex::encode(&pk[..20]));
+        // If matches: 01f60af1dc8e6360ae78b59d4a5042eb9145a269
+        // If different, convention differs
+    }
+
+    #[test]
     fn ml_kem_1024_deterministic_derand_vectors_are_stable() {
         let key_coins = [3u8; 64];
         let enc_coins = [5u8; 32];
