@@ -69,67 +69,9 @@ mod platform {
     }
 }
 
-// ── Windows ──────────────────────────────────────────────────────────────────
+// ── Fallback (non-Unix) ──────────────────────────────────────────────────────
 
-#[cfg(windows)]
-mod platform {
-    use std::io::{self, BufRead};
-    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
-    use windows_sys::Win32::System::Console::{
-        ENABLE_ECHO_INPUT, GetConsoleMode, GetStdHandle, STD_INPUT_HANDLE, SetConsoleMode,
-    };
-
-    /// RAII guard that restores the saved console mode when dropped.
-    struct ConsoleModeGuard {
-        handle: windows_sys::Win32::Foundation::HANDLE,
-        saved: u32,
-    }
-
-    impl Drop for ConsoleModeGuard {
-        fn drop(&mut self) {
-            // Ignore errors: we are in a destructor and cannot propagate them.
-            unsafe { SetConsoleMode(self.handle, self.saved) };
-        }
-    }
-
-    pub(super) fn read_password() -> Result<Vec<u8>, super::Error> {
-        // SAFETY: GetStdHandle with STD_INPUT_HANDLE is always safe to call.
-        let handle = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
-
-        let _guard = if handle != INVALID_HANDLE_VALUE && !handle.is_null() {
-            let mut mode: u32 = 0;
-            // SAFETY: handle is valid and mode is a valid out-pointer.
-            if unsafe { GetConsoleMode(handle, &mut mode) } != 0 {
-                // Disable echo while preserving every other flag.
-                unsafe { SetConsoleMode(handle, mode & !ENABLE_ECHO_INPUT) };
-                Some(ConsoleModeGuard { handle, saved: mode })
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        read_line()
-    }
-
-    fn read_line() -> Result<Vec<u8>, super::Error> {
-        let mut line = String::new();
-        io::stdin().lock().read_line(&mut line)?;
-        // Strip the trailing newline (and optional carriage-return).
-        if line.ends_with('\n') {
-            line.pop();
-            if line.ends_with('\r') {
-                line.pop();
-            }
-        }
-        Ok(line.into_bytes())
-    }
-}
-
-// ── Fallback (neither Unix nor Windows) ─────────────────────────────────────
-
-#[cfg(not(any(unix, windows)))]
+#[cfg(not(unix))]
 mod platform {
     use std::io::BufRead;
 

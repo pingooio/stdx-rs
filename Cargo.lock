@@ -2243,7 +2243,6 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "thiserror 1.0.61",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
