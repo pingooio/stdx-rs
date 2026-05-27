@@ -1021,6 +1021,137 @@ mod tests {
         assert_eq!(hex::encode(shared_secret), "afcf18dfd6b710a09b5cf591d0eb8229d83aa10904934a3ca60a52da5ff36b96");
     }
 
+    // CCTV accumulated vectors: https://github.com/C2SP/CCTV/tree/main/ML-KEM
+    //
+    // The RNG is a single SHAKE-128 instance absorbing empty input, then squeezed
+    // repeatedly. For each test: draw d (32 B), z (32 B), m (32 B), ct_random (CT_SIZE B).
+    // Run KeyGen(d||z), Encaps(ek, m), Decaps(dk, ct), Decaps(dk, ct_random).
+    // Feed ek, dk, ct, k_encaps, k_decaps_random into a running SHAKE-128 accumulator.
+    // The final 32-byte squeeze of the accumulator must match a known hash.
+    //
+    // 10 000 tests per variant; hashes sourced from C2SP/CCTV:
+    //   ML-KEM-768:  f7db260e1137a742e05fe0db9525012812b004d29040a5b606aad3d134b548d3
+    //   ML-KEM-1024: 47ac888fe61544efc0518f46094b4f8a600965fc89822acb06dc7169d24f3543
+
+    #[test]
+    fn ml_kem_768_cctv_accumulated_10k() {
+        use crate::Xof;
+        use crate::sha3::Shake128;
+
+        let mut rng = Shake128::new();
+        // absorb nothing; first squeeze will pad and permute
+        rng.absorb(&[]);
+
+        let mut acc = Shake128::new();
+
+        for _ in 0..10_000u32 {
+            let mut d = [0u8; 32];
+            let mut z = [0u8; 32];
+            let mut m = [0u8; 32];
+            let mut ct_random = [0u8; ML_KEM_768_CIPHERTEXT_SIZE];
+
+            rng.squeeze(&mut d);
+            rng.squeeze(&mut z);
+            rng.squeeze(&mut m);
+            rng.squeeze(&mut ct_random);
+
+            let mut coins = [0u8; 64];
+            coins[..32].copy_from_slice(&d);
+            coins[32..].copy_from_slice(&z);
+
+            let (dk, ek) = crypto_kem_keypair_derand::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_PUBLIC_KEY_SIZE>(
+                &ML_KEM_768, &coins,
+            );
+            let (ct, k_encaps) = crypto_kem_enc_derand::<3, ML_KEM_768_PUBLIC_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(
+                &ML_KEM_768, &ek, &m,
+            );
+
+            let k_decaps = crypto_kem_dec::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(
+                &ML_KEM_768, &dk, &ct,
+            )
+            .unwrap();
+            assert_eq!(k_encaps, k_decaps);
+
+            let k_decaps_random = crypto_kem_dec::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(
+                &ML_KEM_768, &dk, &ct_random,
+            )
+            .unwrap();
+
+            acc.absorb(&ek);
+            acc.absorb(&dk);
+            acc.absorb(&ct);
+            acc.absorb(&k_encaps);
+            acc.absorb(&k_decaps_random);
+        }
+
+        let mut hash = [0u8; 32];
+        acc.squeeze(&mut hash);
+        assert_eq!(
+            hex::encode(hash),
+            "f7db260e1137a742e05fe0db9525012812b004d29040a5b606aad3d134b548d3",
+            "ML-KEM-768 CCTV accumulated hash mismatch"
+        );
+    }
+
+    #[test]
+    fn ml_kem_1024_cctv_accumulated_10k() {
+        use crate::Xof;
+        use crate::sha3::Shake128;
+
+        let mut rng = Shake128::new();
+        rng.absorb(&[]);
+
+        let mut acc = Shake128::new();
+
+        for _ in 0..10_000u32 {
+            let mut d = [0u8; 32];
+            let mut z = [0u8; 32];
+            let mut m = [0u8; 32];
+            let mut ct_random = [0u8; ML_KEM_1024_CIPHERTEXT_SIZE];
+
+            rng.squeeze(&mut d);
+            rng.squeeze(&mut z);
+            rng.squeeze(&mut m);
+            rng.squeeze(&mut ct_random);
+
+            let mut coins = [0u8; 64];
+            coins[..32].copy_from_slice(&d);
+            coins[32..].copy_from_slice(&z);
+
+            let (dk, ek) = crypto_kem_keypair_derand::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_PUBLIC_KEY_SIZE>(
+                &ML_KEM_1024, &coins,
+            );
+            let (ct, k_encaps) = crypto_kem_enc_derand::<4, ML_KEM_1024_PUBLIC_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(
+                &ML_KEM_1024, &ek, &m,
+            );
+
+            let k_decaps = crypto_kem_dec::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(
+                &ML_KEM_1024, &dk, &ct,
+            )
+            .unwrap();
+            assert_eq!(k_encaps, k_decaps);
+
+            let k_decaps_random = crypto_kem_dec::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(
+                &ML_KEM_1024, &dk, &ct_random,
+            )
+            .unwrap();
+
+            acc.absorb(&ek);
+            acc.absorb(&dk);
+            acc.absorb(&ct);
+            acc.absorb(&k_encaps);
+            acc.absorb(&k_decaps_random);
+        }
+
+        let mut hash = [0u8; 32];
+        acc.squeeze(&mut hash);
+        assert_eq!(
+            hex::encode(hash),
+            "47ac888fe61544efc0518f46094b4f8a600965fc89822acb06dc7169d24f3543",
+            "ML-KEM-1024 CCTV accumulated hash mismatch"
+        );
+    }
+
     #[test]
     fn ml_kem_1024_deterministic_derand_vectors_are_stable() {
         let key_coins = [3u8; 64];
