@@ -5,7 +5,6 @@ extern crate alloc;
 
 #[cfg(feature = "alloc")]
 use alloc::{string::String, vec::Vec};
-
 use core::{
     fmt,
     ops::{Add, Div, Mul, Neg, Rem, Sub},
@@ -28,13 +27,6 @@ pub enum Error {
     EmptyString,
     Overflow,
 }
-
-pub type U128 = Uint<128, 2>;
-pub type U256 = Uint<256, 4>;
-pub type U512 = Uint<512, 8>;
-pub type I128 = Int<128, 2>;
-pub type I256 = Int<256, 4>;
-pub type I512 = Int<512, 8>;
 
 #[inline]
 pub const fn adc(a: u64, b: u64, carry: u64) -> (u64, u64) {
@@ -101,6 +93,8 @@ fn i128_abs_to_word(value: i128) -> (u64, bool) {
 }
 
 impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
+    const _LIMBS_CHECK: () = assert!(LIMBS == (BITS + 63) / 64, "LIMBS must equal ceil(BITS/64)");
+
     pub const ZERO: Self = Self {
         limbs: [0u64; LIMBS],
     };
@@ -573,6 +567,8 @@ impl<const BITS: usize, const LIMBS: usize> fmt::Debug for Uint<BITS, LIMBS> {
 }
 
 impl<const BITS: usize, const LIMBS: usize> Int<BITS, LIMBS> {
+    const _LIMBS_CHECK: () = assert!(LIMBS == (BITS + 63) / 64, "LIMBS must equal ceil(BITS/64)");
+
     pub const ZERO: Self = Self(Uint::ZERO);
     pub const ONE: Self = Self(Uint::ONE);
     pub const MINUS_ONE: Self = Self(Uint::MAX);
@@ -894,6 +890,9 @@ impl_int_ops_signed!(i8, i16, i32, i64, i128);
 #[cfg(test)]
 mod tests {
     use super::*;
+    type U256 = Uint<256, 4>;
+    type U128 = Uint<128, 2>;
+    type I128 = Int<128, 2>;
 
     const P256_MODULUS: U256 = U256::from_limbs([
         0xffff_ffff_ffff_ffff,

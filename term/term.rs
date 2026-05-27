@@ -16,8 +16,9 @@ pub fn read_password() -> Result<Vec<u8>, Error> {
 
 #[cfg(unix)]
 mod platform {
-    use libc::{ECHO, ICANON, ICRNL, ISIG, STDIN_FILENO, TCSANOW, tcgetattr, tcsetattr, termios};
     use std::io::Read;
+
+    use libc::{ECHO, ICANON, ICRNL, ISIG, STDIN_FILENO, TCSANOW, tcgetattr, tcsetattr, termios};
 
     /// RAII guard that restores the saved termios state when dropped.
     struct TermiosGuard {
@@ -47,7 +48,9 @@ mod platform {
             raw.c_iflag |= ICRNL as libc::tcflag_t;
             // SAFETY: fd is STDIN_FILENO, raw is a valid termios.
             unsafe { tcsetattr(STDIN_FILENO, TCSANOW, &raw) };
-            Some(TermiosGuard { saved })
+            Some(TermiosGuard {
+                saved,
+            })
         } else {
             None
         };
