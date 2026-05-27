@@ -48,6 +48,7 @@ members = [
     "serde_urlencoded",
     "serde_yaml",
     "single_instance",
+    "term",
     "thiserror",
     "thiserror/impl",
     "tld",

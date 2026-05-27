@@ -2238,6 +2238,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "term"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "thiserror 1.0.61",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.61"
 dependencies = [
