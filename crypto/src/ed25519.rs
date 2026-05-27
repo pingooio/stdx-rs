@@ -494,131 +494,24 @@ mod tests {
 
     #[test]
     fn go_golden_vectors() {
-        let vectors = [
-            TestVector {
-                seed: "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
-                public_key: "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
-                message: "",
-                signature: "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
-            },
-            TestVector {
-                seed: "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb",
-                public_key: "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
-                message: "72",
-                signature: "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00",
-            },
-            TestVector {
-                seed: "c5aa8df43f9f837bedb7442f31dcb7b166d38535076f094b85ce3a2e0b4458f7",
-                public_key: "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
-                message: "af82",
-                signature: "6291d657deec24024827e69c3abe01a30ce548a284743a445e3680d7db5ac3ac18ff9b538d16f290ae67f760984dc6594a7c15e9716ed28dc027beceea1ec40a",
-            },
-            TestVector {
-                seed: "0d4a05b07352a5436e180356da0ae6efa0345ff7fb1572575772e8005ed978e9",
-                public_key: "e61a185bcef2613a6c7cb79763ce945d3b245d76114dd440bcf5f2dc1aa57057",
-                message: "cbc77b",
-                signature: "d9868d52c2bebce5f3fa5a79891970f309cb6591e3e1702a70276fa97c24b3a8e58606c38c9758529da50ee31b8219cba45271c689afa60b0ea26c99db19b00c",
-            },
-            TestVector {
-                seed: "6df9340c138cc188b5fe4464ebaa3f7fc206a2d55c3434707e74c9fc04e20ebb",
-                public_key: "c0dac102c4533186e25dc43128472353eaabdb878b152aeb8e001f92d90233a7",
-                message: "5f4c8989",
-                signature: "124f6fc6b0d100842769e71bd530664d888df8507df6c56dedfdb509aeb93416e26b918d38aa06305df3095697c18b2aa832eaa52edc0ae49fbae5a85e150c07",
-            },
-            TestVector {
-                seed: "b780381a65edf8b78f6945e8dbec7941ac049fd4c61040cf0c324357975a293c",
-                public_key: "e253af0766804b869bb1595be9765b534886bbaab8305bf50dbc7f899bfb5f01",
-                message: "18b6bec097",
-                signature: "b2fc46ad47af464478c199e1f8be169f1be6327c7f9a0a6689371ca94caf04064a01b22aff1520abd58951341603faed768cf78ce97ae7b038abfe456aa17c09",
-            },
-            TestVector {
-                seed: "78ae9effe6f245e924a7be63041146ebc670dbd3060cba67fbc6216febc44546",
-                public_key: "fbcfbfa40505d7f2be444a33d185cc54e16d615260e1640b2b5087b83ee3643d",
-                message: "89010d855972",
-                signature: "6ed629fc1d9ce9e1468755ff636d5a3f40a5d9c91afd93b79d241830f7e5fa29854b8f20cc6eecbb248dbd8d16d14e99752194e4904d09c74d639518839d2300",
-            },
-            TestVector {
-                seed: "691865bfc82a1e4b574eecde4c7519093faf0cf867380234e3664645c61c5f79",
-                public_key: "98a5e3a36e67aaba89888bf093de1ad963e774013b3902bfab356d8b90178a63",
-                message: "b4a8f381e70e7a",
-                signature: "6e0af2fe55ae377a6b7a7278edfb419bd321e06d0df5e27037db8812e7e3529810fa5552f6c0020985ca17a0e02e036d7b222a24f99b77b75fdd16cb05568107",
-            },
-            TestVector {
-                seed: "3b26516fb3dc88eb181b9ed73f0bcd52bcd6b4c788e4bcaf46057fd078bee073",
-                public_key: "f81fb54a825fced95eb033afcd64314075abfb0abd20a970892503436f34b863",
-                message: "4284abc51bb67235",
-                signature: "d6addec5afb0528ac17bb178d3e7f2887f9adbb1ad16e110545ef3bc57f9de2314a5c8388f723b8907be0f3ac90c6259bbe885ecc17645df3db7d488f805fa08",
-            },
-            TestVector {
-                seed: "edc6f5fbdd1cee4d101c063530a30490b221be68c036f5b07d0f953b745df192",
-                public_key: "c1a49c66e617f9ef5ec66bc4c6564ca33de2a5fb5e1464062e6d6c6219155efd",
-                message: "672bf8965d04bc5146",
-                signature: "2c76a04af2391c147082e33faacdbe56642a1e134bd388620b852b901a6bc16ff6c9cc9404c41dea12ed281da067a1513866f9d964f8bdd24953856c50042901",
-            },
-            TestVector {
-                seed: "4e7d21fb3b1897571a445833be0f9fd41cd62be3aa04040f8934e1fcbdcacd45",
-                public_key: "31b2524b8348f7ab1dfafa675cc538e9a84e3fe5819e27c12ad8bbc1a36e4dff",
-                message: "33d7a786aded8c1bf691",
-                signature: "28e4598c415ae9de01f03f9f3fab4e919e8bf537dd2b0cdf6e79b9e6559c9409d9151a4c40f083193937627c369488259e99da5a9f0a87497fa6696a5dd6ce08",
-            },
-            TestVector {
-                seed: "a980f892db13c99a3e8971e965b2ff3d41eafd54093bc9f34d1fd22d84115bb6",
-                public_key: "44b57ee30cdb55829d0a5d4f046baef078f1e97a7f21b62d75f8e96ea139c35f",
-                message: "3486f68848a65a0eb5507d",
-                signature: "77d389e599630d934076329583cd4105a649a9292abc44cd28c40000c8e2f5ac7660a81c85b72af8452d7d25c070861dae91601c7803d656531650dd4e5c4100",
-            },
-            TestVector {
-                seed: "5b5a619f8ce1c66d7ce26e5a2ae7b0c04febcd346d286c929e19d0d5973bfef9",
-                public_key: "6fe83693d011d111131c4f3fbaaa40a9d3d76b30012ff73bb0e39ec27ab18257",
-                message: "5a8d9d0a22357e6655f9c785",
-                signature: "0f9ad9793033a2fa06614b277d37381e6d94f65ac2a5a94558d09ed6ce922258c1a567952e863ac94297aec3c0d0c8ddf71084e504860bb6ba27449b55adc40e",
-            },
-            TestVector {
-                seed: "940c89fe40a81dafbdb2416d14ae469119869744410c3303bfaa0241dac57800",
-                public_key: "a2eb8c0501e30bae0cf842d2bde8dec7386f6b7fc3981b8c57c9792bb94cf2dd",
-                message: "b87d3813e03f58cf19fd0b6395",
-                signature: "d8bb64aad8c9955a115a793addd24f7f2b077648714f49c4694ec995b330d09d640df310f447fd7b6cb5c14f9fe9f490bcf8cfadbfd2169c8ac20d3b8af49a0c",
-            },
-            TestVector {
-                seed: "9acad959d216212d789a119252ebfe0c96512a23c73bd9f3b202292d6916a738",
-                public_key: "cf3af898467a5b7a52d33d53bc037e2642a8da996903fc252217e9c033e2f291",
-                message: "55c7fa434f5ed8cdec2b7aeac173",
-                signature: "6ee3fe81e23c60eb2312b2006b3b25e6838e02106623f844c44edb8dafd66ab0671087fd195df5b8f58a1d6e52af42908053d55c7321010092748795ef94cf06",
-            },
-            TestVector {
-                seed: "d5aeee41eeb0e9d1bf8337f939587ebe296161e6bf5209f591ec939e1440c300",
-                public_key: "fd2a565723163e29f53c9de3d5e8fbe36a7ab66e1439ec4eae9c0a604af291a5",
-                message: "0a688e79be24f866286d4646b5d81c",
-                signature: "f68d04847e5b249737899c014d31c805c5007a62c0a10d50bb1538c5f35503951fbc1e08682f2cc0c92efe8f4985dec61dcbd54d4b94a22547d24451271c8b00",
-            },
-            TestVector {
-                seed: "0a47d10452ae2febec518a1c7c362890c3fc1a49d34b03b6467d35c904a8362d",
-                public_key: "34e5a8508c4743746962c066e4badea2201b8ab484de5c4f94476ccd2143955b",
-                message: "c942fa7ac6b23ab7ff612fdc8e68ef39",
-                signature: "2a3d27dc40d0a8127949a3b7f908b3688f63b7f14f651aacd715940bdbe27a0809aac142f47ab0e1e44fa490ba87ce5392f33a891539caf1ef4c367cae54500c",
-            },
-            TestVector {
-                seed: "f8148f7506b775ef46fdc8e8c756516812d47d6cfbfa318c27c9a22641e56f17",
-                public_key: "0445e456dacc7d5b0bbed23c8200cdb74bdcb03e4c7b73f0a2b9b46eac5d4372",
-                message: "7368724a5b0efb57d28d97622dbde725af",
-                signature: "3653ccb21219202b8436fb41a32ba2618c4a133431e6e63463ceb3b6106c4d56e1d2ba165ba76eaad3dc39bffb130f1de3d8e6427db5b71938db4e272bc3e20b",
-            },
-            TestVector {
-                seed: "77f88691c4eff23ebb7364947092951a5ff3f10785b417e918823a552dab7c75",
-                public_key: "74d29127f199d86a8676aec33b4ce3f225ccb191f52c191ccd1e8cca65213a6b",
-                message: "bd8e05033f3a8bcdcbf4beceb70901c82e31",
-                signature: "fbe929d743a03c17910575492f3092ee2a2bf14a60a3fcacec74a58c7334510fc262db582791322d6c8c41f1700adb80027ecabc14270b703444ae3ee7623e0a",
-            },
-            TestVector {
-                seed: "ab6f7aee6a0837b334ba5eb1b2ad7fcecfab7e323cab187fe2e0a95d80eff132",
-                public_key: "5b96dca497875bf9664c5e75facf3f9bc54bae913d66ca15ee85f1491ca24d2c",
-                message: "8171456f8b907189b1d779e26bc5afbb08c67a",
-                signature: "73bca64e9dd0db88138eedfafcea8f5436cfb74bfb0e7733cf349baa0c49775c56d5934e1d38e36f39b7c5beb0a836510c45126f8ec4b6810519905b0ca07c09",
-            },
-        ];
+        let data = include_str!("../testdata/ed25519/sign.input");
 
-        for vector in &vectors {
-            assert_vector(vector);
+        for line in data.lines() {
+            let mut parts = line.split(':');
+            let private_and_public = parts.next().unwrap();
+            let public_key = parts.next().unwrap();
+            let message = parts.next().unwrap();
+            let signature_with_message = parts.next().unwrap();
+            assert!(parts.next().is_some());
+            assert!(parts.next().is_none());
+
+            let vector = TestVector {
+                seed: &private_and_public[..64],
+                public_key,
+                message,
+                signature: &signature_with_message[..128],
+            };
+            assert_vector(&vector);
         }
     }
 
