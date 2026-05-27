@@ -1,12 +1,11 @@
 use constant_time_eq::constant_time_eq;
+#[cfg(feature = "zeroize")]
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{
     Xof,
     sha3::{Sha3_256, Sha3_512, Shake128, Shake256},
 };
-
-#[cfg(feature = "zeroize")]
-use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub const SHARED_SECRET_SIZE: usize = 32;
 pub const ML_KEM_768_PUBLIC_KEY_SIZE: usize = 1184;
@@ -24,14 +23,13 @@ const SHAKE128_RATE: usize = 168;
 const QINV: i16 = -3327;
 const MONT_SQUARED_DIV_N: i16 = 1441;
 const ZETAS: [i16; 128] = [
-    -1044, -758, -359, -1517, 1493, 1422, 287, 202, -171, 622, 1577, 182, 962, -1202, -1474, 1468,
-    573, -1325, 264, 383, -829, 1458, -1602, -130, -681, 1017, 732, 608, -1542, 411, -205, -1571,
-    1223, 652, -552, 1015, -1293, 1491, -282, -1544, 516, -8, -320, -666, -1618, -1162, 126, 1469,
-    -853, -90, -271, 830, 107, -1421, -247, -951, -398, 961, -1508, -725, 448, -1065, 677, -1275,
-    -1103, 430, 555, 843, -1251, 871, 1550, 105, 422, 587, 177, -235, -291, -460, 1574, 1653,
-    -246, 778, 1159, -147, -777, 1483, -602, 1119, -1590, 644, -872, 349, 418, 329, -156, -75,
-    817, 1097, 603, 610, 1322, -1285, -1465, 384, -1215, -136, 1218, -1335, -874, 220, -1187, -1659,
-    -1185, -1530, -1278, 794, -1510, -854, -870, 478, -108, -308, 996, 991, 958, -1460, 1522, 1628,
+    -1044, -758, -359, -1517, 1493, 1422, 287, 202, -171, 622, 1577, 182, 962, -1202, -1474, 1468, 573, -1325, 264,
+    383, -829, 1458, -1602, -130, -681, 1017, 732, 608, -1542, 411, -205, -1571, 1223, 652, -552, 1015, -1293, 1491,
+    -282, -1544, 516, -8, -320, -666, -1618, -1162, 126, 1469, -853, -90, -271, 830, 107, -1421, -247, -951, -398, 961,
+    -1508, -725, 448, -1065, 677, -1275, -1103, 430, 555, 843, -1251, 871, 1550, 105, 422, 587, 177, -235, -291, -460,
+    1574, 1653, -246, 778, 1159, -147, -777, 1483, -602, 1119, -1590, 644, -872, 349, 418, 329, -156, -75, 817, 1097,
+    603, 610, 1322, -1285, -1465, 384, -1215, -136, 1218, -1335, -874, 220, -1187, -1659, -1185, -1530, -1278, 794,
+    -1510, -854, -870, 478, -108, -308, 996, 991, 958, -1460, 1522, 1628,
 ];
 
 const ML_KEM_768: MlKemParams<3> = MlKemParams {
@@ -71,7 +69,9 @@ struct Poly {
 impl Default for Poly {
     #[inline]
     fn default() -> Self {
-        Self { coeffs: [0; N] }
+        Self {
+            coeffs: [0; N],
+        }
     }
 }
 
@@ -91,25 +91,17 @@ impl<const K: usize> Default for PolyVec<K> {
 }
 
 #[inline]
-pub fn ml_kem_768_generate_keypair(
-) -> Result<([u8; ML_KEM_768_SECRET_KEY_SIZE], [u8; ML_KEM_768_PUBLIC_KEY_SIZE]), MlKemError> {
+pub fn ml_kem_768_generate_keypair() -> ([u8; ML_KEM_768_SECRET_KEY_SIZE], [u8; ML_KEM_768_PUBLIC_KEY_SIZE]) {
     let coins: [u8; 64] = rand::random();
-    Ok(crypto_kem_keypair_derand::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_PUBLIC_KEY_SIZE>(
-        &ML_KEM_768,
-        &coins,
-    ))
+    crypto_kem_keypair_derand::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_PUBLIC_KEY_SIZE>(&ML_KEM_768, &coins)
 }
 
 #[inline]
 pub fn ml_kem_768_encapsulate(
     public_key: &[u8; ML_KEM_768_PUBLIC_KEY_SIZE],
-) -> Result<([u8; ML_KEM_768_CIPHERTEXT_SIZE], [u8; SHARED_SECRET_SIZE]), MlKemError> {
+) -> ([u8; ML_KEM_768_CIPHERTEXT_SIZE], [u8; SHARED_SECRET_SIZE]) {
     let coins: [u8; 32] = rand::random();
-    Ok(crypto_kem_enc_derand::<3, ML_KEM_768_PUBLIC_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(
-        &ML_KEM_768,
-        public_key,
-        &coins,
-    ))
+    crypto_kem_enc_derand::<3, ML_KEM_768_PUBLIC_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(&ML_KEM_768, public_key, &coins)
 }
 
 #[inline]
@@ -117,33 +109,25 @@ pub fn ml_kem_768_decapsulate(
     private_key: &[u8; ML_KEM_768_SECRET_KEY_SIZE],
     ciphertext: &[u8; ML_KEM_768_CIPHERTEXT_SIZE],
 ) -> Result<[u8; SHARED_SECRET_SIZE], MlKemError> {
-    crypto_kem_dec::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(
-        &ML_KEM_768,
-        private_key,
-        ciphertext,
-    )
+    crypto_kem_dec::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(&ML_KEM_768, private_key, ciphertext)
 }
 
 #[inline]
-pub fn ml_kem_1024_generate_keypair(
-) -> Result<([u8; ML_KEM_1024_SECRET_KEY_SIZE], [u8; ML_KEM_1024_PUBLIC_KEY_SIZE]), MlKemError> {
+pub fn ml_kem_1024_generate_keypair() -> ([u8; ML_KEM_1024_SECRET_KEY_SIZE], [u8; ML_KEM_1024_PUBLIC_KEY_SIZE]) {
     let coins: [u8; 64] = rand::random();
-    Ok(crypto_kem_keypair_derand::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_PUBLIC_KEY_SIZE>(
-        &ML_KEM_1024,
-        &coins,
-    ))
+    crypto_kem_keypair_derand::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_PUBLIC_KEY_SIZE>(&ML_KEM_1024, &coins)
 }
 
 #[inline]
 pub fn ml_kem_1024_encapsulate(
     public_key: &[u8; ML_KEM_1024_PUBLIC_KEY_SIZE],
-) -> Result<([u8; ML_KEM_1024_CIPHERTEXT_SIZE], [u8; SHARED_SECRET_SIZE]), MlKemError> {
+) -> ([u8; ML_KEM_1024_CIPHERTEXT_SIZE], [u8; SHARED_SECRET_SIZE]) {
     let coins: [u8; 32] = rand::random();
-    Ok(crypto_kem_enc_derand::<4, ML_KEM_1024_PUBLIC_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(
+    crypto_kem_enc_derand::<4, ML_KEM_1024_PUBLIC_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(
         &ML_KEM_1024,
         public_key,
         &coins,
-    ))
+    )
 }
 
 #[inline]
@@ -151,11 +135,7 @@ pub fn ml_kem_1024_decapsulate(
     private_key: &[u8; ML_KEM_1024_SECRET_KEY_SIZE],
     ciphertext: &[u8; ML_KEM_1024_CIPHERTEXT_SIZE],
 ) -> Result<[u8; SHARED_SECRET_SIZE], MlKemError> {
-    crypto_kem_dec::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(
-        &ML_KEM_1024,
-        private_key,
-        ciphertext,
-    )
+    crypto_kem_dec::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(&ML_KEM_1024, private_key, ciphertext)
 }
 
 #[inline]
@@ -166,8 +146,14 @@ fn crypto_kem_keypair_derand<const K: usize, const SECRET_KEY_SIZE: usize, const
     let mut public_key = [0u8; PUBLIC_KEY_SIZE];
     let mut secret_key = [0u8; SECRET_KEY_SIZE];
 
-    indcpa_keypair_derand::<K>(params, &mut public_key, &mut secret_key[..indcpa_secret_key_bytes::<K>()], &coins[..32]);
-    secret_key[indcpa_secret_key_bytes::<K>()..indcpa_secret_key_bytes::<K>() + PUBLIC_KEY_SIZE].copy_from_slice(&public_key);
+    indcpa_keypair_derand::<K>(
+        params,
+        &mut public_key,
+        &mut secret_key[..indcpa_secret_key_bytes::<K>()],
+        &coins[..32],
+    );
+    secret_key[indcpa_secret_key_bytes::<K>()..indcpa_secret_key_bytes::<K>() + PUBLIC_KEY_SIZE]
+        .copy_from_slice(&public_key);
 
     let public_key_hash = hash_h(&public_key);
     secret_key[SECRET_KEY_SIZE - 64..SECRET_KEY_SIZE - 32].copy_from_slice(&public_key_hash);
@@ -214,7 +200,12 @@ fn crypto_kem_dec<const K: usize, const SECRET_KEY_SIZE: usize, const CIPHERTEXT
     let mut kr = [0u8; 64];
     let mut cmp = [0u8; CIPHERTEXT_SIZE];
 
-    indcpa_dec::<K>(params, &mut message_and_hash[..32], ciphertext, &secret_key[..public_key_offset]);
+    indcpa_dec::<K>(
+        params,
+        &mut message_and_hash[..32],
+        ciphertext,
+        &secret_key[..public_key_offset],
+    );
     message_and_hash[32..].copy_from_slice(&secret_key[SECRET_KEY_SIZE - 64..SECRET_KEY_SIZE - 32]);
     kr.copy_from_slice(&hash_g(&message_and_hash));
 
@@ -317,12 +308,7 @@ fn indcpa_enc<const K: usize>(
 }
 
 #[inline]
-fn indcpa_dec<const K: usize>(
-    params: &MlKemParams<K>,
-    message: &mut [u8],
-    ciphertext: &[u8],
-    secret_key: &[u8],
-) {
+fn indcpa_dec<const K: usize>(params: &MlKemParams<K>, message: &mut [u8], ciphertext: &[u8], secret_key: &[u8]) {
     debug_assert_eq!(message.len(), 32);
     debug_assert_eq!(ciphertext.len(), ciphertext_bytes(params));
     debug_assert_eq!(secret_key.len(), indcpa_secret_key_bytes::<K>());
@@ -387,7 +373,11 @@ fn gen_matrix<const K: usize>(seed: &[u8; 32], transpose: bool) -> [PolyVec<K>; 
     let mut matrix = core::array::from_fn(|_| PolyVec::<K>::default());
     for i in 0..K {
         for j in 0..K {
-            let (x, y) = if transpose { (i as u8, j as u8) } else { (j as u8, i as u8) };
+            let (x, y) = if transpose {
+                (i as u8, j as u8)
+            } else {
+                (j as u8, i as u8)
+            };
             matrix[i].vec[j] = uniform_poly(seed, x, y);
         }
     }
@@ -925,10 +915,7 @@ fn cmov(out: &mut [u8; 32], value: &[u8; 32], cond: bool) {
 
 #[inline]
 fn load32(input: &[u8]) -> u32 {
-    (input[0] as u32)
-        | ((input[1] as u32) << 8)
-        | ((input[2] as u32) << 16)
-        | ((input[3] as u32) << 24)
+    (input[0] as u32) | ((input[1] as u32) << 8) | ((input[2] as u32) << 16) | ((input[3] as u32) << 24)
 }
 
 #[inline]
@@ -967,8 +954,8 @@ mod tests {
 
     #[test]
     fn ml_kem_768_round_trip() {
-        let (private_key, public_key) = ml_kem_768_generate_keypair().unwrap();
-        let (ciphertext, encapsulated_secret) = ml_kem_768_encapsulate(&public_key).unwrap();
+        let (private_key, public_key) = ml_kem_768_generate_keypair();
+        let (ciphertext, encapsulated_secret) = ml_kem_768_encapsulate(&public_key);
         let decapsulated_secret = ml_kem_768_decapsulate(&private_key, &ciphertext).unwrap();
 
         assert_eq!(encapsulated_secret, decapsulated_secret);
@@ -976,8 +963,8 @@ mod tests {
 
     #[test]
     fn ml_kem_1024_round_trip() {
-        let (private_key, public_key) = ml_kem_1024_generate_keypair().unwrap();
-        let (ciphertext, encapsulated_secret) = ml_kem_1024_encapsulate(&public_key).unwrap();
+        let (private_key, public_key) = ml_kem_1024_generate_keypair();
+        let (ciphertext, encapsulated_secret) = ml_kem_1024_encapsulate(&public_key);
         let decapsulated_secret = ml_kem_1024_decapsulate(&private_key, &ciphertext).unwrap();
 
         assert_eq!(encapsulated_secret, decapsulated_secret);
@@ -985,8 +972,8 @@ mod tests {
 
     #[test]
     fn ml_kem_768_decapsulation_rejects_tampered_ciphertext() {
-        let (private_key, public_key) = ml_kem_768_generate_keypair().unwrap();
-        let (mut ciphertext, encapsulated_secret) = ml_kem_768_encapsulate(&public_key).unwrap();
+        let (private_key, public_key) = ml_kem_768_generate_keypair();
+        let (mut ciphertext, encapsulated_secret) = ml_kem_768_encapsulate(&public_key);
 
         ciphertext[0] ^= 0x80;
 
@@ -999,18 +986,36 @@ mod tests {
     fn ml_kem_768_deterministic_derand_vectors_are_stable() {
         let key_coins = [7u8; 64];
         let enc_coins = [9u8; 32];
-        let (secret_key, public_key) =
-            crypto_kem_keypair_derand::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_PUBLIC_KEY_SIZE>(&ML_KEM_768, &key_coins);
-        let (ciphertext, shared_secret) =
-            crypto_kem_enc_derand::<3, ML_KEM_768_PUBLIC_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(&ML_KEM_768, &public_key, &enc_coins);
-        let decapsulated =
-            crypto_kem_dec::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(&ML_KEM_768, &secret_key, &ciphertext)
-                .unwrap();
+        let (secret_key, public_key) = crypto_kem_keypair_derand::<
+            3,
+            ML_KEM_768_SECRET_KEY_SIZE,
+            ML_KEM_768_PUBLIC_KEY_SIZE,
+        >(&ML_KEM_768, &key_coins);
+        let (ciphertext, shared_secret) = crypto_kem_enc_derand::<
+            3,
+            ML_KEM_768_PUBLIC_KEY_SIZE,
+            ML_KEM_768_CIPHERTEXT_SIZE,
+        >(&ML_KEM_768, &public_key, &enc_coins);
+        let decapsulated = crypto_kem_dec::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(
+            &ML_KEM_768,
+            &secret_key,
+            &ciphertext,
+        )
+        .unwrap();
 
         assert_eq!(shared_secret, decapsulated);
-        assert_eq!(hex::encode(&public_key[..32]), "925a2700ad064ff778b4da4cf51457a48224a52751250a8ee10b251c818bafca");
-        assert_eq!(hex::encode(&ciphertext[..32]), "766c326c3483444c5b6d917cdddc3c07fbf935295c8f17c92a187a80dc4d15f2");
-        assert_eq!(hex::encode(shared_secret), "afcf18dfd6b710a09b5cf591d0eb8229d83aa10904934a3ca60a52da5ff36b96");
+        assert_eq!(
+            hex::encode(&public_key[..32]),
+            "925a2700ad064ff778b4da4cf51457a48224a52751250a8ee10b251c818bafca"
+        );
+        assert_eq!(
+            hex::encode(&ciphertext[..32]),
+            "766c326c3483444c5b6d917cdddc3c07fbf935295c8f17c92a187a80dc4d15f2"
+        );
+        assert_eq!(
+            hex::encode(shared_secret),
+            "afcf18dfd6b710a09b5cf591d0eb8229d83aa10904934a3ca60a52da5ff36b96"
+        );
     }
 
     // CCTV accumulated vectors: https://github.com/C2SP/CCTV/tree/main/ML-KEM
@@ -1027,8 +1032,7 @@ mod tests {
 
     #[test]
     fn ml_kem_768_cctv_accumulated_10k() {
-        use crate::Xof;
-        use crate::sha3::Shake128;
+        use crate::{Xof, sha3::Shake128};
 
         let mut rng = Shake128::new();
         // absorb nothing; first squeeze will pad and permute
@@ -1052,20 +1056,24 @@ mod tests {
             coins[32..].copy_from_slice(&z);
 
             let (dk, ek) = crypto_kem_keypair_derand::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_PUBLIC_KEY_SIZE>(
-                &ML_KEM_768, &coins,
+                &ML_KEM_768,
+                &coins,
             );
             let (ct, k_encaps) = crypto_kem_enc_derand::<3, ML_KEM_768_PUBLIC_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(
-                &ML_KEM_768, &ek, &m,
+                &ML_KEM_768,
+                &ek,
+                &m,
             );
 
-            let k_decaps = crypto_kem_dec::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(
-                &ML_KEM_768, &dk, &ct,
-            )
-            .unwrap();
+            let k_decaps =
+                crypto_kem_dec::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(&ML_KEM_768, &dk, &ct)
+                    .unwrap();
             assert_eq!(k_encaps, k_decaps);
 
             let k_decaps_random = crypto_kem_dec::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(
-                &ML_KEM_768, &dk, &ct_random,
+                &ML_KEM_768,
+                &dk,
+                &ct_random,
             )
             .unwrap();
 
@@ -1087,8 +1095,7 @@ mod tests {
 
     #[test]
     fn ml_kem_1024_cctv_accumulated_10k() {
-        use crate::Xof;
-        use crate::sha3::Shake128;
+        use crate::{Xof, sha3::Shake128};
 
         let mut rng = Shake128::new();
         rng.absorb(&[]);
@@ -1111,20 +1118,24 @@ mod tests {
             coins[32..].copy_from_slice(&z);
 
             let (dk, ek) = crypto_kem_keypair_derand::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_PUBLIC_KEY_SIZE>(
-                &ML_KEM_1024, &coins,
+                &ML_KEM_1024,
+                &coins,
             );
             let (ct, k_encaps) = crypto_kem_enc_derand::<4, ML_KEM_1024_PUBLIC_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(
-                &ML_KEM_1024, &ek, &m,
+                &ML_KEM_1024,
+                &ek,
+                &m,
             );
 
-            let k_decaps = crypto_kem_dec::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(
-                &ML_KEM_1024, &dk, &ct,
-            )
-            .unwrap();
+            let k_decaps =
+                crypto_kem_dec::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(&ML_KEM_1024, &dk, &ct)
+                    .unwrap();
             assert_eq!(k_encaps, k_decaps);
 
             let k_decaps_random = crypto_kem_dec::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(
-                &ML_KEM_1024, &dk, &ct_random,
+                &ML_KEM_1024,
+                &dk,
+                &ct_random,
             )
             .unwrap();
 
@@ -1148,17 +1159,35 @@ mod tests {
     fn ml_kem_1024_deterministic_derand_vectors_are_stable() {
         let key_coins = [3u8; 64];
         let enc_coins = [5u8; 32];
-        let (secret_key, public_key) =
-            crypto_kem_keypair_derand::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_PUBLIC_KEY_SIZE>(&ML_KEM_1024, &key_coins);
-        let (ciphertext, shared_secret) =
-            crypto_kem_enc_derand::<4, ML_KEM_1024_PUBLIC_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(&ML_KEM_1024, &public_key, &enc_coins);
-        let decapsulated =
-            crypto_kem_dec::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(&ML_KEM_1024, &secret_key, &ciphertext)
-                .unwrap();
+        let (secret_key, public_key) = crypto_kem_keypair_derand::<
+            4,
+            ML_KEM_1024_SECRET_KEY_SIZE,
+            ML_KEM_1024_PUBLIC_KEY_SIZE,
+        >(&ML_KEM_1024, &key_coins);
+        let (ciphertext, shared_secret) = crypto_kem_enc_derand::<
+            4,
+            ML_KEM_1024_PUBLIC_KEY_SIZE,
+            ML_KEM_1024_CIPHERTEXT_SIZE,
+        >(&ML_KEM_1024, &public_key, &enc_coins);
+        let decapsulated = crypto_kem_dec::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(
+            &ML_KEM_1024,
+            &secret_key,
+            &ciphertext,
+        )
+        .unwrap();
 
         assert_eq!(shared_secret, decapsulated);
-        assert_eq!(hex::encode(&public_key[..32]), "2dd29da8b193397a4336c02382aab3bcfbac25f0cd71c888af379e1e75149a79");
-        assert_eq!(hex::encode(&ciphertext[..32]), "5f12f173ef59a45f910d3a225913f3297b2277636a72401a273648015cccf079");
-        assert_eq!(hex::encode(shared_secret), "8bf157178aa556b55f95686ba9b5afe13a6b75c848f1ddd9a334d50287bec24e");
+        assert_eq!(
+            hex::encode(&public_key[..32]),
+            "2dd29da8b193397a4336c02382aab3bcfbac25f0cd71c888af379e1e75149a79"
+        );
+        assert_eq!(
+            hex::encode(&ciphertext[..32]),
+            "5f12f173ef59a45f910d3a225913f3297b2277636a72401a273648015cccf079"
+        );
+        assert_eq!(
+            hex::encode(shared_secret),
+            "8bf157178aa556b55f95686ba9b5afe13a6b75c848f1ddd9a334d50287bec24e"
+        );
     }
 }
