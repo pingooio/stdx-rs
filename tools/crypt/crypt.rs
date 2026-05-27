@@ -1,22 +1,22 @@
 use std::{env, fs, process};
 
 use crypto::{Aes256Gcm, Xof, sha3::Shake256};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 const KEY_LENGTH: usize = 32;
+const NONCE_SEED_LENGTH: usize = 32;
 
 const KDF_INFO_CHACHA20_BLAKE3_KEY: &str = "crypt ChaCha20-BLAKE3 key";
-const KDF_INFO_AES_KEY: &str = "crypt AES-256-GCM key";
-
-const NONCE_SEED_LENGTH: usize = 32;
-const AES_NONCE_LENGTH: usize = 12;
-const CHACHA20_BLAKE3_NONCE_LENGTH: usize = 24;
 const KDF_INFO_CHACHA20_BLAKE3_NONCE: &str = "crypt ChaCha20-BLAKE3 nonce";
+const CHACHA20_BLAKE3_NONCE_LENGTH: usize = 24;
+
+const KDF_INFO_AES_KEY: &str = "crypt AES-256-GCM key";
 const KDF_INFO_AES_NONCE: &str = "crypt AES-256-GCM nonce";
+const AES_NONCE_LENGTH: usize = 12;
 
 const ARGON2_SALT_LENGTH: usize = 32;
 const ARGON2_ITERATIONS: u32 = 8;
-const ARGON2_MEMORY_KB: u32 = 1024 * 1024; // 1 GiB
+const ARGON2_MEMORY_KB: u32 =  1024 * 1024; // 1 GiB
 const ARGON2_LANES: u32 = 4;
 const KDF_INFO_ARGON2_SALT: &str = "crypt Argon2 salt";
 
@@ -46,7 +46,6 @@ fn main() {
 
     let fn_ptr: fn(&[u8], &[u8]) -> Result<Vec<u8>, String> = if encrypt_mode { encrypt } else { decrypt };
     let result = process_file(&password, file_in, file_out, fn_ptr);
-
     password.zeroize();
 
     if let Err(e) = result {
@@ -65,13 +64,11 @@ fn process_file(
         return Err("input file can't be the same as output file".to_string());
     }
 
-    let mut data_in = fs::read(file_in)
-        .map_err(|e| format!("error reading [{file_in}]: {e}"))?;
+    let mut data_in = fs::read(file_in).map_err(|e| format!("error reading [{file_in}]: {e}"))?;
 
     let mut data_out = f(password, &data_in)?;
 
-    let write_result = fs::write(file_out, &data_out)
-        .map_err(|e| format!("error writing to [{file_out}]: {e}"));
+    let write_result = fs::write(file_out, &data_out).map_err(|e| format!("error writing to [{file_out}]: {e}"));
 
     data_in.zeroize();
     data_out.zeroize();
@@ -87,31 +84,24 @@ fn process_file(
 fn encrypt(password: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, String> {
     let nonce_seed: [u8; NONCE_SEED_LENGTH] = rand::random();
 
-    let chacha20_nonce_vec = derive_key(&nonce_seed, KDF_INFO_CHACHA20_BLAKE3_NONCE, CHACHA20_BLAKE3_NONCE_LENGTH);
-    let aes_nonce_vec = derive_key(&nonce_seed, KDF_INFO_AES_NONCE, AES_NONCE_LENGTH);
-    let argon2_salt = derive_key(&nonce_seed, KDF_INFO_ARGON2_SALT, ARGON2_SALT_LENGTH);
+    let chacha20_nonce = derive_key::<CHACHA20_BLAKE3_NONCE_LENGTH>(&nonce_seed, KDF_INFO_CHACHA20_BLAKE3_NONCE);
+    let aes_nonce = derive_key::<AES_NONCE_LENGTH>(&nonce_seed, KDF_INFO_AES_NONCE);
+    let argon2_salt = derive_key::<ARGON2_SALT_LENGTH>(&nonce_seed, KDF_INFO_ARGON2_SALT);
 
-    let mut root_key = argon2_derive(password, &argon2_salt)?;
+    let root_key = argon2_derive_key(password, argon2_salt.as_slice())?;
 
-    let mut aes_key = derive_key(&root_key, KDF_INFO_AES_KEY, KEY_LENGTH);
-    let mut chacha20_key_vec = derive_key(&root_key, KDF_INFO_CHACHA20_BLAKE3_KEY, KEY_LENGTH);
-    root_key.zeroize();
+    let aes_key = derive_key::<KEY_LENGTH>(root_key.as_slice(), KDF_INFO_AES_KEY);
+    let chacha20_key = derive_key::<KEY_LENGTH>(root_key.as_slice(), KDF_INFO_CHACHA20_BLAKE3_KEY);
 
     // Encrypt inner layer with AES-256-GCM
-    let aes_key_arr: &[u8; 32] = aes_key.as_slice().try_into().unwrap();
-    let aes_nonce_arr: &[u8; 12] = aes_nonce_vec.as_slice().try_into().unwrap();
-    let aes = Aes256Gcm::new(aes_key_arr);
+    let aes = Aes256Gcm::new(&aes_key);
     let mut aes_buf = plaintext.to_vec();
-    let tag = aes.encrypt_in_place_detached(&mut aes_buf, aes_nonce_arr, &[]);
+    let tag = aes.encrypt_in_place_detached(&mut aes_buf, &aes_nonce, &[]);
     aes_buf.extend_from_slice(&tag);
-    aes_key.zeroize();
 
     // Encrypt outer layer with ChaCha20-BLAKE3
-    let chacha20_key_arr: [u8; 32] = chacha20_key_vec.as_slice().try_into().unwrap();
-    let chacha20_nonce_arr: [u8; 24] = chacha20_nonce_vec.as_slice().try_into().unwrap();
-    let cipher = chacha20_blake3::ChaCha20Blake3::new(chacha20_key_arr);
-    let outer_ciphertext = cipher.encrypt(&chacha20_nonce_arr, &aes_buf, &[]);
-    chacha20_key_vec.zeroize();
+    let cipher = chacha20_blake3::ChaCha20Blake3::new(*chacha20_key);
+    let outer_ciphertext = cipher.encrypt(&chacha20_nonce, &aes_buf, &[]);
 
     let mut result = Vec::with_capacity(NONCE_SEED_LENGTH + outer_ciphertext.len());
     result.extend_from_slice(&nonce_seed);
@@ -128,68 +118,58 @@ fn decrypt(password: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, String> {
     let nonce_seed = &ciphertext[..NONCE_SEED_LENGTH];
     let ciphertext = &ciphertext[NONCE_SEED_LENGTH..];
 
-    let chacha20_nonce_vec = derive_key(nonce_seed, KDF_INFO_CHACHA20_BLAKE3_NONCE, CHACHA20_BLAKE3_NONCE_LENGTH);
-    let aes_nonce_vec = derive_key(nonce_seed, KDF_INFO_AES_NONCE, AES_NONCE_LENGTH);
-    let argon2_salt = derive_key(nonce_seed, KDF_INFO_ARGON2_SALT, ARGON2_SALT_LENGTH);
+    let chacha20_nonce = derive_key::<CHACHA20_BLAKE3_NONCE_LENGTH>(&nonce_seed, KDF_INFO_CHACHA20_BLAKE3_NONCE);
+    let aes_nonce = derive_key::<AES_NONCE_LENGTH>(&nonce_seed, KDF_INFO_AES_NONCE);
+    let argon2_salt = derive_key::<ARGON2_SALT_LENGTH>(&nonce_seed, KDF_INFO_ARGON2_SALT);
 
-    let mut root_key = argon2_derive(password, &argon2_salt)?;
+    let root_key = argon2_derive_key(password, argon2_salt.as_slice())?;
 
-    let mut aes_key = derive_key(&root_key, KDF_INFO_AES_KEY, KEY_LENGTH);
-    let mut chacha20_key_vec = derive_key(&root_key, KDF_INFO_CHACHA20_BLAKE3_KEY, KEY_LENGTH);
-    root_key.zeroize();
+    let aes_key = derive_key::<KEY_LENGTH>(root_key.as_slice(), KDF_INFO_AES_KEY);
+    let chacha20_key = derive_key::<KEY_LENGTH>(root_key.as_slice(), KDF_INFO_CHACHA20_BLAKE3_KEY);
 
     // Decrypt outer layer with ChaCha20-BLAKE3
-    let chacha20_key_arr: [u8; 32] = chacha20_key_vec.as_slice().try_into().unwrap();
-    let chacha20_nonce_arr: [u8; 24] = chacha20_nonce_vec.as_slice().try_into().unwrap();
-    let cipher = chacha20_blake3::ChaCha20Blake3::new(chacha20_key_arr);
+    let cipher = chacha20_blake3::ChaCha20Blake3::new(*chacha20_key);
     let mut aes_ciphertext = cipher
-        .decrypt(&chacha20_nonce_arr, ciphertext, &[])
+        .decrypt(&chacha20_nonce, ciphertext, &[])
         .map_err(|e| format!("error decrypting data with ChaCha20-BLAKE3: {e:?}"))?;
-    chacha20_key_vec.zeroize();
 
     // Decrypt inner layer with AES-256-GCM
     if aes_ciphertext.len() < Aes256Gcm::TAG_SIZE {
         return Err("ciphertext is too short for AES-256-GCM tag".to_string());
     }
-    let aes_key_arr: &[u8; 32] = aes_key.as_slice().try_into().unwrap();
-    let aes_nonce_arr: &[u8; 12] = aes_nonce_vec.as_slice().try_into().unwrap();
-    let aes = Aes256Gcm::new(aes_key_arr);
+
+    let aes = Aes256Gcm::new(&aes_key);
     let tag_pos = aes_ciphertext.len() - Aes256Gcm::TAG_SIZE;
     let tag: [u8; 16] = aes_ciphertext[tag_pos..].try_into().unwrap();
     let mut plaintext_buf = aes_ciphertext[..tag_pos].to_vec();
-    aes.decrypt_in_place_detached(&mut plaintext_buf, &tag, aes_nonce_arr, &[])
+    aes.decrypt_in_place_detached(&mut plaintext_buf, &tag, &aes_nonce, &[])
         .map_err(|_| "error decrypting data with AES-256-GCM: authentication failed".to_string())?;
-    aes_key.zeroize();
     aes_ciphertext.zeroize();
 
     Ok(plaintext_buf)
 }
 
-// KDF using SHAKE256:
-//   absorb: root_key || len(root_key) as i64 LE || info || len(info) as i64 LE || length as i64 LE
-//   squeeze: `length` bytes
-//
-// Matches the Go implementation which uses sha3.NewSHAKE256 with binary.LittleEndian int64 writes.
-fn derive_key(root_key: &[u8], info: &str, length: usize) -> Vec<u8> {
-    let mut out = vec![0u8; length];
+fn derive_key<const N: usize>(root_key: &[u8], info: &str) -> Zeroizing<[u8; N]> {
+    let mut out = Zeroizing::new([0u8; N]);
+
     let mut shake = Shake256::new();
     shake.absorb(root_key);
-    shake.absorb(&(root_key.len() as i64).to_le_bytes());
+    shake.absorb(&(root_key.len() as u64).to_le_bytes());
     shake.absorb(info.as_bytes());
-    shake.absorb(&(info.len() as i64).to_le_bytes());
-    shake.absorb(&(length as i64).to_le_bytes());
-    shake.squeeze(&mut out);
-    out
+    shake.absorb(&(info.len() as u64).to_le_bytes());
+    shake.absorb(&(N as u64).to_le_bytes());
+    shake.squeeze(out.as_mut_slice());
+
+    return out;
 }
 
-fn argon2_derive(password: &[u8], salt: &[u8]) -> Result<Vec<u8>, String> {
+fn argon2_derive_key(password: &[u8], salt: &[u8]) -> Result<Zeroizing<[u8; KEY_LENGTH]>, String> {
     let params = argon2::Params::new(ARGON2_MEMORY_KB, ARGON2_ITERATIONS, ARGON2_LANES, Some(KEY_LENGTH))
         .map_err(|e| format!("error creating argon2 params: {e}"))?;
-    let argon2_instance =
-        argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
-    let mut key = vec![0u8; KEY_LENGTH];
+    let argon2_instance = argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
+    let mut key = Zeroizing::new([0u8; KEY_LENGTH]);
     argon2_instance
-        .hash_password_into(password, salt, &mut key)
+        .hash_password_into(password, salt, key.as_mut_slice())
         .map_err(|e| format!("error deriving key with argon2: {e}"))?;
     Ok(key)
 }
@@ -236,10 +216,22 @@ mod tests {
 
     fn test_cases() -> Vec<TestCase> {
         vec![
-            TestCase { password: "", data: "" },
-            TestCase { password: "password", data: "" },
-            TestCase { password: "", data: "data" },
-            TestCase { password: "password", data: "data" },
+            TestCase {
+                password: "",
+                data: "",
+            },
+            TestCase {
+                password: "password",
+                data: "",
+            },
+            TestCase {
+                password: "",
+                data: "data",
+            },
+            TestCase {
+                password: "password",
+                data: "data",
+            },
             TestCase {
                 password: "password",
                 // echo -n 'data' | shasum -a 512, repeated
@@ -254,8 +246,7 @@ mod tests {
             let password = test.password.as_bytes();
             let data = test.data.as_bytes();
 
-            let ciphertext = encrypt(password, data)
-                .unwrap_or_else(|e| panic!("error encrypting data [{}]: {}", i, e));
+            let ciphertext = encrypt(password, data).unwrap_or_else(|e| panic!("error encrypting data [{}]: {}", i, e));
 
             // Ciphertext must not equal plaintext
             assert!(
@@ -264,8 +255,8 @@ mod tests {
                 i
             );
 
-            let plaintext = decrypt(password, &ciphertext)
-                .unwrap_or_else(|e| panic!("error decrypting data [{}]: {}", i, e));
+            let plaintext =
+                decrypt(password, &ciphertext).unwrap_or_else(|e| panic!("error decrypting data [{}]: {}", i, e));
 
             // Wrong password must fail
             let mut wrong_password = test.password.to_string();

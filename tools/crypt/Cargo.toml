@@ -6,7 +6,7 @@ authors = ["Sylvain Kerkour"]
 
 [[bin]]
 name = "crypt"
-path = "src/main.rs"
+path = "crypt.rs"
 
 [dependencies]
 crypto = { path = "../../crypto" }
