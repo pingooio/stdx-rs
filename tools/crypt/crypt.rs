@@ -16,7 +16,7 @@ const AES_NONCE_LENGTH: usize = 12;
 
 const ARGON2_SALT_LENGTH: usize = 32;
 const ARGON2_ITERATIONS: u32 = 8;
-const ARGON2_MEMORY_KB: u32 =  1024 * 1024; // 1 GiB
+const ARGON2_MEMORY_KB: u32 = 1024 * 1024; // 1 GiB
 const ARGON2_LANES: u32 = 4;
 const KDF_INFO_ARGON2_SALT: &str = "crypt Argon2 salt";
 
@@ -111,7 +111,7 @@ fn encrypt(password: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 fn decrypt(password: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, String> {
-    if ciphertext.len() < NONCE_SEED_LENGTH {
+    if ciphertext.len() < (NONCE_SEED_LENGTH + chacha20_blake3::TAG_SIZE) {
         return Err("ciphertext is too short".to_string());
     }
 
@@ -129,7 +129,7 @@ fn decrypt(password: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, String> {
 
     // Decrypt outer layer with ChaCha20-BLAKE3
     let cipher = chacha20_blake3::ChaCha20Blake3::new(*chacha20_key);
-    let mut aes_ciphertext = cipher
+    let aes_ciphertext = cipher
         .decrypt(&chacha20_nonce, ciphertext, &[])
         .map_err(|e| format!("error decrypting data with ChaCha20-BLAKE3: {e:?}"))?;
 
@@ -144,7 +144,6 @@ fn decrypt(password: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, String> {
     let mut plaintext_buf = aes_ciphertext[..tag_pos].to_vec();
     aes.decrypt_in_place_detached(&mut plaintext_buf, &tag, &aes_nonce, &[])
         .map_err(|_| "error decrypting data with AES-256-GCM: authentication failed".to_string())?;
-    aes_ciphertext.zeroize();
 
     Ok(plaintext_buf)
 }

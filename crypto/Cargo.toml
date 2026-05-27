@@ -18,10 +18,8 @@ zeroize = ["dep:zeroize"]
 zeroize = { workspace = true, optional = true }
 thiserror = { path = "../thiserror" }
 big_number = { path = "../big_number" }
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 constant_time_eq = { path = "../constant_time_eq" }
-getrandom = "0.3"
+rand = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

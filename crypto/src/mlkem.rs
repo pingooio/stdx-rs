@@ -1,5 +1,4 @@
 use constant_time_eq::constant_time_eq;
-use getrandom::fill as random_fill;
 
 use crate::{
     Xof,
@@ -94,7 +93,7 @@ impl<const K: usize> Default for PolyVec<K> {
 #[inline]
 pub fn ml_kem_768_generate_keypair(
 ) -> Result<([u8; ML_KEM_768_SECRET_KEY_SIZE], [u8; ML_KEM_768_PUBLIC_KEY_SIZE]), MlKemError> {
-    let coins = random_array::<64>()?;
+    let coins: [u8; 64] = rand::random();
     Ok(crypto_kem_keypair_derand::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_PUBLIC_KEY_SIZE>(
         &ML_KEM_768,
         &coins,
@@ -105,7 +104,7 @@ pub fn ml_kem_768_generate_keypair(
 pub fn ml_kem_768_encapsulate(
     public_key: &[u8; ML_KEM_768_PUBLIC_KEY_SIZE],
 ) -> Result<([u8; ML_KEM_768_CIPHERTEXT_SIZE], [u8; SHARED_SECRET_SIZE]), MlKemError> {
-    let coins = random_array::<32>()?;
+    let coins: [u8; 32] = rand::random();
     Ok(crypto_kem_enc_derand::<3, ML_KEM_768_PUBLIC_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(
         &ML_KEM_768,
         public_key,
@@ -128,7 +127,7 @@ pub fn ml_kem_768_decapsulate(
 #[inline]
 pub fn ml_kem_1024_generate_keypair(
 ) -> Result<([u8; ML_KEM_1024_SECRET_KEY_SIZE], [u8; ML_KEM_1024_PUBLIC_KEY_SIZE]), MlKemError> {
-    let coins = random_array::<64>()?;
+    let coins: [u8; 64] = rand::random();
     Ok(crypto_kem_keypair_derand::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_PUBLIC_KEY_SIZE>(
         &ML_KEM_1024,
         &coins,
@@ -139,7 +138,7 @@ pub fn ml_kem_1024_generate_keypair(
 pub fn ml_kem_1024_encapsulate(
     public_key: &[u8; ML_KEM_1024_PUBLIC_KEY_SIZE],
 ) -> Result<([u8; ML_KEM_1024_CIPHERTEXT_SIZE], [u8; SHARED_SECRET_SIZE]), MlKemError> {
-    let coins = random_array::<32>()?;
+    let coins: [u8; 32] = rand::random();
     Ok(crypto_kem_enc_derand::<4, ML_KEM_1024_PUBLIC_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(
         &ML_KEM_1024,
         public_key,
@@ -922,13 +921,6 @@ fn cmov(out: &mut [u8; 32], value: &[u8; 32], cond: bool) {
     for i in 0..32 {
         out[i] ^= mask & (out[i] ^ value[i]);
     }
-}
-
-#[inline]
-fn random_array<const N: usize>() -> Result<[u8; N], MlKemError> {
-    let mut out = [0u8; N];
-    random_fill(&mut out).map_err(|_| MlKemError::Unspecified)?;
-    Ok(out)
 }
 
 #[inline]

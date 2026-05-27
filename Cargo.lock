@@ -699,8 +699,8 @@ dependencies = [
  "big_number",
  "constant_time_eq 0.3.0",
  "criterion",
- "getrandom 0.3.4",
  "hex",
+ "rand",
  "thiserror 1.0.61",
  "zeroize",
 ]
