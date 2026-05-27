@@ -224,3 +224,68 @@ fn print_help_and_exit(exit_code: i32) -> ! {
     eprintln!("usage: crypt <encrypt|decrypt> <in> <out>");
     process::exit(exit_code);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestCase {
+        password: &'static str,
+        data: &'static str,
+    }
+
+    fn test_cases() -> Vec<TestCase> {
+        vec![
+            TestCase { password: "", data: "" },
+            TestCase { password: "password", data: "" },
+            TestCase { password: "", data: "data" },
+            TestCase { password: "password", data: "data" },
+            TestCase {
+                password: "password",
+                // echo -n 'data' | shasum -a 512, repeated
+                data: "77c7ce9a5d86bb386d443bb96390faa120633158699c8844c30b13ab0bf92760b7e4416aea397db91b4ac0e5dd56b8ef7e4b066162ab1fdc088319ce6defc87677c7ce9a5d86bb386d443bb96390faa120633158699c8844c30b13ab0bf92760b7e4416aea397db91b4ac0e5dd56b8ef7e4b066162ab1fdc088319ce6defc87677c7ce9a5d86bb386d443bb96390faa120633158699c8844c30b13ab0bf92760b7e4416aea397db91b4ac0e5dd56b8ef7e4b066162ab1fdc088319ce6defc876",
+            },
+        ]
+    }
+
+    #[test]
+    fn test_encrypt_decrypt() {
+        for (i, test) in test_cases().iter().enumerate() {
+            let password = test.password.as_bytes();
+            let data = test.data.as_bytes();
+
+            let ciphertext = encrypt(password, data)
+                .unwrap_or_else(|e| panic!("error encrypting data [{}]: {}", i, e));
+
+            // Ciphertext must not equal plaintext
+            assert!(
+                ciphertext != data && (data.is_empty() || &ciphertext[..data.len()] != data),
+                "ciphertext == data for {}",
+                i
+            );
+
+            let plaintext = decrypt(password, &ciphertext)
+                .unwrap_or_else(|e| panic!("error decrypting data [{}]: {}", i, e));
+
+            // Wrong password must fail
+            let mut wrong_password = test.password.to_string();
+            wrong_password.push('1');
+            let ciphertext2 = ciphertext.clone();
+            let wrong_result = decrypt(wrong_password.as_bytes(), &ciphertext2);
+            assert!(
+                wrong_result.is_err(),
+                "expected error when using invalid password decrypting data for [{}]",
+                i
+            );
+
+            assert_eq!(
+                plaintext,
+                data,
+                "data ({}) != decrypted plaintext ({}) for {}",
+                test.data,
+                String::from_utf8_lossy(&plaintext),
+                i
+            );
+        }
+    }
+}
