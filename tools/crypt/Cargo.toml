@@ -1,0 +1,17 @@
+[package]
+name = "crypt"
+version = "0.1.0"
+edition = "2024"
+authors = ["Sylvain Kerkour"]
+
+[[bin]]
+name = "crypt"
+path = "src/main.rs"
+
+[dependencies]
+crypto = { path = "../../crypto" }
+term = { path = "../../term" }
+argon2 = "0.5"
+chacha20-blake3 = { git = "https://github.com/skerkour/chacha20-blake3", branch = "main" }
+rand = { workspace = true }
+zeroize = { workspace = true }
