@@ -291,10 +291,11 @@ fn indcpa_enc<const K: usize>(
     for (index, poly) in sp.vec.iter_mut().enumerate() {
         *poly = poly_getnoise(coins, index as u8, params.eta1);
     }
+    let ep_nonce_offset = sp.vec.len();
     for (index, poly) in ep.vec.iter_mut().enumerate() {
-        *poly = poly_getnoise(coins, (K + index) as u8, 2);
+        *poly = poly_getnoise(coins, (ep_nonce_offset + index) as u8, 2);
     }
-    let epp = poly_getnoise(coins, (2 * K) as u8, 2);
+    let epp = poly_getnoise(coins, (sp.vec.len() + ep.vec.len()) as u8, 2);
 
     polyvec_ntt(&mut sp);
 
