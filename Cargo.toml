@@ -19,6 +19,7 @@ members = [
     "async-trait",
     "base32",
     "base64",
+    "big_number",
     "cfg-if",
     "constant_time_eq",
     "crc32fast",
