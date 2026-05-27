@@ -696,9 +696,10 @@ dependencies = [
 name = "crypto"
 version = "0.1.0"
 dependencies = [
- "aws-lc-rs",
  "big_number",
+ "constant_time_eq 0.3.0",
  "criterion",
+ "getrandom 0.3.4",
  "hex",
  "thiserror 1.0.61",
  "zeroize",

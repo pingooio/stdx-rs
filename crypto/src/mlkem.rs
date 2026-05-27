@@ -2,7 +2,7 @@ use constant_time_eq::constant_time_eq;
 use getrandom::fill as random_fill;
 
 use crate::{
-    Hasher, Xof,
+    Xof,
     sha3::{Sha3_256, Sha3_512, Shake128, Shake256},
 };
 
@@ -63,7 +63,7 @@ struct MlKemParams<const K: usize> {
     polyveccompressedbytes: usize,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
 struct Poly {
     coeffs: [i16; N],
@@ -76,7 +76,7 @@ impl Default for Poly {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
 struct PolyVec<const K: usize> {
     vec: [Poly; K],
@@ -86,7 +86,7 @@ impl<const K: usize> Default for PolyVec<K> {
     #[inline]
     fn default() -> Self {
         Self {
-            vec: [Poly::default(); K],
+            vec: core::array::from_fn(|_| Poly::default()),
         }
     }
 }
@@ -213,13 +213,13 @@ fn crypto_kem_dec<const K: usize, const SECRET_KEY_SIZE: usize, const CIPHERTEXT
     let public_key = &secret_key[public_key_offset..public_key_offset + public_key_size];
     let mut message_and_hash = [0u8; 64];
     let mut kr = [0u8; 64];
-    let mut cmp = vec![0u8; ciphertext_bytes(params)];
+    let mut cmp = [0u8; CIPHERTEXT_SIZE];
 
     indcpa_dec::<K>(params, &mut message_and_hash[..32], ciphertext, &secret_key[..public_key_offset]);
     message_and_hash[32..].copy_from_slice(&secret_key[SECRET_KEY_SIZE - 64..SECRET_KEY_SIZE - 32]);
     kr.copy_from_slice(&hash_g(&message_and_hash));
 
-    indcpa_enc::<K>(params, &mut cmp, &message_and_hash[..32], slice_to_array::<32>(&public_key[0..public_key.len()]).ok_or(MlKemError::InvalidKey)?, array_ref_32(&kr[32..64]));
+    indcpa_enc::<K>(params, &mut cmp, &message_and_hash[..32], public_key, array_ref_32(&kr[32..64]));
 
     let mut shared_secret = rkprf(array_ref_32(&secret_key[SECRET_KEY_SIZE - 32..]), ciphertext);
     cmov(&mut shared_secret, array_ref_32(&kr[..32]), constant_time_eq(ciphertext, &cmp));
@@ -339,7 +339,8 @@ fn indcpa_dec<const K: usize>(
     polyvec_ntt(&mut b);
     let mut mp = polyvec_basemul_acc_montgomery(&skpv, &b);
     poly_invntt_tomont(&mut mp);
-    poly_sub(&mut mp, &v, &mp);
+    let product = mp.clone();
+    poly_sub(&mut mp, &v, &product);
     poly_reduce(&mut mp);
 
     message.copy_from_slice(&poly_tomsg(&mp));
@@ -389,7 +390,7 @@ fn unpack_ciphertext<const K: usize>(params: &MlKemParams<K>, packed: &[u8]) -> 
 
 #[inline]
 fn gen_matrix<const K: usize>(seed: &[u8; 32], transpose: bool) -> [PolyVec<K>; K] {
-    let mut matrix = [PolyVec::<K>::default(); K];
+    let mut matrix = core::array::from_fn(|_| PolyVec::<K>::default());
     for i in 0..K {
         for j in 0..K {
             let (x, y) = if transpose { (i as u8, j as u8) } else { (j as u8, i as u8) };
@@ -638,11 +639,11 @@ fn poly_compress<const K: usize>(params: &MlKemParams<K>, out: &mut [u8], poly: 
                 for (dst, coeff) in t.iter_mut().zip(chunk.iter()) {
                     let mut u = *coeff as i32;
                     u += (u >> 15) & Q as i32;
-                    let mut d0 = (u as u32) << 4;
+                    let mut d0 = ((u as u32) << 4) as u64;
                     d0 += 1665;
                     d0 *= 80_635;
                     d0 >>= 28;
-                    *dst = (d0 & 0x0f) as u8;
+                    *dst = (d0 as u8) & 0x0f;
                 }
                 out[offset] = t[0] | (t[1] << 4);
                 out[offset + 1] = t[2] | (t[3] << 4);
@@ -658,11 +659,11 @@ fn poly_compress<const K: usize>(params: &MlKemParams<K>, out: &mut [u8], poly: 
                 for (dst, coeff) in t.iter_mut().zip(chunk.iter()) {
                     let mut u = *coeff as i32;
                     u += (u >> 15) & Q as i32;
-                    let mut d0 = (u as u32) << 5;
+                    let mut d0 = ((u as u32) << 5) as u64;
                     d0 += 1664;
                     d0 *= 40_318;
                     d0 >>= 27;
-                    *dst = (d0 & 0x1f) as u8;
+                    *dst = (d0 as u8) & 0x1f;
                 }
                 out[offset] = t[0] | (t[1] << 5);
                 out[offset + 1] = (t[1] >> 3) | (t[2] << 2) | (t[3] << 7);
@@ -898,12 +899,16 @@ fn barrett_reduce(a: i16) -> i16 {
 
 #[inline]
 fn hash_h(data: &[u8]) -> [u8; 32] {
-    Sha3_256::hash(data)
+    let mut hasher = Sha3_256::new();
+    hasher.write(data);
+    hasher.sum()
 }
 
 #[inline]
 fn hash_g(data: &[u8]) -> [u8; 64] {
-    Sha3_512::hash(data)
+    let mut hasher = Sha3_512::new();
+    hasher.write(data);
+    hasher.sum()
 }
 
 #[inline]
@@ -969,11 +974,6 @@ fn array_ref_32(input: &[u8]) -> &[u8; 32] {
     input.try_into().expect("slice length should be 32")
 }
 
-#[inline]
-fn slice_to_array<const N: usize>(input: &[u8]) -> Option<&[u8; N]> {
-    input.try_into().ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1021,9 +1021,9 @@ mod tests {
                 .unwrap();
 
         assert_eq!(shared_secret, decapsulated);
-        assert_eq!(hex::encode(&public_key[..32]), "TODO");
-        assert_eq!(hex::encode(&ciphertext[..32]), "TODO");
-        assert_eq!(hex::encode(shared_secret), "TODO");
+        assert_eq!(hex::encode(&public_key[..32]), "925a2700ad064ff778b4da4cf51457a48224a52751250a8ee10b251c818bafca");
+        assert_eq!(hex::encode(&ciphertext[..32]), "766c326c3483444c5b6d917cdddc3c07fbf935295c8f17c92a187a80dc4d15f2");
+        assert_eq!(hex::encode(shared_secret), "afcf18dfd6b710a09b5cf591d0eb8229d83aa10904934a3ca60a52da5ff36b96");
     }
 
     #[test]
@@ -1039,8 +1039,8 @@ mod tests {
                 .unwrap();
 
         assert_eq!(shared_secret, decapsulated);
-        assert_eq!(hex::encode(&public_key[..32]), "TODO");
-        assert_eq!(hex::encode(&ciphertext[..32]), "TODO");
-        assert_eq!(hex::encode(shared_secret), "TODO");
+        assert_eq!(hex::encode(&public_key[..32]), "2dd29da8b193397a4336c02382aab3bcfbac25f0cd71c888af379e1e75149a79");
+        assert_eq!(hex::encode(&ciphertext[..32]), "5f12f173ef59a45f910d3a225913f3297b2277636a72401a273648015cccf079");
+        assert_eq!(hex::encode(shared_secret), "8bf157178aa556b55f95686ba9b5afe13a6b75c848f1ddd9a334d50287bec24e");
     }
 }
