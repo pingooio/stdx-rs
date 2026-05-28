@@ -314,3 +314,55 @@ mod tests {
         assert_eq!(recovered_pk_x, pk_x);
     }
 }
+
+#[cfg(test)]
+mod diag {
+    use super::*;
+    
+    #[test]
+    fn dump_intermediates() {
+        let seed: [u8; 32] = hex::decode("7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26").unwrap().try_into().unwrap();
+        
+        // Step 1: SHAKE256 expansion
+        let mut expanded = [0u8; 96];
+        Shake256::hash(&seed, &mut expanded);
+        eprintln!("expanded[0:32]  = {}", hex::encode(&expanded[..32]));
+        eprintln!("expanded[32:64] = {}", hex::encode(&expanded[32..64]));
+        eprintln!("expanded[64:96] = {}", hex::encode(&expanded[64..96]));
+        
+        let (sk_m, sk_x, pk_m, pk_x) = expand_decapsulation_key(&seed);
+        eprintln!("pk_m[0:36] = {}", hex::encode(&pk_m[..36]));
+        eprintln!("pk_x = {}", hex::encode(&pk_x));
+        
+        // Compare with spec pk start
+        // Spec says pk starts with: e2236b35a8c24b39b10aa1323a96a919a2ced88400633a7b07131713fc14b2b5b19cfc3d
+        let spec_pk_start = "e2236b35a8c24b39b10aa1323a96a919a2ced88400633a7b07131713fc14b2b5b19cfc3d";
+        eprintln!("\nspec pk_m start: {}", spec_pk_start);
+        eprintln!("our  pk_m start: {}", hex::encode(&pk_m[..36]));
+        eprintln!("pk_m matches spec: {}", hex::encode(&pk_m[..36]) == spec_pk_start);
+        
+        // Check spec pk_x - it's the last 32 bytes of the full pk
+        // Full pk = pk_m || pk_x
+        // From spec, pk ends with: ...ef6534 then pk_x follows
+        // Looking at spec pk: after 1184 bytes of pk_m, we have 32 bytes of pk_x
+        // Spec pk hex is very long, let me just check the last 32 bytes
+    }
+}
+
+#[cfg(test)]
+mod diag2 {
+    use super::*;
+
+    #[test]
+    fn check_pk_m_rho() {
+        let seed: [u8; 32] = hex::decode("7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26").unwrap().try_into().unwrap();
+        let (_, _, pk_m, _) = expand_decapsulation_key(&seed);
+        // In ML-KEM, pk = t_hat || rho, so rho = pk[1152..1184]
+        eprintln!("pk_m last 32 bytes (rho) = {}", hex::encode(&pk_m[1152..1184]));
+        eprintln!("pk_m first 32 bytes = {}", hex::encode(&pk_m[..32]));
+        
+        // From spec pk, extract first 36 bytes  
+        let spec_pk_hex = "e2236b35a8c24b39b10aa1323a96a919a2ced88400633a7b07131713fc14b2b5b19cfc3d";
+        eprintln!("spec pk_m first 36 bytes = {}", spec_pk_hex);
+    }
+}
