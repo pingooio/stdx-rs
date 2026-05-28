@@ -798,4 +798,399 @@ mod tests {
             "0360fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb6"
         )));
     }
+
+    // --- Wycheproof test vectors (extracted from ecdsa_secp256r1_sha256_test.json) ---
+    // These test signature verification using known-good public keys, messages, and signatures.
+
+    #[test]
+    fn wycheproof_valid_signatures_group1() {
+        // Public key from Wycheproof test group 1
+        let pubkey = decode_hex::<65>(
+            "0404aaec73635726f213fb8a9e64da3b8632e41495a944d0045b522eba7240fad5\
+             87d9315798aaa3a5ba01775787ced05eaaf7b4e09fc81d6d1aa546e8365d525d",
+        );
+
+        // tcId 1: empty message
+        let msg = b"";
+        let sig = decode_hex::<64>(
+            "b292a619339f6e567a305c951c0dcbcc42d16e47f219f9e98e76e09d8770b34a\
+             0177e60492c5a8242f76f07bfe3661bde59ec2a17ce5bd2dab2abebdf89a62e2",
+        );
+        assert!(ecdsa_verify(&pubkey, msg, &sig).is_ok(), "tcId 1 failed");
+
+        // tcId 2: message = "Msg" (hex: 4d7367)
+        let msg = b"Msg";
+        let sig = decode_hex::<64>(
+            "530bd6b0c9af2d69ba897f6b5fb59695cfbf33afe66dbadcf5b8d2a2a6538e23\
+             d85e489cb7a161fd55ededcedbf4cc0c0987e3e3f0f242cae934c72caa3f43e9",
+        );
+        assert!(ecdsa_verify(&pubkey, msg, &sig).is_ok(), "tcId 2 failed");
+
+        // tcId 3: message = "123400" (hex: 313233343030)
+        let msg = &hex::decode("313233343030").unwrap();
+        let sig = decode_hex::<64>(
+            "a8ea150cb80125d7381c4c1f1da8e9de2711f9917060406a73d7904519e51388\
+             f3ab9fa68bd47973a73b2d40480c2ba50c22c9d76ec217257288293285449b86",
+        );
+        assert!(ecdsa_verify(&pubkey, msg, &sig).is_ok(), "tcId 3 failed");
+
+        // tcId 4: message = 20 zero bytes (hex: 0000000000000000000000000000000000000000)
+        let msg = &hex::decode("0000000000000000000000000000000000000000").unwrap();
+        let sig = decode_hex::<64>(
+            "986e65933ef2ed4ee5aada139f52b70539aaf63f00a91f29c69178490d57fb71\
+             3dafedfb8da6189d372308cbf1489bbbdabf0c0217d1c0ff0f701aaa7a694b9c",
+        );
+        assert!(ecdsa_verify(&pubkey, msg, &sig).is_ok(), "tcId 4 failed");
+    }
+
+    #[test]
+    fn wycheproof_valid_signatures_group2() {
+        // Public key from Wycheproof test group 2
+        let pubkey = decode_hex::<65>(
+            "042927b10512bae3eddcfe467828128bad2903269919f7086069c8c4df6c732838\
+             c7787964eaac00e5921fb1498a60f4606766b3d9685001558d1a974e7341513e",
+        );
+
+        // tcId 5: signature malleability - valid low-s signature
+        let msg = &hex::decode("313233343030").unwrap();
+        let sig = decode_hex::<64>(
+            "2ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18\
+             4cd60b855d442f5b3c7b11eb6c4e0ae7525fe710fab9aa7c77a67f79e6fadd76",
+        );
+        assert!(ecdsa_verify(&pubkey, msg, &sig).is_ok(), "tcId 5 failed");
+
+        // tcId 7: same r, different s (high-s variant, still valid per spec)
+        let sig = decode_hex::<64>(
+            "2ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18\
+             b329f479a2bbd0a5c384ee1493b1f5186a87139cac5df4087c134b49156847db",
+        );
+        assert!(ecdsa_verify(&pubkey, msg, &sig).is_ok(), "tcId 7 failed");
+    }
+
+    #[test]
+    fn wycheproof_invalid_signatures() {
+        // Public key from Wycheproof test group 2
+        let pubkey = decode_hex::<65>(
+            "042927b10512bae3eddcfe467828128bad2903269919f7086069c8c4df6c732838\
+             c7787964eaac00e5921fb1498a60f4606766b3d9685001558d1a974e7341513e",
+        );
+        let msg = &hex::decode("313233343030").unwrap();
+
+        // r = 0 (invalid)
+        let sig = decode_hex::<64>(
+            "0000000000000000000000000000000000000000000000000000000000000000\
+             4cd60b855d442f5b3c7b11eb6c4e0ae7525fe710fab9aa7c77a67f79e6fadd76",
+        );
+        assert!(ecdsa_verify(&pubkey, msg, &sig).is_err(), "r=0 should fail");
+
+        // s = 0 (invalid)
+        let sig = decode_hex::<64>(
+            "2ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18\
+             0000000000000000000000000000000000000000000000000000000000000000",
+        );
+        assert!(ecdsa_verify(&pubkey, msg, &sig).is_err(), "s=0 should fail");
+
+        // r = n (order of the curve, invalid: must be < n)
+        let sig = decode_hex::<64>(
+            "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551\
+             4cd60b855d442f5b3c7b11eb6c4e0ae7525fe710fab9aa7c77a67f79e6fadd76",
+        );
+        assert!(ecdsa_verify(&pubkey, msg, &sig).is_err(), "r=n should fail");
+
+        // s = n (order of the curve, invalid: must be < n)
+        let sig = decode_hex::<64>(
+            "2ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18\
+             ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551",
+        );
+        assert!(ecdsa_verify(&pubkey, msg, &sig).is_err(), "s=n should fail");
+
+        // r and s both = 1 (mathematically invalid for this message)
+        let sig = decode_hex::<64>(
+            "0000000000000000000000000000000000000000000000000000000000000001\
+             0000000000000000000000000000000000000000000000000000000000000001",
+        );
+        assert!(ecdsa_verify(&pubkey, msg, &sig).is_err(), "r=s=1 should fail");
+    }
+
+    #[test]
+    fn ecdsa_sign_verify_round_trip_multiple_messages() {
+        let private_key =
+            decode_hex::<32>("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721");
+        let public_key = derive_public_key_uncompressed(&private_key).unwrap();
+
+        let messages: &[&[u8]] = &[
+            b"",
+            b"hello world",
+            b"The quick brown fox jumps over the lazy dog",
+            &[0u8; 0],
+            &[0xffu8; 100],
+            b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f",
+        ];
+
+        for msg in messages {
+            let sig = ecdsa_sign(&private_key, msg).unwrap();
+            assert!(
+                ecdsa_verify(&public_key, msg, &sig).is_ok(),
+                "round-trip failed for message {:?}",
+                msg
+            );
+            // Verify with different message fails
+            let mut wrong_msg = msg.to_vec();
+            wrong_msg.push(0x42);
+            assert!(ecdsa_verify(&public_key, &wrong_msg, &sig).is_err());
+        }
+    }
+
+    #[test]
+    fn ecdsa_sign_verify_different_keys() {
+        // Use multiple different private keys
+        let keys: &[&str] = &[
+            "0000000000000000000000000000000000000000000000000000000000000001",
+            "0000000000000000000000000000000000000000000000000000000000000002",
+            "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632550",
+            "a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f90011",
+        ];
+
+        for key_hex in keys {
+            let private_key = decode_hex::<32>(key_hex);
+            let public_key = derive_public_key_uncompressed(&private_key).unwrap();
+            let sig = ecdsa_sign(&private_key, b"test message").unwrap();
+            assert!(
+                ecdsa_verify(&public_key, b"test message", &sig).is_ok(),
+                "sign/verify failed for key {}",
+                key_hex
+            );
+        }
+    }
+
+    #[test]
+    fn ecdsa_verify_wrong_public_key_rejects() {
+        let private_key1 =
+            decode_hex::<32>("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721");
+        let private_key2 =
+            decode_hex::<32>("0000000000000000000000000000000000000000000000000000000000000001");
+        let public_key2 = derive_public_key_uncompressed(&private_key2).unwrap();
+
+        let sig = ecdsa_sign(&private_key1, b"message").unwrap();
+        assert!(ecdsa_verify(&public_key2, b"message", &sig).is_err());
+    }
+
+    #[test]
+    fn scalar_from_bytes_rejects_boundary_values() {
+        // Zero is rejected
+        let zero = [0u8; 32];
+        assert!(Scalar::from_bytes(&zero).is_none());
+
+        // n is rejected (must be strictly less than n)
+        let n_bytes = decode_hex::<32>(
+            "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551",
+        );
+        assert!(Scalar::from_bytes(&n_bytes).is_none());
+
+        // n-1 is accepted
+        let n_minus_1 = decode_hex::<32>(
+            "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632550",
+        );
+        assert!(Scalar::from_bytes(&n_minus_1).is_some());
+
+        // 1 is accepted
+        let one = decode_hex::<32>(
+            "0000000000000000000000000000000000000000000000000000000000000001",
+        );
+        assert!(Scalar::from_bytes(&one).is_some());
+    }
+
+    #[test]
+    fn field_element_from_bytes_rejects_boundary_values() {
+        // p is rejected (must be strictly less than p)
+        let p_bytes = decode_hex::<32>(
+            "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff",
+        );
+        assert!(FieldElement::from_bytes(&p_bytes).is_none());
+
+        // p-1 is accepted
+        let p_minus_1 = decode_hex::<32>(
+            "ffffffff00000001000000000000000000000000fffffffffffffffffffffffe",
+        );
+        assert!(FieldElement::from_bytes(&p_minus_1).is_some());
+
+        // 0 is accepted (zero is a valid field element)
+        let zero = [0u8; 32];
+        assert!(FieldElement::from_bytes(&zero).is_some());
+    }
+
+    #[test]
+    fn point_decompression_round_trip() {
+        // Generate several public keys and verify compressed/uncompressed round-trip
+        let keys: &[&str] = &[
+            "0000000000000000000000000000000000000000000000000000000000000001",
+            "0000000000000000000000000000000000000000000000000000000000000002",
+            "c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721",
+            "a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f90011",
+        ];
+
+        for key_hex in keys {
+            let private_key = decode_hex::<32>(key_hex);
+            let uncompressed = derive_public_key_uncompressed(&private_key).unwrap();
+            let compressed = derive_public_key_compressed(&private_key).unwrap();
+
+            // Both formats should verify the same signature
+            let sig = ecdsa_sign(&private_key, b"round-trip").unwrap();
+            assert!(ecdsa_verify(&uncompressed, b"round-trip", &sig).is_ok());
+            assert!(ecdsa_verify(&compressed, b"round-trip", &sig).is_ok());
+
+            // Decompress the compressed key and verify it matches the uncompressed key
+            let point = AffinePoint::from_sec1_bytes(&compressed).unwrap();
+            assert_eq!(point.to_uncompressed_bytes(), uncompressed);
+        }
+    }
+
+    #[test]
+    fn nist_cavp_verify_vectors() {
+        // NIST CAVP-style ECDSA P-256/SHA-256 signature verification test vectors.
+        // These test verification with known public keys and signatures.
+
+        struct VerifyVector {
+            qx: &'static str,
+            qy: &'static str,
+            msg: &'static [u8],
+            r: &'static str,
+            s: &'static str,
+            valid: bool,
+        }
+
+        let vectors = [
+            // Valid signature: RFC 6979 vector for "sample"
+            VerifyVector {
+                qx: "60fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb6",
+                qy: "7903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299",
+                msg: b"sample",
+                r: "efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3716",
+                s: "f7cb1c942d657c41d436c7a1b6e29f65f3e900dbb9aff4064dc4ab2f843acda8",
+                valid: true,
+            },
+            // Valid signature: RFC 6979 vector for "test"
+            VerifyVector {
+                qx: "60fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb6",
+                qy: "7903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299",
+                msg: b"test",
+                r: "f1abb023518351cd71d881567b1ea663ed3efcf6c5132b354f28d3b0b7d38367",
+                s: "019f4113742a2b14bd25926b49c649155f267e60d3814b4c0cc84250e46f0083",
+                valid: true,
+            },
+            // Invalid: correct r from "sample" but wrong message
+            VerifyVector {
+                qx: "60fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb6",
+                qy: "7903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299",
+                msg: b"wrong",
+                r: "efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3716",
+                s: "f7cb1c942d657c41d436c7a1b6e29f65f3e900dbb9aff4064dc4ab2f843acda8",
+                valid: false,
+            },
+            // Invalid: signature from "sample" verified against "test"
+            VerifyVector {
+                qx: "60fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb6",
+                qy: "7903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299",
+                msg: b"test",
+                r: "efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3716",
+                s: "f7cb1c942d657c41d436c7a1b6e29f65f3e900dbb9aff4064dc4ab2f843acda8",
+                valid: false,
+            },
+            // Invalid: r modified by one bit
+            VerifyVector {
+                qx: "60fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb6",
+                qy: "7903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299",
+                msg: b"sample",
+                r: "efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3717",
+                s: "f7cb1c942d657c41d436c7a1b6e29f65f3e900dbb9aff4064dc4ab2f843acda8",
+                valid: false,
+            },
+        ];
+
+        for (i, v) in vectors.iter().enumerate() {
+            let mut pubkey = [0u8; 65];
+            pubkey[0] = 0x04;
+            pubkey[1..33].copy_from_slice(&hex::decode(v.qx).unwrap());
+            pubkey[33..65].copy_from_slice(&hex::decode(v.qy).unwrap());
+
+            let mut sig = [0u8; 64];
+            sig[..32].copy_from_slice(&hex::decode(v.r).unwrap());
+            sig[32..].copy_from_slice(&hex::decode(v.s).unwrap());
+
+            let result = ecdsa_verify(&pubkey, v.msg, &sig);
+            if v.valid {
+                assert!(result.is_ok(), "NIST vector {} should be valid", i);
+            } else {
+                assert!(result.is_err(), "NIST vector {} should be invalid", i);
+            }
+        }
+    }
+
+    #[test]
+    fn rfc6979_bits2octets_matches_spec() {
+        // For P-256 with SHA-256, bits2octets reduces the hash modulo n
+        let hash = hash_message(b"sample");
+        let result = bits2octets(&hash);
+        // The hash of "sample" with SHA-256 is:
+        // af2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1bf
+        // This is less than n, so bits2octets should return it unchanged
+        assert_eq!(result, hash);
+
+        // Test with a value that needs reduction (>= n)
+        let big_hash: [u8; 32] = decode_hex::<32>(
+            "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632552",
+        );
+        let reduced = bits2octets(&big_hash);
+        // This is n+1, so reduced should be 1
+        assert_eq!(
+            reduced,
+            decode_hex::<32>("0000000000000000000000000000000000000000000000000000000000000001")
+        );
+    }
+
+    #[test]
+    fn scalar_inversion_correctness() {
+        // Verify that scalar inversion satisfies k * k^-1 = 1 mod n
+        let k = Scalar::from_bytes(&decode_hex::<32>(
+            "a6e3c57dd01abe90086538398355dd4c3b17aa873382b0f24d6129493d8aad60",
+        ))
+        .unwrap();
+        let k_inv = k.invert().unwrap();
+        let product = k.mul(k_inv);
+        assert_eq!(product, Scalar::ONE);
+    }
+
+    #[test]
+    fn field_element_inversion_correctness() {
+        // Verify field element inversion: x * x^-1 = 1 mod p
+        let x = FieldElement::from_bytes(&decode_hex::<32>(
+            "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296",
+        ))
+        .unwrap();
+        let x_inv = x.invert().unwrap();
+        let product = x.mul(x_inv);
+        assert_eq!(product, FieldElement::ONE);
+    }
+
+    #[test]
+    fn generator_point_is_on_curve() {
+        assert!(AffinePoint::GENERATOR.is_on_curve());
+    }
+
+    #[test]
+    fn scalar_mul_generator_n_gives_identity() {
+        // n * G = identity (point at infinity)
+        // We can't use Scalar::from_bytes since it rejects n,
+        // but we can verify (n-1)*G + G = identity indirectly:
+        // (n-1)*G should give -G, i.e., (Gx, -Gy)
+        let n_minus_1 = Scalar::from_bytes(&decode_hex::<32>(
+            "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632550",
+        ))
+        .unwrap();
+        let result = scalar_mul_generator(&n_minus_1).to_affine().unwrap();
+        assert_eq!(result.x, GENERATOR_X);
+        // y should be -Gy mod p
+        let neg_gy = GENERATOR_Y.negate();
+        assert_eq!(result.y, neg_gy);
+    }
 }
