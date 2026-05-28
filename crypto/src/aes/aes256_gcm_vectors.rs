@@ -1035,4 +1035,41 @@ const EXTRA_GCM_VECTORS: &[GcmVector] = &[
         ct: "6d5fe7e7516f31d40a33a1c254ca67b5e95bbe82f28cc454c689b4e5efab79",
         tag: "06ac4b2c8b5bca4823c61b28bc2c27fc",
     },
+    // ── BoringSSL test vectors (google/boringssl crypto/cipher/test/aes_256_gcm_tests.txt) ──
+    // Source: BoringSSL – empty PT, empty AAD
+    GcmVector {
+        key: "e5ac4a32c67e425ac4b143c83c6f161312a97d88d634afdf9f4da5bd35223f01",
+        nonce: "5bf11a0951f0bfc7ea5c9e58",
+        pt: "",
+        aad: "",
+        ct: "",
+        tag: "d7cba289d6d19a5af45dc13857016bac",
+    },
+    // Source: BoringSSL – 5-byte PT + 5-byte AAD
+    GcmVector {
+        key: "73ad7bbbbc640c845a150f67d058b279849370cd2c1f3c67c4dd6c869213e13a",
+        nonce: "a330a184fc245812f4820caa",
+        pt: "f0535fe211",
+        aad: "e91428be04",
+        ct: "e9b8a896da",
+        tag: "9115ed79f26a030c14947b3e454db9e7",
+    },
+    // Source: BoringSSL – 15-byte PT + 15-byte AAD
+    GcmVector {
+        key: "881cca012ef9d6f1241b88e4364084d8c95470c6022e59b62732a1afcc02e657",
+        nonce: "172ec639be736062bba5c32f",
+        pt: "8ed8ef4c09360ef70bb22c716554ef",
+        aad: "98c115f2c3bbe22e3a0c562e8e67ff",
+        ct: "06a761987a7eb0e57a31979043747d",
+        tag: "cf07239b9d40a759e0f4f8ef088f016a",
+    },
+    // Source: BoringSSL – 30-byte PT + 30-byte AAD
+    GcmVector {
+        key: "525429d45a66b9d860c83860111cc65324ab91ff77938bbc30a654220bb3e526",
+        nonce: "31535d82b9b46f5ad75a1629",
+        pt: "677eca74660499acf2e2fd6c7800fd6da2d0273a31906a691205b5765b85",
+        aad: "513bc218acee89848e73ab108401bfc4f9c2aa70310a4e543644c37dd2f3",
+        ct: "f1e6032ee3ce224b2e8f17f91055c81a480398e07fd9366ad69d84dca712",
+        tag: "e39da5658f1d2994a529646d692c55d8",
+    },
 ];
