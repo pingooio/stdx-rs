@@ -2,6 +2,7 @@
 extern crate alloc;
 
 pub mod aes;
+pub mod blake2;
 pub mod chacha;
 pub mod ed25519;
 pub mod hkdf;
@@ -11,6 +12,9 @@ pub mod mlkem;
 pub mod poly1305;
 pub mod sha2;
 pub mod sha3;
+pub mod x25519;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod xwing;
 
 mod bytes;
 

@@ -948,6 +948,21 @@ fn array_ref_32(input: &[u8]) -> &[u8; 32] {
     input.try_into().expect("slice length should be 32")
 }
 
+#[inline]
+pub(crate) fn ml_kem_768_keypair_derand(
+    coins: &[u8; 64],
+) -> ([u8; ML_KEM_768_SECRET_KEY_SIZE], [u8; ML_KEM_768_PUBLIC_KEY_SIZE]) {
+    crypto_kem_keypair_derand::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_PUBLIC_KEY_SIZE>(&ML_KEM_768, coins)
+}
+
+#[inline]
+pub(crate) fn ml_kem_768_enc_derand(
+    public_key: &[u8; ML_KEM_768_PUBLIC_KEY_SIZE],
+    coins: &[u8; 32],
+) -> ([u8; ML_KEM_768_CIPHERTEXT_SIZE], [u8; SHARED_SECRET_SIZE]) {
+    crypto_kem_enc_derand::<3, ML_KEM_768_PUBLIC_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(&ML_KEM_768, public_key, coins)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
