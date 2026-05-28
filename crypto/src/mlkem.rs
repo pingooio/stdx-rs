@@ -1245,7 +1245,10 @@ mod tests {
             sha3_256_hex(&ct),
             "8f51465476690de0f2c9df600f7316d969975d0bc74627fb973ab1eb700708f7"
         );
-        assert_eq!(hex::encode(k), "4b4eba37eff0315dc6009dcffb4dfbbb680f8f2ebde8715fa3d6daf70256a2d9");
+        assert_eq!(
+            hex::encode(k),
+            "4b4eba37eff0315dc6009dcffb4dfbbb680f8f2ebde8715fa3d6daf70256a2d9"
+        );
     }
 
     #[test]
@@ -1278,6 +1281,9 @@ mod tests {
             sha3_256_hex(&ct),
             "139f4eba814f88769e71f0f0a2cfd76ba6ae89e9072c204d64b1de0ef19ca7a2"
         );
-        assert_eq!(hex::encode(k), "6c4f4a231255a8cdfb7424c8dabf3a624cefaffd28964efe220ab6178fa6b324");
+        assert_eq!(
+            hex::encode(k),
+            "6c4f4a231255a8cdfb7424c8dabf3a624cefaffd28964efe220ab6178fa6b324"
+        );
     }
 }
