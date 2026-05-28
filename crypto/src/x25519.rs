@@ -555,71 +555,111 @@ mod tests {
         let shared = x25519(
             &decode_hex::<32>("c8a9d5a91091ad851c668b0736c1c9a02936c0d3ad62670858088047ba057475"),
             &decode_hex::<32>("504a36999f489cd2fdbc08baff3d88fa00569ba986cba22548ffde80f9806829"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("436a2c040cf45fea9b29a0cb81b1f41458f863d0d61b453d0a982720d6d61320"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("436a2c040cf45fea9b29a0cb81b1f41458f863d0d61b453d0a982720d6d61320")
+        );
 
         // tcId 34: edge case public key u=4
         let shared = x25519(
             &decode_hex::<32>("a8386f7f16c50731d64f82e6a170b142a4e34f31fd7768fcb8902925e7d1e25a"),
             &decode_hex::<32>("0400000000000000000000000000000000000000000000000000000000000000"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("34b7e4fa53264420d9f943d15513902342b386b172a0b0b7c8b8f2dd3d669f59"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("34b7e4fa53264420d9f943d15513902342b386b172a0b0b7c8b8f2dd3d669f59")
+        );
 
         // tcId 100: RFC 7748 vector (clamped form)
         let shared = x25519(
             &decode_hex::<32>("a046e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449a44"),
             &decode_hex::<32>("e6db6867583030db3594c1a424b15f7c726624ec26b3353b10a903a6d0ab1c4c"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552")
+        );
 
         // tcId 102: RFC 8037 Section A.6
         let shared = x25519(
             &decode_hex::<32>("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a"),
             &decode_hex::<32>("de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742")
+        );
 
         // tcId 104: edge case shared secret = 9
         let shared = x25519(
             &decode_hex::<32>("60a3a4f130b98a5be4b1cedb7cb85584a3520e142d474dc9ccb909a073a9767f"),
             &decode_hex::<32>("3b18df1e50b899ebd588c3161cbd3bf98ebcc2c1f7df53b811bd0e91b4d5153d"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("0900000000000000000000000000000000000000000000000000000000000000"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("0900000000000000000000000000000000000000000000000000000000000000")
+        );
 
         // tcId 105: edge case shared secret = 16
         let shared = x25519(
             &decode_hex::<32>("60a3a4f130b98a5be4b1cedb7cb85584a3520e142d474dc9ccb909a073a9767f"),
             &decode_hex::<32>("cab6f9e7d8ce00dfcea9bbd8f069ef7fb2ac504abf83b87db601b5ae0a7f7615"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("1000000000000000000000000000000000000000000000000000000000000000"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("1000000000000000000000000000000000000000000000000000000000000000")
+        );
 
         // tcId 107: edge case shared secret near field boundary
         let shared = x25519(
             &decode_hex::<32>("60a3a4f130b98a5be4b1cedb7cb85584a3520e142d474dc9ccb909a073a9767f"),
             &decode_hex::<32>("98730bc03e29e8b057fb1d20ef8c0bffc822485d3db7f45f4e3cc2c3c6d1d14c"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("fcffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff3f"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("fcffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff3f")
+        );
 
         // tcId 109: edge case shared secret
         let shared = x25519(
             &decode_hex::<32>("60a3a4f130b98a5be4b1cedb7cb85584a3520e142d474dc9ccb909a073a9767f"),
             &decode_hex::<32>("317781b0163bae74accc06c0d44ef9a911a22b0d37faf7726621591f9343ea2f"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("f3ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff3f"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("f3ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff3f")
+        );
 
         // tcId 110: edge case shared secret
         let shared = x25519(
             &decode_hex::<32>("60a3a4f130b98a5be4b1cedb7cb85584a3520e142d474dc9ccb909a073a9767f"),
             &decode_hex::<32>("7e26f8f24cb590027f9d1bc49b0e1a242c7d8f43624d3e8fab28ee08e02cb45e"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff03"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff03")
+        );
 
         // tcId 113: edge case shared secret
         let shared = x25519(
             &decode_hex::<32>("60a3a4f130b98a5be4b1cedb7cb85584a3520e142d474dc9ccb909a073a9767f"),
             &decode_hex::<32>("8d44108d05d940d3dfe5647ea7a87be24d0d036c9f0a95a2386b839e7b7bf145"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("ddffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("ddffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f")
+        );
     }
 
     #[test]
@@ -628,57 +668,89 @@ mod tests {
         let shared = x25519(
             &decode_hex::<32>("d85d8c061a50804ac488ad774ac716c3f5ba714b2712e048491379a500211958"),
             &decode_hex::<32>("63aa40c6e38346c5caf23a6df0a5e6c80889a08647e551b3563449befcfc9733"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("279df67a7c4611db4708a0e8282b195e5ac0ed6f4b2f292c6fbd0acac30d1332"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("279df67a7c4611db4708a0e8282b195e5ac0ed6f4b2f292c6fbd0acac30d1332")
+        );
 
         // tcId 3: public key on twist
         let shared = x25519(
             &decode_hex::<32>("c8b45bfd32e55325d9fd648cb302848039000b390e44d521e58aab3b29a6964b"),
             &decode_hex::<32>("0f83c36fded9d32fadf4efa3ae93a90bb5cfa66893bc412c43fa7287dbb99779"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("4bc7e01e7d83d6cf67632bf90033487a5fc29eba5328890ea7b1026d23b9a45f"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("4bc7e01e7d83d6cf67632bf90033487a5fc29eba5328890ea7b1026d23b9a45f")
+        );
 
         // tcId 7: public key u=2 on twist
         let shared = x25519(
             &decode_hex::<32>("d03edde9f3e7b799045f9ac3793d4a9277dadeadc41bec0290f81f744f73775f"),
             &decode_hex::<32>("0200000000000000000000000000000000000000000000000000000000000000"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("b87a1722cc6c1e2feecb54e97abd5a22acc27616f78f6e315fd2b73d9f221e57"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("b87a1722cc6c1e2feecb54e97abd5a22acc27616f78f6e315fd2b73d9f221e57")
+        );
 
         // tcId 8: public key u=3 on twist
         let shared = x25519(
             &decode_hex::<32>("e09d57a914e3c29036fd9a442ba526b5cdcdf28216153e636c10677acab6bd6a"),
             &decode_hex::<32>("0300000000000000000000000000000000000000000000000000000000000000"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("a29d8dad28d590cd3017aa97a4761f851bf1d3672b042a4256a45881e2ad9035"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("a29d8dad28d590cd3017aa97a4761f851bf1d3672b042a4256a45881e2ad9035")
+        );
 
         // tcId 9: public key u=255 on twist
         let shared = x25519(
             &decode_hex::<32>("e0ed78e6ee02f08bec1c15d66fbbe5b83ffc37ea14e1512cc1bd4b2ea6d8066f"),
             &decode_hex::<32>("ff00000000000000000000000000000000000000000000000000000000000000"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("e703bc8aa94b7d87ba34e2678353d12cdaaa1a97b5ca3e1b8c060c4636087f07"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("e703bc8aa94b7d87ba34e2678353d12cdaaa1a97b5ca3e1b8c060c4636087f07")
+        );
 
         // tcId 103: edge case shared secret = 2 (twist point)
         let shared = x25519(
             &decode_hex::<32>("60a3a4f130b98a5be4b1cedb7cb85584a3520e142d474dc9ccb909a073a9767f"),
             &decode_hex::<32>("b7b6d39c765cb60c0c8542f4f3952ffb51d3002d4aeb9f8ff988b192043e6d0a"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("0200000000000000000000000000000000000000000000000000000000000000"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("0200000000000000000000000000000000000000000000000000000000000000")
+        );
 
         // tcId 106: edge case near boundary (twist)
         let shared = x25519(
             &decode_hex::<32>("60a3a4f130b98a5be4b1cedb7cb85584a3520e142d474dc9ccb909a073a9767f"),
             &decode_hex::<32>("4977d0d897e1ba566590f60f2eb0db6f7b24c13d436918ccfd32708dfad7e247"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("feffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff3f"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("feffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff3f")
+        );
 
         // tcId 108: edge case (twist)
         let shared = x25519(
             &decode_hex::<32>("60a3a4f130b98a5be4b1cedb7cb85584a3520e142d474dc9ccb909a073a9767f"),
             &decode_hex::<32>("97b4fff682df7f096cd1756569e252db482d45406a3198a1aff282a5da474c49"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("f9ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff3f"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("f9ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff3f")
+        );
     }
 
     #[test]
@@ -687,47 +759,91 @@ mod tests {
         let private = decode_hex::<32>("786a33a4f7af297a20e7642925932bf509e7070fa1bc36986af1eb13f4f50b55");
 
         // tcId 69: u=0
-        let shared = x25519(&private, &decode_hex::<32>("0000000000000000000000000000000000000000000000000000000000000000")).unwrap();
+        let shared = x25519(
+            &private,
+            &decode_hex::<32>("0000000000000000000000000000000000000000000000000000000000000000"),
+        )
+        .unwrap();
         assert_eq!(shared, [0u8; 32]);
 
         // tcId 70: u=1
-        let shared = x25519(&private, &decode_hex::<32>("0100000000000000000000000000000000000000000000000000000000000000")).unwrap();
+        let shared = x25519(
+            &private,
+            &decode_hex::<32>("0100000000000000000000000000000000000000000000000000000000000000"),
+        )
+        .unwrap();
         assert_eq!(shared, [0u8; 32]);
 
         // tcId 71: u = p-1 (ecffffff...7f)
-        let shared = x25519(&private, &decode_hex::<32>("ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f")).unwrap();
+        let shared = x25519(
+            &private,
+            &decode_hex::<32>("ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),
+        )
+        .unwrap();
         assert_eq!(shared, [0u8; 32]);
 
         // tcId 72: u = low order point 5f9c95bc...
-        let shared = x25519(&private, &decode_hex::<32>("5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157")).unwrap();
+        let shared = x25519(
+            &private,
+            &decode_hex::<32>("5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157"),
+        )
+        .unwrap();
         assert_eq!(shared, [0u8; 32]);
 
         // tcId 73: u = low order point e0eb7a7c...
-        let shared = x25519(&private, &decode_hex::<32>("e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800")).unwrap();
+        let shared = x25519(
+            &private,
+            &decode_hex::<32>("e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800"),
+        )
+        .unwrap();
         assert_eq!(shared, [0u8; 32]);
 
         // tcId 74: u = p (edffffff...7f) which is 0 mod p
-        let shared = x25519(&private, &decode_hex::<32>("edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f")).unwrap();
+        let shared = x25519(
+            &private,
+            &decode_hex::<32>("edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),
+        )
+        .unwrap();
         assert_eq!(shared, [0u8; 32]);
 
         // tcId 75: u = p+1 (eeffffff...7f) which is 1 mod p
-        let shared = x25519(&private, &decode_hex::<32>("eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f")).unwrap();
+        let shared = x25519(
+            &private,
+            &decode_hex::<32>("eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),
+        )
+        .unwrap();
         assert_eq!(shared, [0u8; 32]);
 
         // tcId 76: u = 0 with high bit set
-        let shared = x25519(&private, &decode_hex::<32>("0000000000000000000000000000000000000000000000000000000000000080")).unwrap();
+        let shared = x25519(
+            &private,
+            &decode_hex::<32>("0000000000000000000000000000000000000000000000000000000000000080"),
+        )
+        .unwrap();
         assert_eq!(shared, [0u8; 32]);
 
         // tcId 77: u = 1 with high bit set
-        let shared = x25519(&private, &decode_hex::<32>("0100000000000000000000000000000000000000000000000000000000000080")).unwrap();
+        let shared = x25519(
+            &private,
+            &decode_hex::<32>("0100000000000000000000000000000000000000000000000000000000000080"),
+        )
+        .unwrap();
         assert_eq!(shared, [0u8; 32]);
 
         // tcId 81: u = p with high bit set
-        let shared = x25519(&private, &decode_hex::<32>("edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")).unwrap();
+        let shared = x25519(
+            &private,
+            &decode_hex::<32>("edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+        )
+        .unwrap();
         assert_eq!(shared, [0u8; 32]);
 
         // tcId 82: u = p+1 with high bit set
-        let shared = x25519(&private, &decode_hex::<32>("eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")).unwrap();
+        let shared = x25519(
+            &private,
+            &decode_hex::<32>("eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+        )
+        .unwrap();
         assert_eq!(shared, [0u8; 32]);
     }
 
@@ -737,43 +853,67 @@ mod tests {
         let shared = x25519(
             &decode_hex::<32>("0016b62af5cabde8c40938ebf2108e05d27fa0533ed85d70015ad4ad39762d54"),
             &decode_hex::<32>("efffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("b4d10e832714972f96bd3382e4d082a21a8333a16315b3ffb536061d2482360d"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("b4d10e832714972f96bd3382e4d082a21a8333a16315b3ffb536061d2482360d")
+        );
 
         // tcId 88: u = 2^255 - 17
         let shared = x25519(
             &decode_hex::<32>("d83650ba7cec115881916255e3fa5fa0d6b8dcf968731bd2c9d2aec3f561f649"),
             &decode_hex::<32>("f0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("515eac8f1ed0b00c70762322c3ef86716cd2c51fe77cec3d31b6388bc6eea336"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("515eac8f1ed0b00c70762322c3ef86716cd2c51fe77cec3d31b6388bc6eea336")
+        );
 
         // tcId 89: u = 2^255 - 18 (non-canonical)
         let shared = x25519(
             &decode_hex::<32>("88dd14e2711ebd0b0026c651264ca965e7e3da5082789fbab7e24425e7b4377e"),
             &decode_hex::<32>("f1ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("6919992d6a591e77b3f2bacbd74caf3aea4be4802b18b2bc07eb09ade3ad6662"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("6919992d6a591e77b3f2bacbd74caf3aea4be4802b18b2bc07eb09ade3ad6662")
+        );
 
         // tcId 90: u = 2^255 - 1 (maximum non-canonical with top bit masked)
         let shared = x25519(
             &decode_hex::<32>("98c2b08cbac14e15953154e3b558d42bb1268a365b0ef2f22725129d8ac5cb7f"),
             &decode_hex::<32>("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("9c034fcd8d3bf69964958c0105161fcb5d1ea5b8f8abb371491e42a7684c2322"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("9c034fcd8d3bf69964958c0105161fcb5d1ea5b8f8abb371491e42a7684c2322")
+        );
 
         // tcId 94: u = 0xdaffffff... (non-canonical with top bit set)
         let shared = x25519(
             &decode_hex::<32>("285a6a7ceeb7122f2c78d99c53b2a902b490892f7dff326f89d12673c3101b53"),
             &decode_hex::<32>("daffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("9b01287717d72f4cfb583ec85f8f936849b17d978dbae7b837db56a62f100a68"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("9b01287717d72f4cfb583ec85f8f936849b17d978dbae7b837db56a62f100a68")
+        );
 
         // tcId 99: u = 0xffffffff... (all ones)
         let shared = x25519(
             &decode_hex::<32>("c85f08e60c845f82099141a66dc4583d2b1040462c544d33d0453b20b1a6377e"),
             &decode_hex::<32>("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("e9db74bc88d0d9bf046ddd13f943bccbe6dbb47d49323f8dfeedc4a694991a3c"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("e9db74bc88d0d9bf046ddd13f943bccbe6dbb47d49323f8dfeedc4a694991a3c")
+        );
     }
 
     #[test]
@@ -782,43 +922,67 @@ mod tests {
         let shared = x25519(
             &decode_hex::<32>("d05abd08bf5e62538cb9a5ed105dbedd6de38d07940085072b4311c2678ed77d"),
             &decode_hex::<32>("0001000000000000000000000000000000000000000000000000000000000000"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("3aa227a30781ed746bd4b3365e5f61461b844d09410c70570abd0d75574dfc77"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("3aa227a30781ed746bd4b3365e5f61461b844d09410c70570abd0d75574dfc77")
+        );
 
         // tcId 36: u = 2^20
         let shared = x25519(
             &decode_hex::<32>("f0b8b0998c8394364d7dcb25a3885e571374f91615275440db0645ee7c0a6f6b"),
             &decode_hex::<32>("0000001000000000000000000000000000000000000000000000000000000000"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("97755e7e775789184e176847ffbc2f8ef98799d46a709c6a1c0ffd29081d7039"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("97755e7e775789184e176847ffbc2f8ef98799d46a709c6a1c0ffd29081d7039")
+        );
 
         // tcId 47: u = 2^248
         let shared = x25519(
             &decode_hex::<32>("38d6403e1377734cdce98285e820f256ad6b769d6b5612bcf42cf2b97945c073"),
             &decode_hex::<32>("0000000000000000000000000000000000000000000000000000000001000000"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("4d46052c7eabba215df8d91327e0c4610421d2d9129b1486d914c766cf104c27"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("4d46052c7eabba215df8d91327e0c4610421d2d9129b1486d914c766cf104c27")
+        );
 
         // tcId 51: u = 2^254 - 1
         let shared = x25519(
             &decode_hex::<32>("a8f37318a4c760f3cb2d894822918735683cb1edacf3e666e15694154978fd6d"),
             &decode_hex::<32>("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff3f"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("d151b97cba9c25d48e6d576338b97d53dd8b25e84f65f7a2091a17016317c553"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("d151b97cba9c25d48e6d576338b97d53dd8b25e84f65f7a2091a17016317c553")
+        );
 
         // tcId 52: u = p - 2^254 + 2^253 - 1 (large value close to p)
         let shared = x25519(
             &decode_hex::<32>("20d4d624cf732f826f09e8088017742f13f2da98f4dcf4b40519adb790cebf64"),
             &decode_hex::<32>("edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff5f"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("5716296baf2b1a6b9cd15b23ba86829743d60b0396569be1d5b40014c06b477d"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("5716296baf2b1a6b9cd15b23ba86829743d60b0396569be1d5b40014c06b477d")
+        );
 
         // tcId 62: u = p - 2 (0xebffffff...7f)
         let shared = x25519(
             &decode_hex::<32>("40bd4e1caf39d9def7663823502dad3e7d30eb6eb01e9b89516d4f2f45b7cd7f"),
             &decode_hex::<32>("ebffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),
-        ).unwrap();
-        assert_eq!(shared, decode_hex::<32>("2cf6974b0c070e3707bf92e721d3ea9de3db6f61ed810e0a23d72d433365f631"));
+        )
+        .unwrap();
+        assert_eq!(
+            shared,
+            decode_hex::<32>("2cf6974b0c070e3707bf92e721d3ea9de3db6f61ed810e0a23d72d433365f631")
+        );
     }
 
     #[test]
@@ -827,21 +991,24 @@ mod tests {
         let shared = x25519(
             &decode_hex::<32>("88227494038f2bb811d47805bcdf04a2ac585ada7f2f23389bfd4658f9ddd45e"),
             &decode_hex::<32>("0000000000000000000000000000000000000000000000000000000000000000"),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(shared, [0u8; 32]);
 
         // tcId 33: private key that produces zero shared with u=1
         let shared = x25519(
             &decode_hex::<32>("48232e8972b61c7e61930eb9450b5070eae1c670475685541f0476217e48184f"),
             &decode_hex::<32>("0100000000000000000000000000000000000000000000000000000000000000"),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(shared, [0u8; 32]);
 
         // tcId 83: u = p (== 0 mod p) with different private key
         let shared = x25519(
             &decode_hex::<32>("40ff586e73d61f0960dc2d763ac19e98225f1194f6fe43d5dd97ad55b3d35961"),
             &decode_hex::<32>("edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(shared, [0u8; 32]);
     }
 

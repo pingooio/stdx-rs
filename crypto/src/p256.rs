@@ -914,8 +914,7 @@ mod tests {
 
     #[test]
     fn ecdsa_sign_verify_round_trip_multiple_messages() {
-        let private_key =
-            decode_hex::<32>("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721");
+        let private_key = decode_hex::<32>("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721");
         let public_key = derive_public_key_uncompressed(&private_key).unwrap();
 
         let messages: &[&[u8]] = &[
@@ -965,10 +964,8 @@ mod tests {
 
     #[test]
     fn ecdsa_verify_wrong_public_key_rejects() {
-        let private_key1 =
-            decode_hex::<32>("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721");
-        let private_key2 =
-            decode_hex::<32>("0000000000000000000000000000000000000000000000000000000000000001");
+        let private_key1 = decode_hex::<32>("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721");
+        let private_key2 = decode_hex::<32>("0000000000000000000000000000000000000000000000000000000000000001");
         let public_key2 = derive_public_key_uncompressed(&private_key2).unwrap();
 
         let sig = ecdsa_sign(&private_key1, b"message").unwrap();
@@ -982,36 +979,26 @@ mod tests {
         assert!(Scalar::from_bytes(&zero).is_none());
 
         // n is rejected (must be strictly less than n)
-        let n_bytes = decode_hex::<32>(
-            "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551",
-        );
+        let n_bytes = decode_hex::<32>("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551");
         assert!(Scalar::from_bytes(&n_bytes).is_none());
 
         // n-1 is accepted
-        let n_minus_1 = decode_hex::<32>(
-            "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632550",
-        );
+        let n_minus_1 = decode_hex::<32>("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632550");
         assert!(Scalar::from_bytes(&n_minus_1).is_some());
 
         // 1 is accepted
-        let one = decode_hex::<32>(
-            "0000000000000000000000000000000000000000000000000000000000000001",
-        );
+        let one = decode_hex::<32>("0000000000000000000000000000000000000000000000000000000000000001");
         assert!(Scalar::from_bytes(&one).is_some());
     }
 
     #[test]
     fn field_element_from_bytes_rejects_boundary_values() {
         // p is rejected (must be strictly less than p)
-        let p_bytes = decode_hex::<32>(
-            "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff",
-        );
+        let p_bytes = decode_hex::<32>("ffffffff00000001000000000000000000000000ffffffffffffffffffffffff");
         assert!(FieldElement::from_bytes(&p_bytes).is_none());
 
         // p-1 is accepted
-        let p_minus_1 = decode_hex::<32>(
-            "ffffffff00000001000000000000000000000000fffffffffffffffffffffffe",
-        );
+        let p_minus_1 = decode_hex::<32>("ffffffff00000001000000000000000000000000fffffffffffffffffffffffe");
         assert!(FieldElement::from_bytes(&p_minus_1).is_some());
 
         // 0 is accepted (zero is a valid field element)
@@ -1137,9 +1124,7 @@ mod tests {
         assert_eq!(result, hash);
 
         // Test with a value that needs reduction (>= n)
-        let big_hash: [u8; 32] = decode_hex::<32>(
-            "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632552",
-        );
+        let big_hash: [u8; 32] = decode_hex::<32>("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632552");
         let reduced = bits2octets(&big_hash);
         // This is n+1, so reduced should be 1
         assert_eq!(
