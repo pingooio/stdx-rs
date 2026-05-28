@@ -312,6 +312,16 @@ impl EdwardsPoint {
     }
 
     #[inline]
+    fn select(a: &Self, b: &Self, choice: bool) -> Self {
+        Self {
+            x: FieldElement::select(&a.x, &b.x, choice),
+            y: FieldElement::select(&a.y, &b.y, choice),
+            z: FieldElement::select(&a.z, &b.z, choice),
+            t: FieldElement::select(&a.t, &b.t, choice),
+        }
+    }
+
+    #[inline]
     fn mul_by_cofactor(&self) -> Self {
         self.double().double().double()
     }
@@ -328,9 +338,11 @@ fn scalar_mul(point: &EdwardsPoint, scalar: &Scalar) -> EdwardsPoint {
     let mut addend = *point;
     let mut i = 0usize;
     while i < 256 {
-        if scalar.bit(i) {
-            result = result.add(&addend);
-        }
+        // if scalar.bit(i) {
+        //     result = result.add(&addend);
+        // }
+        let candidate = result.add(&addend);
+        result = EdwardsPoint::select(&candidate, &result, scalar.bit(i));
         addend = addend.double();
         i += 1;
     }
@@ -402,15 +414,13 @@ pub fn ed25519_verify(
 ) -> Result<(), EllipticCurveError> {
     let a = EdwardsPoint::from_bytes(public_key).ok_or(EllipticCurveError::InvalidKey)?;
 
-    let mut r_bytes = [0u8; 32];
-    r_bytes.copy_from_slice(&signature[..32]);
-    let r = EdwardsPoint::from_bytes(&r_bytes).ok_or(EllipticCurveError::InvalidKey)?;
+    let r_bytes: &[u8; 32] = &signature[..32].try_into().unwrap();
+    let r = EdwardsPoint::from_bytes(r_bytes).ok_or(EllipticCurveError::InvalidKey)?;
 
-    let mut s_bytes = [0u8; 32];
-    s_bytes.copy_from_slice(&signature[32..]);
-    let s = Scalar::from_canonical_bytes(&s_bytes).ok_or(EllipticCurveError::Unspecified)?;
+    let s =
+        Scalar::from_canonical_bytes(&signature[32..].try_into().unwrap()).ok_or(EllipticCurveError::Unspecified)?;
 
-    let k = hash_to_scalar(&[&r_bytes, public_key, message]);
+    let k = hash_to_scalar(&[r_bytes, public_key, message]);
 
     let lhs = scalar_mul_base(&s).mul_by_cofactor();
     let rhs = r.add(&scalar_mul(&a, &k)).mul_by_cofactor();

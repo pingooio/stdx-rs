@@ -330,7 +330,7 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
                 j += 1;
             }
             let mut k = i + LIMBS;
-            while carry != 0 && k < MAX_LIMBS {
+            while k < MAX_LIMBS {
                 let (word, next_carry) = adc(out[k], 0, carry);
                 out[k] = word;
                 carry = next_carry;
@@ -382,9 +382,6 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
         out[0] = first;
         let mut i = 1;
         while i < LIMBS {
-            if carry == 0 {
-                break;
-            }
             let (next, next_carry) = adc(out[i], 0, carry);
             out[i] = next;
             carry = next_carry;
@@ -405,9 +402,6 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
         out[0] = first;
         let mut i = 1;
         while i < LIMBS {
-            if borrow == 0 {
-                break;
-            }
             let (next, next_borrow) = sbb(out[i], 0, borrow);
             out[i] = next;
             borrow = next_borrow;
@@ -918,6 +912,12 @@ mod tests {
         0x4000_0000_0000_0000,
         0x3fff_ffff_c000_0000,
     ]);
+    const ED25519_P: U256 = U256::from_limbs([
+        0xffff_ffff_ffff_ffed,
+        0xffff_ffff_ffff_ffff,
+        0xffff_ffff_ffff_ffff,
+        0x7fff_ffff_ffff_ffff,
+    ]);
 
     fn decode_hex<const N: usize>(input: &str) -> [u8; N] {
         assert_eq!(input.len(), N * 2);
@@ -1047,5 +1047,716 @@ mod tests {
         ));
         let le = value.to_le_bytes_fixed::<32>();
         assert_eq!(U256::from_le_slice(&le), value);
+    }
+
+    #[test]
+    fn modular_addition_vectors() {
+        struct Test {
+            a: U256,
+            b: U256,
+            m: U256,
+            expected: U256,
+        }
+        let tests = [
+            Test {
+                a: U256::ZERO,
+                b: U256::ZERO,
+                m: P256_MODULUS,
+                expected: U256::ZERO,
+            },
+            Test {
+                a: U256::ZERO,
+                b: U256::ONE,
+                m: P256_MODULUS,
+                expected: U256::ONE,
+            },
+            Test {
+                a: U256::ONE,
+                b: U256::ONE,
+                m: P256_MODULUS,
+                expected: U256::from_u64(2),
+            },
+            Test {
+                a: P256_MODULUS - U256::ONE,
+                b: U256::ONE,
+                m: P256_MODULUS,
+                expected: U256::ZERO,
+            },
+            Test {
+                a: P256_MODULUS - U256::ONE,
+                b: U256::from_u64(2),
+                m: P256_MODULUS,
+                expected: U256::ONE,
+            },
+            Test {
+                a: U256::ZERO,
+                b: U256::ZERO,
+                m: P256_ORDER,
+                expected: U256::ZERO,
+            },
+            Test {
+                a: U256::ZERO,
+                b: U256::ONE,
+                m: P256_ORDER,
+                expected: U256::ONE,
+            },
+            Test {
+                a: U256::ONE,
+                b: U256::ONE,
+                m: P256_ORDER,
+                expected: U256::from_u64(2),
+            },
+            Test {
+                a: U256::MAX,
+                b: U256::ONE,
+                m: P256_ORDER,
+                expected: U256::from_limbs([
+                    0x0c46_353d_039c_daaf,
+                    0x4319_0552_58e8_617b,
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_ffff_ffff,
+                ]),
+            },
+            Test {
+                a: P256_ORDER - U256::ONE,
+                b: U256::ONE,
+                m: P256_ORDER,
+                expected: U256::ZERO,
+            },
+            Test {
+                a: P256_ORDER - U256::ONE,
+                b: U256::from_u64(2),
+                m: P256_ORDER,
+                expected: U256::ONE,
+            },
+            Test {
+                a: U256::ZERO,
+                b: U256::ZERO,
+                m: ED25519_P,
+                expected: U256::ZERO,
+            },
+            Test {
+                a: U256::ZERO,
+                b: U256::ONE,
+                m: ED25519_P,
+                expected: U256::ONE,
+            },
+            Test {
+                a: U256::ONE,
+                b: U256::ONE,
+                m: ED25519_P,
+                expected: U256::from_u64(2),
+            },
+            Test {
+                a: U256::from_limbs([
+                    0xffff_ffff_ffff_ffff,
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0000,
+                ]),
+                b: U256::ONE,
+                m: P256_MODULUS,
+                expected: U256::from_limbs([
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0001,
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0000,
+                ]),
+            },
+            Test {
+                a: U256::from_limbs([
+                    0xffff_ffff_ffff_ffff,
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0000,
+                ]),
+                b: U256::ONE,
+                m: P256_ORDER,
+                expected: U256::from_limbs([
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0001,
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0000,
+                ]),
+            },
+            Test {
+                a: U256::from_limbs([
+                    0xffff_ffff_ffff_ffff,
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0000,
+                ]),
+                b: U256::ONE,
+                m: ED25519_P,
+                expected: U256::from_limbs([
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0001,
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0000,
+                ]),
+            },
+            Test {
+                a: ED25519_P - U256::ONE,
+                b: ED25519_P - U256::ONE,
+                m: ED25519_P,
+                expected: (ED25519_P - U256::ONE).double_mod(&ED25519_P),
+            },
+        ];
+        for t in &tests {
+            assert_eq!(t.a.add_mod(&t.b, &t.m), t.expected, "add_mod({:x}, {:x}, {:x})", t.a, t.b, t.m);
+        }
+    }
+
+    #[test]
+    fn modular_subtraction_vectors() {
+        struct Test {
+            a: U256,
+            b: U256,
+            m: U256,
+            expected: U256,
+        }
+        let tests = [
+            Test {
+                a: U256::ZERO,
+                b: U256::ZERO,
+                m: P256_MODULUS,
+                expected: U256::ZERO,
+            },
+            Test {
+                a: U256::ONE,
+                b: U256::ZERO,
+                m: P256_MODULUS,
+                expected: U256::ONE,
+            },
+            Test {
+                a: U256::ZERO,
+                b: U256::ONE,
+                m: P256_MODULUS,
+                expected: P256_MODULUS - U256::ONE,
+            },
+            Test {
+                a: P256_MODULUS - U256::ONE,
+                b: U256::ONE,
+                m: P256_MODULUS,
+                expected: P256_MODULUS - U256::from_u64(2),
+            },
+            Test {
+                a: U256::ONE,
+                b: P256_MODULUS - U256::ONE,
+                m: P256_MODULUS,
+                expected: U256::from_u64(2),
+            },
+            Test {
+                a: U256::ZERO,
+                b: U256::ZERO,
+                m: P256_ORDER,
+                expected: U256::ZERO,
+            },
+            Test {
+                a: U256::ONE,
+                b: U256::ZERO,
+                m: P256_ORDER,
+                expected: U256::ONE,
+            },
+            Test {
+                a: U256::ZERO,
+                b: U256::ONE,
+                m: P256_ORDER,
+                expected: P256_ORDER - U256::ONE,
+            },
+            Test {
+                a: P256_ORDER - U256::ONE,
+                b: U256::ONE,
+                m: P256_ORDER,
+                expected: P256_ORDER - U256::from_u64(2),
+            },
+            Test {
+                a: U256::ONE,
+                b: P256_ORDER - U256::ONE,
+                m: P256_ORDER,
+                expected: U256::from_u64(2),
+            },
+            Test {
+                a: U256::ZERO,
+                b: U256::ZERO,
+                m: ED25519_P,
+                expected: U256::ZERO,
+            },
+            Test {
+                a: U256::ONE,
+                b: U256::ZERO,
+                m: ED25519_P,
+                expected: U256::ONE,
+            },
+            Test {
+                a: U256::ZERO,
+                b: U256::ONE,
+                m: ED25519_P,
+                expected: ED25519_P - U256::ONE,
+            },
+            Test {
+                a: ED25519_P - U256::ONE,
+                b: U256::ONE,
+                m: ED25519_P,
+                expected: ED25519_P - U256::from_u64(2),
+            },
+            Test {
+                a: U256::ONE,
+                b: ED25519_P - U256::ONE,
+                m: ED25519_P,
+                expected: U256::from_u64(2),
+            },
+        ];
+        for t in &tests {
+            assert_eq!(t.a.sub_mod(&t.b, &t.m), t.expected, "sub_mod({:x}, {:x}, {:x})", t.a, t.b, t.m);
+        }
+    }
+
+    #[test]
+    fn modular_multiplication_vectors() {
+        struct Test {
+            a: U256,
+            b: U256,
+            m: U256,
+            expected: U256,
+        }
+        let tests = [
+            Test {
+                a: U256::ZERO,
+                b: U256::ZERO,
+                m: P256_MODULUS,
+                expected: U256::ZERO,
+            },
+            Test {
+                a: U256::ZERO,
+                b: U256::ONE,
+                m: P256_MODULUS,
+                expected: U256::ZERO,
+            },
+            Test {
+                a: U256::ONE,
+                b: U256::ZERO,
+                m: P256_MODULUS,
+                expected: U256::ZERO,
+            },
+            Test {
+                a: U256::ONE,
+                b: U256::ONE,
+                m: P256_MODULUS,
+                expected: U256::ONE,
+            },
+            Test {
+                a: U256::from_u64(2),
+                b: U256::from_u64(3),
+                m: P256_MODULUS,
+                expected: U256::from_u64(6),
+            },
+            Test {
+                a: U256::MAX,
+                b: U256::ONE,
+                m: P256_MODULUS,
+                expected: U256::from_limbs([
+                    0x0000_0000_0000_0000,
+                    0xffff_ffff_0000_0000,
+                    0xffff_ffff_ffff_ffff,
+                    0x0000_0000_ffff_fffe,
+                ]),
+            },
+            Test {
+                a: P256_MODULUS - U256::ONE,
+                b: U256::ONE,
+                m: P256_MODULUS,
+                expected: P256_MODULUS - U256::ONE,
+            },
+            Test {
+                a: P256_MODULUS - U256::ONE,
+                b: P256_MODULUS - U256::ONE,
+                m: P256_MODULUS,
+                expected: U256::ONE,
+            },
+            Test {
+                a: P256_MODULUS + U256::ONE,
+                b: P256_MODULUS + U256::ONE,
+                m: P256_MODULUS,
+                expected: U256::ONE,
+            },
+            Test {
+                a: U256::ZERO,
+                b: U256::ZERO,
+                m: P256_ORDER,
+                expected: U256::ZERO,
+            },
+            Test {
+                a: U256::ZERO,
+                b: U256::ONE,
+                m: P256_ORDER,
+                expected: U256::ZERO,
+            },
+            Test {
+                a: U256::ONE,
+                b: U256::ZERO,
+                m: P256_ORDER,
+                expected: U256::ZERO,
+            },
+            Test {
+                a: U256::ONE,
+                b: U256::ONE,
+                m: P256_ORDER,
+                expected: U256::ONE,
+            },
+            Test {
+                a: U256::from_u64(2),
+                b: U256::from_u64(3),
+                m: P256_ORDER,
+                expected: U256::from_u64(6),
+            },
+            Test {
+                a: P256_ORDER - U256::ONE,
+                b: U256::ONE,
+                m: P256_ORDER,
+                expected: P256_ORDER - U256::ONE,
+            },
+            Test {
+                a: P256_ORDER - U256::ONE,
+                b: P256_ORDER - U256::ONE,
+                m: P256_ORDER,
+                expected: U256::ONE,
+            },
+            Test {
+                a: P256_ORDER + U256::ONE,
+                b: P256_ORDER + U256::ONE,
+                m: P256_ORDER,
+                expected: U256::ONE,
+            },
+            Test {
+                a: U256::ZERO,
+                b: U256::ZERO,
+                m: ED25519_P,
+                expected: U256::ZERO,
+            },
+            Test {
+                a: U256::ZERO,
+                b: U256::ONE,
+                m: ED25519_P,
+                expected: U256::ZERO,
+            },
+            Test {
+                a: U256::ONE,
+                b: U256::ZERO,
+                m: ED25519_P,
+                expected: U256::ZERO,
+            },
+            Test {
+                a: U256::ONE,
+                b: U256::ONE,
+                m: ED25519_P,
+                expected: U256::ONE,
+            },
+            Test {
+                a: U256::from_u64(2),
+                b: U256::from_u64(3),
+                m: ED25519_P,
+                expected: U256::from_u64(6),
+            },
+            Test {
+                a: ED25519_P - U256::ONE,
+                b: U256::ONE,
+                m: ED25519_P,
+                expected: ED25519_P - U256::ONE,
+            },
+            Test {
+                a: ED25519_P - U256::ONE,
+                b: ED25519_P - U256::ONE,
+                m: ED25519_P,
+                expected: U256::ONE,
+            },
+            Test {
+                a: ED25519_P + U256::ONE,
+                b: ED25519_P + U256::ONE,
+                m: ED25519_P,
+                expected: U256::ONE,
+            },
+            Test {
+                a: U256::from_limbs([
+                    0xffff_ffff_ffff_ffff,
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0000,
+                ]),
+                b: U256::from_limbs([
+                    0xffff_ffff_ffff_ffff,
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0000,
+                ]),
+                m: P256_MODULUS,
+                expected: U256::from_limbs([
+                    0x0000_0000_0000_0001,
+                    0xffff_ffff_ffff_fffe,
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0000,
+                ]),
+            },
+        ];
+        for t in &tests {
+            assert_eq!(t.a.mul_mod(&t.b, &t.m), t.expected, "mul_mod({:x}, {:x}, {:x})", t.a, t.b, t.m);
+        }
+    }
+
+    #[test]
+    fn raw_addition_vectors() {
+        struct Test {
+            a: U256,
+            b: U256,
+            expected_sum: U256,
+            expected_carry: u64,
+        }
+        let tests = [
+            Test {
+                a: U256::ZERO,
+                b: U256::ZERO,
+                expected_sum: U256::ZERO,
+                expected_carry: 0,
+            },
+            Test {
+                a: U256::ZERO,
+                b: U256::ONE,
+                expected_sum: U256::ONE,
+                expected_carry: 0,
+            },
+            Test {
+                a: U256::ONE,
+                b: U256::ONE,
+                expected_sum: U256::from_u64(2),
+                expected_carry: 0,
+            },
+            Test {
+                a: U256::MAX,
+                b: U256::ZERO,
+                expected_sum: U256::MAX,
+                expected_carry: 0,
+            },
+            Test {
+                a: U256::MAX,
+                b: U256::ONE,
+                expected_sum: U256::ZERO,
+                expected_carry: 1,
+            },
+            Test {
+                a: U256::MAX,
+                b: U256::MAX,
+                expected_sum: U256::MAX - U256::ONE,
+                expected_carry: 1,
+            },
+            Test {
+                a: U256::MAX - U256::ONE,
+                b: U256::ONE,
+                expected_sum: U256::MAX,
+                expected_carry: 0,
+            },
+            Test {
+                a: U256::ONE,
+                b: U256::MAX,
+                expected_sum: U256::ZERO,
+                expected_carry: 1,
+            },
+            Test {
+                a: U256::from_limbs([
+                    0xffff_ffff_ffff_ffff,
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0000,
+                ]),
+                b: U256::ONE,
+                expected_sum: U256::from_limbs([
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0001,
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0000,
+                ]),
+                expected_carry: 0,
+            },
+            Test {
+                a: U256::from_limbs([
+                    0xffff_ffff_ffff_ffff,
+                    0xffff_ffff_ffff_ffff,
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0000,
+                ]),
+                b: U256::ONE,
+                expected_sum: U256::from_limbs([
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0000,
+                    0x0000_0000_0000_0001,
+                    0x0000_0000_0000_0000,
+                ]),
+                expected_carry: 0,
+            },
+        ];
+        for t in &tests {
+            let (sum, carry) = t.a.add_raw(&t.b);
+            assert_eq!(sum, t.expected_sum, "add_raw({:x}, {:x}).sum", t.a, t.b);
+            assert_eq!(carry, t.expected_carry, "add_raw({:x}, {:x}).carry", t.a, t.b);
+        }
+    }
+
+    #[test]
+    fn raw_subtraction_vectors() {
+        struct Test {
+            a: U256,
+            b: U256,
+            expected_diff: U256,
+            expected_borrow: u64,
+        }
+        let tests = [
+            Test {
+                a: U256::ZERO,
+                b: U256::ZERO,
+                expected_diff: U256::ZERO,
+                expected_borrow: 0,
+            },
+            Test {
+                a: U256::ONE,
+                b: U256::ZERO,
+                expected_diff: U256::ONE,
+                expected_borrow: 0,
+            },
+            Test {
+                a: U256::ONE,
+                b: U256::ONE,
+                expected_diff: U256::ZERO,
+                expected_borrow: 0,
+            },
+            Test {
+                a: U256::ZERO,
+                b: U256::ONE,
+                expected_diff: U256::MAX,
+                expected_borrow: 1,
+            },
+            Test {
+                a: U256::MAX,
+                b: U256::MAX,
+                expected_diff: U256::ZERO,
+                expected_borrow: 0,
+            },
+            Test {
+                a: U256::MAX,
+                b: U256::ZERO,
+                expected_diff: U256::MAX,
+                expected_borrow: 0,
+            },
+            Test {
+                a: U256::MAX,
+                b: U256::MAX - U256::ONE,
+                expected_diff: U256::ONE,
+                expected_borrow: 0,
+            },
+            Test {
+                a: U256::ONE,
+                b: U256::MAX,
+                expected_diff: U256::from_u64(2),
+                expected_borrow: 1,
+            },
+        ];
+        for t in &tests {
+            let (diff, borrow) = t.a.sub_raw(&t.b);
+            assert_eq!(diff, t.expected_diff, "sub_raw({:x}, {:x}).diff", t.a, t.b);
+            assert_eq!(borrow, t.expected_borrow, "sub_raw({:x}, {:x}).borrow", t.a, t.b);
+        }
+    }
+
+    #[test]
+    fn string_roundtrip_vectors() {
+        struct Test {
+            value: U256,
+            radix: u32,
+            expected: &'static str,
+        }
+        let tests = [
+            Test {
+                value: U256::ZERO,
+                radix: 2,
+                expected: "0",
+            },
+            Test {
+                value: U256::ZERO,
+                radix: 10,
+                expected: "0",
+            },
+            Test {
+                value: U256::ZERO,
+                radix: 16,
+                expected: "0",
+            },
+            Test {
+                value: U256::ONE,
+                radix: 2,
+                expected: "1",
+            },
+            Test {
+                value: U256::ONE,
+                radix: 10,
+                expected: "1",
+            },
+            Test {
+                value: U256::ONE,
+                radix: 16,
+                expected: "1",
+            },
+            Test {
+                value: U256::MAX,
+                radix: 10,
+                expected: "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+            },
+            Test {
+                value: U256::MAX,
+                radix: 16,
+                expected: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            },
+            Test {
+                value: P256_MODULUS,
+                radix: 10,
+                expected: "115792089210356248762697446949407573530086143415290314195533631308867097853951",
+            },
+            Test {
+                value: P256_MODULUS,
+                radix: 16,
+                expected: "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff",
+            },
+            Test {
+                value: P256_ORDER,
+                radix: 10,
+                expected: "115792089210356248762697446949407573529996955224135760342422259061068512044369",
+            },
+            Test {
+                value: P256_ORDER,
+                radix: 16,
+                expected: "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551",
+            },
+            Test {
+                value: ED25519_P,
+                radix: 10,
+                expected: "57896044618658097711785492504343953926634992332820282019728792003956564819949",
+            },
+            Test {
+                value: ED25519_P,
+                radix: 16,
+                expected: "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffed",
+            },
+        ];
+        for t in &tests {
+            let encoded = t.value.to_string_radix(t.radix);
+            assert_eq!(encoded, t.expected, "to_string_radix({:x}, {})", t.value, t.radix);
+            let decoded = U256::from_str_radix(t.expected, t.radix).unwrap();
+            assert_eq!(decoded, t.value, "from_str_radix round-trip");
+        }
+    }
+
+    #[test]
+    fn mul_mod_edge_cases() {
+        assert_eq!(P256_P_PLUS_ONE_OVER_FOUR.mul_mod(&U256::from_u64(4), &P256_MODULUS), U256::ONE);
+
+        let (a, _) = U256::MAX.mul_word(2);
+        assert_eq!(a.add_mod(&U256::ZERO, &P256_MODULUS), U256::MAX.double_mod(&P256_MODULUS));
     }
 }
