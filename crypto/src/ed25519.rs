@@ -606,14 +606,12 @@ mod tests {
     #[test]
     fn rfc8032_extended_vectors() {
         // SHA(abc) test vector
-        let vectors = [
-            TestVector {
-                seed: "833fe62409237b9d62ec77587520911e9a759cec1d19755b7da901b96dca3d42",
-                public_key: "ec172b93ad5e563bf4932c70e1245034c35467ef2efd4d64ebf819683467e2bf",
-                message: "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f",
-                signature: "dc2a4459e7369633a52b1bf277839a00201009a3efbf3ecb69bea2186c26b58909351fc9ac90b3ecfdfbc7c66431e0303dca179c138ac17ad9bef1177331a704",
-            },
-        ];
+        let vectors = [TestVector {
+            seed: "833fe62409237b9d62ec77587520911e9a759cec1d19755b7da901b96dca3d42",
+            public_key: "ec172b93ad5e563bf4932c70e1245034c35467ef2efd4d64ebf819683467e2bf",
+            message: "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f",
+            signature: "dc2a4459e7369633a52b1bf277839a00201009a3efbf3ecb69bea2186c26b58909351fc9ac90b3ecfdfbc7c66431e0303dca179c138ac17ad9bef1177331a704",
+        }];
         for vector in &vectors {
             assert_vector(vector);
         }
@@ -640,9 +638,8 @@ mod tests {
         let mut bad_sig = signature;
         // Set s to exactly L
         bad_sig[32..].copy_from_slice(&[
-            0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9,
-            0xde, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x10,
+            0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
         ]);
         assert!(ed25519_verify(&public_key, b"test", &bad_sig).is_err());
     }
@@ -650,8 +647,7 @@ mod tests {
     #[test]
     fn verify_rejects_non_canonical_point_encodings() {
         // Public key with y >= p (non-canonical)
-        let non_canonical_key =
-            decode_hex::<32>("edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f");
+        let non_canonical_key = decode_hex::<32>("edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f");
         let signature = [0u8; 64]; // dummy
         assert!(ed25519_verify(&non_canonical_key, b"test", &signature).is_err());
 
@@ -661,9 +657,8 @@ mod tests {
         let mut bad_sig = ed25519_sign(&seed, b"test");
         // Set R to a non-canonical encoding (y = p, which is >= p)
         bad_sig[..32].copy_from_slice(&[
-            0xed, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-            0xff, 0xff, 0xff, 0x7f,
+            0xed, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f,
         ]);
         assert!(ed25519_verify(&public_key, b"test", &bad_sig).is_err());
     }
