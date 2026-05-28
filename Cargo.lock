@@ -696,6 +696,7 @@ dependencies = [
 name = "crypto"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "big_number",
  "constant_time_eq 0.3.0",
  "criterion",
