@@ -2,6 +2,8 @@
 extern crate alloc;
 
 pub mod aes;
+#[cfg(feature = "alloc")]
+pub mod argon2;
 pub mod blake2;
 pub mod chacha;
 pub mod ed25519;

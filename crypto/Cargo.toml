@@ -19,6 +19,7 @@ zeroize = { workspace = true, optional = true }
 thiserror = { path = "../thiserror" }
 big_number = { path = "../big_number" }
 constant_time_eq = { path = "../constant_time_eq" }
+base64 = { path = "../base64" }
 rand = { workspace = true }
 
 [dev-dependencies]
