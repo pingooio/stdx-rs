@@ -899,4 +899,140 @@ const EXTRA_GCM_VECTORS: &[GcmVector] = &[
         ct: "",
         tag: "0d7f1aed4708a03b0c80b2a18785c96d",
     },
+    // ── Additional vectors generated and verified with pyca/cryptography (OpenSSL backend) ──
+    // Source: pyca/cryptography verified – BoringSSL style short plaintext
+    GcmVector {
+        key: "e5ac4a32c67e425bae6c19d2e25f0e8a3d0de5502cc3b1ee4ef83f16e75f2e29",
+        nonce: "5bf11a0951f0bfc81e2a0750",
+        pt: "54657374696e672031203220332e",
+        aad: "",
+        ct: "13f9e79f7c0627be185474023c2c",
+        tag: "92a13cc6519f9ee5dc0c7e11b6e29490",
+    },
+    // Source: pyca/cryptography verified – 256-byte zero plaintext
+    GcmVector {
+        key: "4c8ebfe1444ec1b2d503c6986659af2c94fafe945f0ec25f043bde6ef0fa8f0a",
+        nonce: "473360e0ad24889959858282",
+        pt: "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        aad: "",
+        ct: "4e557bbaa946e00f5d152e5cb33aef3a06270dcc4d97bfc33a7857414140b316b6a99b0490b5bc02a2de20c7ddc02a2bc7a6a0591d2e2ff56fda74780dbc8745154314e9484dd8683b9ce893081c7306a45db1e8ca5f02bd688bb182a3e293362efca92c85c8b7cfe83cc2f70084877dbcecf57469c6fe2c990722355fab1f43530c465424ed1bf7f03b93c403b005a40ea9238f4c2c816d1d9af48ddad9c7d1e8abf11d00f38110867c720fdddcfa0769cc39daf81178c82ab960c3309200610a42e5219c920e8a5c0b30c360218e80f7418fa4a9e556f199da87636616bf27b484a4bef1db582a0a11a5f20a9b5ecdce3e703f98086b13e453cc16f3d87e51",
+        tag: "b2c3a2b04f167587e821f50efce64b0c",
+    },
+    // Source: pyca/cryptography verified – Large AAD (128 bytes) with 32-byte plaintext
+    GcmVector {
+        key: "2f1e0a2fc2355b7e18b6adab7ccbe8a27e3e3faab3f06f26d3e1fe2e69ab3bff",
+        nonce: "a91cd374a3a4362fd1f30e2f",
+        pt: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        aad: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        ct: "4009a0f359798995faa7f3610d7fab81a097fc171619940082b381453bc512dc",
+        tag: "10add57efc77a4bcb30e94a82dbe8c1a",
+    },
+    // Source: pyca/cryptography verified – Single byte plaintext with AAD
+    GcmVector {
+        key: "3881e7be1bb3bbcbcda0f07b7a4471e6ae18e5f0e93a6cb14647c2de85ffbeef",
+        nonce: "dcf5b7ae2f0f4d2684f2baae",
+        pt: "42",
+        aad: "deadbeef",
+        ct: "d5",
+        tag: "b32d586e094a7e2fa2bb86d2df7adc02",
+    },
+    // Source: pyca/cryptography verified – 15-byte plaintext (sub-block)
+    GcmVector {
+        key: "a4bc10b1a62c96d459fbaf3a5aa3face7313bb9e1253e696f96a7a8e36801088",
+        nonce: "a544218dadd3c10583db49cf",
+        pt: "00112233445566778899aabbccddee",
+        aad: "",
+        ct: "315167cf54ba0d2d37270b4b93cd66",
+        tag: "b5e0791ac0672c38a845503137f797e1",
+    },
+    // Source: pyca/cryptography verified – 17-byte plaintext (just over one block) with AAD
+    GcmVector {
+        key: "8395fcf1e95bebd697bd010bc766aac3af96bdf3e4f916e6f67e5561bb8e9f96",
+        nonce: "0e8d0b2d38e0f8d7a68ce2ad",
+        pt: "00112233445566778899aabbccddeeff11",
+        aad: "4142434445464748",
+        ct: "3a810ec7d35ff484224c7327724fde4393",
+        tag: "1472036169976e5a36ff68daa3078d3e",
+    },
+    // Source: pyca/cryptography verified – MAC-only with 128-byte AAD
+    GcmVector {
+        key: "014c9214862a18d2b46384e25c1a1c0030476defd1ea39d29a1cee84eca15b05",
+        nonce: "0b7fdbfb25e1bc9daae8a28c",
+        pt: "",
+        aad: "aabbccddeeff0011aabbccddeeff0011aabbccddeeff0011aabbccddeeff0011aabbccddeeff0011aabbccddeeff0011aabbccddeeff0011aabbccddeeff0011aabbccddeeff0011aabbccddeeff0011aabbccddeeff0011aabbccddeeff0011aabbccddeeff0011aabbccddeeff0011aabbccddeeff0011aabbccddeeff0011",
+        ct: "",
+        tag: "4b41034df2152a1b22f3d68dee395e24",
+    },
+    // Source: pyca/cryptography verified – Multi-block (64-byte PT, 32-byte AAD)
+    GcmVector {
+        key: "b52c505a37d78eda5dd34f20c22540ea1b58963cf8e5bf8ffa85f9f2492505b4",
+        nonce: "516c33929df5a3284ff463d7",
+        pt: "00010203040506070001020304050607000102030405060700010203040506070001020304050607000102030405060700010203040506070001020304050607",
+        aad: "0001020304050607000102030405060700010203040506070001020304050607",
+        ct: "e69c8e689b8eb6386bfdcb2509d4c21797fec618d7c56b4ab1cf8c37e1db437a3f21a04732b8a2a6e5d1f2985fa06f9e848c3f5f115142580adf65e57a6c863f",
+        tag: "1fa8e4f994d15d7cfff7315b487c6713",
+    },
+    // Source: pyca/cryptography verified – Incrementing pattern (NIST CAVP style)
+    GcmVector {
+        key: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        nonce: "000102030405060708090a0b",
+        pt: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        aad: "000102030405060708090a0b0c0d0e0f",
+        ct: "4703d418c1e0c41c85489d80bde4766293c79527e46e496b207eff9e01741ead",
+        tag: "209d59e08347d37153a593a1fca88881",
+    },
+    // Source: pyca/cryptography verified – All-ones key, plaintext, and AAD
+    GcmVector {
+        key: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        nonce: "ffffffffffffffffffffffff",
+        pt: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        aad: "ffffffffffffffffffffffffffffffff",
+        ct: "42c4417ae76f276beb09973a4b9b3715e6a0fc4d53cb94e7338af461b0837bc1",
+        tag: "6f1e9ac49421d9ca6e6720b4d22e0cbe",
+    },
+    // Source: pyca/cryptography verified – Alternating bit patterns
+    GcmVector {
+        key: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        nonce: "555555555555555555555555",
+        pt: "aa55aa55aa55aa55aa55aa55aa55aa55aa55aa55aa55aa55aa55aa55aa55aa55",
+        aad: "55aa55aa55aa55aa55aa55aa55aa55aa",
+        ct: "629139940711d698f7e956430f425b1f51b3f03ef647a1d1479b7cb552616acd",
+        tag: "9ead0bc82db5a46ef03ac3195ab1de05",
+    },
+    // Source: pyca/cryptography verified – 3-block (48-byte) plaintext
+    GcmVector {
+        key: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        nonce: "fedcba9876543210fedc0123",
+        pt: "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+        aad: "",
+        ct: "de7384a1c9f8fe4fa022a7ff71525ec36723d5f17b0f06e7d656911c9c39c457d1429ffd70d17430f029846ad6639781",
+        tag: "7bf9dce9edcf955f0cd751bd46cdb943",
+    },
+    // Source: pyca/cryptography verified – 5-block (80-byte) PT with 3-block (48-byte) AAD
+    GcmVector {
+        key: "deadbeefcafebabedeadbeefcafebabedeadbeefcafebabedeadbeefcafebabe",
+        nonce: "0bad0bad0bad0bad0bad0bad",
+        pt: "48656c6c6f20576f726c642148656c6c6f20576f726c642148656c6c6f20576f726c642148656c6c6f20576f726c642148656c6c6f20576f726c642148656c6c6f20576f726c642148656c6c6f20576f",
+        aad: "416464206d65746164617461416464206d65746164617461416464206d65746164617461416464206d65746164617461",
+        ct: "7caf8fe2c0f2ee0fd0282c977620fa0c65cb448dae9ed89922a4dfbe387a26489265b9b8c2258f19dd2d4b29c13aa19be755220e3f0ff57dc2ac49fd1f8f1f4500fcae6fa6c102e23c1822013ff695b9",
+        tag: "804e1175cb90bef1bb3ac867e1f104d3",
+    },
+    // Source: pyca/cryptography verified – 2-block PT with 1-byte AAD
+    GcmVector {
+        key: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        nonce: "bbbbbbbbbbbbbbbbbbbbbbbb",
+        pt: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        aad: "dd",
+        ct: "06dd876abad19614fc58615121a916d6794c3bf745fca14124b777efbc12e163",
+        tag: "f537f82fe5c633b0bcbb74a47857ab69",
+    },
+    // Source: pyca/cryptography verified – 31-byte PT with 20-byte AAD
+    GcmVector {
+        key: "1111111111111111111111111111111122222222222222222222222222222222",
+        nonce: "333333333333333333333333",
+        pt: "44444444444444444444444444444444444444444444444444444444444444",
+        aad: "5555555555555555555555555555555555555555",
+        ct: "6d5fe7e7516f31d40a33a1c254ca67b5e95bbe82f28cc454c689b4e5efab79",
+        tag: "06ac4b2c8b5bca4823c61b28bc2c27fc",
+    },
 ];
