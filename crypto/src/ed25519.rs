@@ -548,4 +548,139 @@ mod tests {
         invalid[..31].fill(0);
         assert!(!is_valid_public_key(&invalid));
     }
+
+    /// Test vectors from https://github.com/C2SP/CCTV/tree/main/ed25519
+    ///
+    /// Our implementation follows RFC 8032 with cofactored verification:
+    /// - Rejects non-canonical point encodings (y >= p) for both A and R
+    /// - Rejects non-canonical s (s >= L)
+    /// - Uses cofactored equation [8][S]B = [8]R + [8][k]A
+    ///
+    /// Therefore:
+    /// - Vectors with `non_canonical_A` or `non_canonical_R` → must REJECT
+    /// - All other vectors (including `low_order_residue`) → must ACCEPT
+    #[test]
+    fn cctv_ed25519_vectors() {
+        let data = include_str!("../testdata/ed25519/cctv_vectors.txt");
+
+        for line in data.lines() {
+            let parts: Vec<&str> = line.split(':').collect();
+            assert_eq!(parts.len(), 5, "malformed line: {line}");
+            let number = parts[0];
+            let key_hex = parts[1];
+            let sig_hex = parts[2];
+            let msg_hex = parts[3];
+            let flags_str = parts[4];
+
+            let flags: Vec<&str> = if flags_str.is_empty() {
+                vec![]
+            } else {
+                flags_str.split(',').collect()
+            };
+
+            let has_non_canonical_a = flags.contains(&"non_canonical_A");
+            let has_non_canonical_r = flags.contains(&"non_canonical_R");
+            let should_reject = has_non_canonical_a || has_non_canonical_r;
+
+            let public_key = decode_hex::<32>(key_hex);
+            let signature = decode_hex::<64>(sig_hex);
+            let message = decode_hex_vec(msg_hex);
+
+            let result = ed25519_verify(&public_key, &message, &signature);
+
+            if should_reject {
+                assert!(
+                    result.is_err(),
+                    "vector #{number} should be rejected (flags: {flags_str}) but was accepted",
+                );
+            } else {
+                assert!(
+                    result.is_ok(),
+                    "vector #{number} should be accepted (flags: {flags_str}) but was rejected",
+                );
+            }
+        }
+    }
+
+    /// Additional RFC 8032 test vectors (the longer messages from Section 7.1)
+    #[test]
+    fn rfc8032_extended_vectors() {
+        // SHA(abc) test vector
+        let vectors = [
+            TestVector {
+                seed: "833fe62409237b9d62ec77587520911e9a759cec1d19755b7da901b96dca3d42",
+                public_key: "ec172b93ad5e563bf4932c70e1245034c35467ef2efd4d64ebf819683467e2bf",
+                message: "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f",
+                signature: "dc2a4459e7369633a52b1bf277839a00201009a3efbf3ecb69bea2186c26b58909351fc9ac90b3ecfdfbc7c66431e0303dca179c138ac17ad9bef1177331a704",
+            },
+        ];
+        for vector in &vectors {
+            assert_vector(vector);
+        }
+    }
+
+    /// Wycheproof-style edge case tests
+    #[test]
+    fn verify_rejects_all_zero_signature() {
+        let public_key = decode_hex::<32>("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a");
+        let signature = [0u8; 64];
+        // All-zero signature has R = identity (valid) and s = 0 (valid),
+        // but the equation [8][0]B = [8]R + [8][k]A won't hold for arbitrary keys
+        let result = ed25519_verify(&public_key, b"test", &signature);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn verify_rejects_s_equals_l() {
+        // s = L (the group order) should be rejected as non-canonical
+        let seed = decode_hex::<32>("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
+        let public_key = derive_public_key(&seed);
+        let signature = ed25519_sign(&seed, b"test");
+
+        let mut bad_sig = signature;
+        // Set s to exactly L
+        bad_sig[32..].copy_from_slice(&[
+            0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9,
+            0xde, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x10,
+        ]);
+        assert!(ed25519_verify(&public_key, b"test", &bad_sig).is_err());
+    }
+
+    #[test]
+    fn verify_rejects_non_canonical_point_encodings() {
+        // Public key with y >= p (non-canonical)
+        let non_canonical_key =
+            decode_hex::<32>("edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f");
+        let signature = [0u8; 64]; // dummy
+        assert!(ed25519_verify(&non_canonical_key, b"test", &signature).is_err());
+
+        // Valid public key but R in signature with y >= p
+        let seed = decode_hex::<32>("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
+        let public_key = derive_public_key(&seed);
+        let mut bad_sig = ed25519_sign(&seed, b"test");
+        // Set R to a non-canonical encoding (y = p, which is >= p)
+        bad_sig[..32].copy_from_slice(&[
+            0xed, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xff, 0x7f,
+        ]);
+        assert!(ed25519_verify(&public_key, b"test", &bad_sig).is_err());
+    }
+
+    #[test]
+    fn sign_verify_roundtrip_various_lengths() {
+        let seed = decode_hex::<32>("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
+        let public_key = derive_public_key(&seed);
+
+        // Test various message lengths including edge cases
+        for len in [0, 1, 2, 16, 32, 64, 128, 255, 256, 1024] {
+            let message: Vec<u8> = (0..len).map(|i| (i & 0xff) as u8).collect();
+            let signature = ed25519_sign(&seed, &message);
+            assert!(
+                ed25519_verify(&public_key, &message, &signature).is_ok(),
+                "roundtrip failed for message length {len}"
+            );
+        }
+    }
 }
