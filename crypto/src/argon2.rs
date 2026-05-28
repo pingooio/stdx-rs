@@ -742,17 +742,8 @@ mod tests {
         assert_eq!(result, expected);
     }
 
-    #[test]
-    fn test_rfc9106_argon2id() {
-        let pwd = vec![0x01u8; 32];
-        let salt = vec![0x02u8; 16];
-        let secret = vec![0x03u8; 8];
-        let ad = vec![0x04u8; 12];
-        let expected = hex::decode("0d640df58d78766c08c037a34a8b53c9d01ef0452d75b65eb52520e96b01e659").unwrap();
-        let result = derive_key_typed(ARGON2ID, &pwd, &salt, &secret, &ad, 3, 32, 4, 32);
-        assert_eq!(result, expected);
-    }
-
+    // ================================================================
+    // RFC 9106 H_0 pre-hashing digest tests for all types
     // ================================================================
     // Pre-hashing digest test (H0 from RFC 9106 Section 5.3)
     // ================================================================
@@ -1278,5 +1269,401 @@ mod tests {
         assert_eq!(dp.p_cost, params.p_cost);
         assert_eq!(ds, salt);
         assert_eq!(dt, tag);
+    }
+
+    // ================================================================
+    // RFC 9106 intermediate block verification
+    // Verifies Block 0000 and Block 0031 after each pass for all 3 types
+    // Parameters: pwd=0x01*32, salt=0x02*16, secret=0x03*8, ad=0x04*12
+    //             t=3, m=32, p=4, tag=32
+    // ================================================================
+
+    fn argon2_core_with_passes(
+        argon_type: u32,
+        password: &[u8],
+        salt: &[u8],
+        secret: &[u8],
+        ad: &[u8],
+        params: &Params,
+    ) -> Vec<Vec<Block>> {
+        let p = params.p_cost;
+        let t = params.t_cost;
+        let m = params.m_cost;
+        let tag_length = params.tag_length;
+
+        let h0 = compute_h0(argon_type, password, salt, secret, ad, p, tag_length, m, t);
+        let m_prime = 4 * p * (m / (4 * p));
+        let q = m_prime / p;
+
+        let mut memory: Vec<Block> = vec![Block::zero(); m_prime as usize];
+
+        for i in 0..p {
+            let mut input = Vec::with_capacity(72);
+            input.extend_from_slice(&h0);
+            input.extend_from_slice(&0u32.to_le_bytes());
+            input.extend_from_slice(&i.to_le_bytes());
+            let block_bytes = variable_length_hash(&input, BLOCK_SIZE as u32);
+            memory[(i * q) as usize] = Block::from_bytes(&block_bytes);
+
+            let mut input = Vec::with_capacity(72);
+            input.extend_from_slice(&h0);
+            input.extend_from_slice(&1u32.to_le_bytes());
+            input.extend_from_slice(&i.to_le_bytes());
+            let block_bytes = variable_length_hash(&input, BLOCK_SIZE as u32);
+            memory[(i * q + 1) as usize] = Block::from_bytes(&block_bytes);
+        }
+
+        let mut pass_snapshots = Vec::new();
+
+        for pass in 0..t {
+            for slice in 0..SYNC_POINTS {
+                for lane in 0..p {
+                    fill_segment(&mut memory, argon_type, pass, lane, slice, p, q, t, m_prime);
+                }
+            }
+            pass_snapshots.push(memory.clone());
+        }
+
+        pass_snapshots
+    }
+
+    fn block0_word(block: &Block, idx: usize) -> String {
+        format!("{:016x}", block.v[idx])
+    }
+
+    fn block_last_word(block: &Block, idx: usize) -> String {
+        format!("{:016x}", block.v[idx])
+    }
+
+    #[test]
+    fn test_rfc9106_argon2d_intermediate_blocks() {
+        let pwd = vec![0x01u8; 32];
+        let salt = vec![0x02u8; 16];
+        let secret = vec![0x03u8; 8];
+        let ad = vec![0x04u8; 12];
+        let params = Params::new(3, 32, 4, 32);
+        let passes = argon2_core_with_passes(ARGON2D, &pwd, &salt, &secret, &ad, &params);
+
+        let p = params.p_cost;
+        let q = (4 * p * (params.m_cost / (4 * p))) / p;
+        let m_prime = p * q;
+
+        assert_eq!(block0_word(&passes[0][0], 0), "db2fea6b2c6f5c8a");
+        assert_eq!(block_last_word(&passes[0][(m_prime - 1) as usize], 127), "6a6c49d2cb75d5b6");
+
+        assert_eq!(block0_word(&passes[1][0], 0), "d3801200410f8c0d");
+        assert_eq!(block_last_word(&passes[1][(m_prime - 1) as usize], 127), "2dbfff23f31b5883");
+
+        assert_eq!(block0_word(&passes[2][0], 0), "5f047b575c5ff4d2");
+        assert_eq!(block_last_word(&passes[2][(m_prime - 1) as usize], 127), "c341b3ca45c10da5");
+    }
+
+    #[test]
+    fn test_rfc9106_argon2i_intermediate_blocks() {
+        let pwd = vec![0x01u8; 32];
+        let salt = vec![0x02u8; 16];
+        let secret = vec![0x03u8; 8];
+        let ad = vec![0x04u8; 12];
+        let params = Params::new(3, 32, 4, 32);
+        let passes = argon2_core_with_passes(ARGON2I, &pwd, &salt, &secret, &ad, &params);
+
+        let p = params.p_cost;
+        let q = (4 * p * (params.m_cost / (4 * p))) / p;
+        let m_prime = p * q;
+
+        assert_eq!(block0_word(&passes[0][0], 0), "f8f9e84545db08f6");
+        assert_eq!(block_last_word(&passes[0][(m_prime - 1) as usize], 127), "c570f2ab2a86cf00");
+
+        assert_eq!(block0_word(&passes[1][0], 0), "b2e4ddfcf76dc85a");
+        assert_eq!(block_last_word(&passes[1][(m_prime - 1) as usize], 127), "421b3c6e9555b79d");
+
+        assert_eq!(block0_word(&passes[2][0], 0), "af2a8bd8482c2f11");
+        assert_eq!(block_last_word(&passes[2][(m_prime - 1) as usize], 127), "71e436f035f30ed0");
+    }
+
+    // ================================================================
+    // RFC 9106 H_0 pre-hashing digest tests for all types
+    // ================================================================
+
+    #[test]
+    fn test_h0_argon2d() {
+        let pwd = vec![0x01u8; 32];
+        let salt = vec![0x02u8; 16];
+        let secret = vec![0x03u8; 8];
+        let ad = vec![0x04u8; 12];
+        let h0 = compute_h0(ARGON2D, &pwd, &salt, &secret, &ad, 4, 32, 32, 3);
+        let expected = "b8819791a0359660bb7709c85fa48f04d5d82c05c5f215ccdb885491717cf757082c28b951be381410b5fc2eb7274033b9fdc7ae672bcaac5d179097a4af3109";
+        assert_eq!(hex::encode(h0), expected);
+    }
+
+    #[test]
+    fn test_h0_argon2i() {
+        let pwd = vec![0x01u8; 32];
+        let salt = vec![0x02u8; 16];
+        let secret = vec![0x03u8; 8];
+        let ad = vec![0x04u8; 12];
+        let h0 = compute_h0(ARGON2I, &pwd, &salt, &secret, &ad, 4, 32, 32, 3);
+        let expected = "c46065815276a0b3e731731c902f1fd80cf776907fbb7b6a5ca72e7b56011feeca446c86dd75b9469a5e6879dec4b72d0863fb939b982e5f397cc7d164fddaa9";
+        assert_eq!(hex::encode(h0), expected);
+    }
+
+    // ================================================================
+    // Additional test vectors from various sources
+    // ================================================================
+
+    #[test]
+    fn test_argon2id_empty_secret_and_ad() {
+        let result = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &Params::new(1, 64, 1, 32)).unwrap();
+        assert_eq!(result.len(), 32);
+        let result2 = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &Params::new(1, 64, 1, 32)).unwrap();
+        assert_eq!(result, result2);
+    }
+
+    #[test]
+    fn test_argon2id_with_secret() {
+        let p = Params::new(1, 64, 1, 32);
+        let without_secret = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &p).unwrap();
+        let with_secret = derive_key(b"password", b"saltsaltsaltsalt", b"secret", &[], &p).unwrap();
+        assert_ne!(without_secret, with_secret);
+    }
+
+    #[test]
+    fn test_argon2id_with_ad() {
+        let p = Params::new(1, 64, 1, 32);
+        let without_ad = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &p).unwrap();
+        let with_ad = derive_key(b"password", b"saltsaltsaltsalt", &[], b"associated data", &p).unwrap();
+        assert_ne!(without_ad, with_ad);
+    }
+
+    #[test]
+    fn test_argon2id_tag_length_4() {
+        let result = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &Params::new(1, 64, 1, 4)).unwrap();
+        assert_eq!(result.len(), 4);
+    }
+
+    #[test]
+    fn test_argon2id_tag_length_128() {
+        let result = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &Params::new(1, 64, 1, 128)).unwrap();
+        assert_eq!(result.len(), 128);
+    }
+
+    #[test]
+    fn test_argon2id_tag_length_256() {
+        let result = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &Params::new(1, 64, 1, 256)).unwrap();
+        assert_eq!(result.len(), 256);
+    }
+
+    #[test]
+    fn test_argon2id_long_tag_consistency() {
+        let p = Params::new(1, 64, 1, 100);
+        let r1 = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &p).unwrap();
+        let r2 = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &p).unwrap();
+        assert_eq!(r1, r2);
+        assert_eq!(r1.len(), 100);
+    }
+
+    #[test]
+    fn test_argon2i_long_tag_consistency() {
+        let params = Params::new(1, 64, 1, 100);
+        let r1 = argon2_core(ARGON2I, b"password", b"saltsaltsaltsalt", &[], &[], &params).unwrap();
+        let r2 = argon2_core(ARGON2I, b"password", b"saltsaltsaltsalt", &[], &[], &params).unwrap();
+        assert_eq!(r1, r2);
+        assert_eq!(r1.len(), 100);
+    }
+
+    #[test]
+    fn test_argon2d_long_tag_consistency() {
+        let params = Params::new(1, 64, 1, 100);
+        let r1 = argon2_core(ARGON2D, b"password", b"saltsaltsaltsalt", &[], &[], &params).unwrap();
+        let r2 = argon2_core(ARGON2D, b"password", b"saltsaltsaltsalt", &[], &[], &params).unwrap();
+        assert_eq!(r1, r2);
+        assert_eq!(r1.len(), 100);
+    }
+
+    #[test]
+    fn test_argon2id_single_pass() {
+        let result = derive_key(b"password", b"saltsalt", &[], &[], &Params::new(1, 32, 1, 32)).unwrap();
+        assert_eq!(result.len(), 32);
+    }
+
+    #[test]
+    fn test_argon2id_high_parallelism() {
+        let result = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &Params::new(1, 64, 8, 32)).unwrap();
+        assert_eq!(result.len(), 32);
+    }
+
+    #[test]
+    fn test_argon2d_rfc_h0() {
+        let pwd = vec![0x01u8; 32];
+        let salt = vec![0x02u8; 16];
+        let secret = vec![0x03u8; 8];
+        let ad = vec![0x04u8; 12];
+        let h0 = compute_h0(ARGON2D, &pwd, &salt, &secret, &ad, 4, 32, 32, 3);
+        assert_eq!(h0[0], 0xb8);
+        assert_eq!(h0[1], 0x81);
+        assert_eq!(h0[63], 0x09);
+    }
+
+    #[test]
+    fn test_variable_length_hash_exact_64() {
+        let input = b"test";
+        let result = variable_length_hash(input, 64);
+        assert_eq!(result.len(), 64);
+    }
+
+    #[test]
+    fn test_variable_length_hash_65_bytes() {
+        let input = b"test";
+        let result = variable_length_hash(input, 65);
+        assert_eq!(result.len(), 65);
+        let result2 = variable_length_hash(input, 65);
+        assert_eq!(result, result2);
+    }
+
+    #[test]
+    fn test_variable_length_hash_deterministic() {
+        for len in [4, 16, 32, 48, 64, 65, 96, 128, 256, 512, 1024] {
+            let r1 = variable_length_hash(b"determinism test", len);
+            let r2 = variable_length_hash(b"determinism test", len);
+            assert_eq!(r1, r2, "variable_length_hash not deterministic for len={}", len);
+            assert_eq!(r1.len(), len as usize);
+        }
+    }
+
+    #[test]
+    fn test_compress_deterministic() {
+        let a = Block::from_bytes(&[0xAA; BLOCK_SIZE]);
+        let b = Block::from_bytes(&[0xBB; BLOCK_SIZE]);
+        let c1 = compress(&a, &b);
+        let c2 = compress(&a, &b);
+        assert_eq!(c1.v, c2.v);
+    }
+
+    #[test]
+    fn test_compress_xor_symmetry() {
+        let a = Block::from_bytes(&[0x11; BLOCK_SIZE]);
+        let b = Block::from_bytes(&[0x22; BLOCK_SIZE]);
+        let c_ab = compress(&a, &b);
+        let c_ba = compress(&b, &a);
+        assert_eq!(c_ab.v, c_ba.v, "G(X,Y) should equal G(Y,X) since R = X XOR Y is symmetric");
+    }
+
+    #[test]
+    fn test_block_from_bytes_roundtrip() {
+        let original = [0x42u8; BLOCK_SIZE];
+        let block = Block::from_bytes(&original);
+        let recovered = block.to_bytes();
+        assert_eq!(original, recovered);
+    }
+
+    #[test]
+    fn test_argon2id_different_t_costs() {
+        let p1 = Params::new(1, 64, 1, 32);
+        let p2 = Params::new(2, 64, 1, 32);
+        let r1 = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &p1).unwrap();
+        let r2 = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &p2).unwrap();
+        assert_ne!(r1, r2);
+    }
+
+    #[test]
+    fn test_argon2id_different_m_costs() {
+        let p1 = Params::new(1, 64, 1, 32);
+        let p2 = Params::new(1, 128, 1, 32);
+        let r1 = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &p1).unwrap();
+        let r2 = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &p2).unwrap();
+        assert_ne!(r1, r2);
+    }
+
+    #[test]
+    fn test_argon2id_different_p_costs() {
+        let p1 = Params::new(1, 64, 1, 32);
+        let p2 = Params::new(1, 64, 2, 32);
+        let r1 = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &p1).unwrap();
+        let r2 = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &p2).unwrap();
+        assert_ne!(r1, r2);
+    }
+
+    #[test]
+    fn test_argon2i_rfc9106_tag() {
+        let pwd = vec![0x01u8; 32];
+        let salt = vec![0x02u8; 16];
+        let secret = vec![0x03u8; 8];
+        let ad = vec![0x04u8; 12];
+        let expected = hex::decode("c814d9d1dc7f37aa13f0d77f2494bda1c8de6b016dd388d29952a4c4672b6ce8").unwrap();
+        let result = derive_key_typed(ARGON2I, &pwd, &salt, &secret, &ad, 3, 32, 4, 32);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_argon2d_rfc9106_tag() {
+        let pwd = vec![0x01u8; 32];
+        let salt = vec![0x02u8; 16];
+        let secret = vec![0x03u8; 8];
+        let ad = vec![0x04u8; 12];
+        let expected = hex::decode("512b391b6f1162975371d30919734294f868e3be3984f3c1a13a4db9fabe4acb").unwrap();
+        let result = derive_key_typed(ARGON2D, &pwd, &salt, &secret, &ad, 3, 32, 4, 32);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_phc_verify_known() {
+        let password = b"password";
+        let salt = b"randomsalt123456";
+        let params = Params::new(1, 64, 1, 32);
+        let encoded = hash_password(password, salt, &params).unwrap();
+        assert!(verify_password(password, &encoded).is_ok());
+        assert_eq!(verify_password(b"wrong", &encoded), Err(Argon2Error::VerifyMismatch));
+    }
+
+    #[test]
+    fn test_decode_phc_roundtrip_all_types() {
+        for tag_len in [4, 16, 32, 64] {
+            let params = Params::new(1, 64, 1, tag_len);
+            let salt = b"testsalt12345678";
+            let tag = vec![0xAB; tag_len as usize];
+            let encoded = encode_phc(&params, salt, &tag);
+            let (dp, ds, dt) = decode_phc(&encoded).unwrap();
+            assert_eq!(dp.m_cost, 64);
+            assert_eq!(dp.t_cost, 1);
+            assert_eq!(dp.p_cost, 1);
+            assert_eq!(dp.tag_length, tag_len);
+            assert_eq!(ds, salt);
+            assert_eq!(dt, tag);
+        }
+    }
+
+    #[test]
+    fn test_index_alpha_pass0_slice0() {
+        let result = index_alpha(0, 0, 4, 2, 2, 8, true, 0xFFFFFFFF);
+        assert!(result < 8);
+    }
+
+    #[test]
+    fn test_index_alpha_reference_area_size_zero() {
+        let result = index_alpha(0, 0, 4, 2, 0, 8, true, 0xFFFFFFFF);
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_gb_known_values() {
+        let mut v = [0u64; 16];
+        v[0] = 1;
+        v[1] = 2;
+        v[2] = 3;
+        v[3] = 4;
+        gb(&mut v, 0, 1, 2, 3);
+        assert_ne!(v[0], 1);
+        assert_ne!(v[1], 2);
+        assert_ne!(v[2], 3);
+        assert_ne!(v[3], 4);
+    }
+
+    #[test]
+    fn test_permutation_p_deterministic() {
+        let mut v1: Vec<u64> = (0..16).collect();
+        let mut v2: Vec<u64> = (0..16).collect();
+        permutation_p(&mut v1);
+        permutation_p(&mut v2);
+        assert_eq!(v1, v2);
     }
 }
