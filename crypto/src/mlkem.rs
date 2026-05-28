@@ -227,10 +227,7 @@ fn indcpa_keypair_derand<const K: usize>(
     debug_assert_eq!(secret_key.len(), indcpa_secret_key_bytes::<K>());
     debug_assert_eq!(coins.len(), 32);
 
-    let mut seed_input = [0u8; 33];
-    seed_input[..32].copy_from_slice(coins);
-    seed_input[32] = K as u8;
-    let seed_output = hash_g(&seed_input);
+    let seed_output = hash_g(coins);
     let public_seed = array_ref_32(&seed_output[..32]);
     let noise_seed = array_ref_32(&seed_output[32..64]);
     let matrix = gen_matrix::<K>(public_seed, false);
@@ -967,6 +964,20 @@ pub(crate) fn ml_kem_768_enc_derand(
 mod tests {
     use super::*;
 
+    fn decode_hex_array<const N: usize>(s: &str) -> [u8; N] {
+        let bytes = hex::decode(s).expect("valid hex");
+        assert_eq!(bytes.len(), N);
+        let mut out = [0u8; N];
+        out.copy_from_slice(&bytes);
+        out
+    }
+
+    fn sha3_256_hex(data: &[u8]) -> String {
+        let mut hasher = Sha3_256::new();
+        hasher.write(data);
+        hex::encode(hasher.sum())
+    }
+
     #[test]
     fn ml_kem_768_round_trip() {
         let (private_key, public_key) = ml_kem_768_generate_keypair();
@@ -1021,15 +1032,15 @@ mod tests {
         assert_eq!(shared_secret, decapsulated);
         assert_eq!(
             hex::encode(&public_key[..32]),
-            "925a2700ad064ff778b4da4cf51457a48224a52751250a8ee10b251c818bafca"
+            "a3079b40b63dda089e5101bfa5b055487a9eb8265330b9045f7ab5449591ff72"
         );
         assert_eq!(
             hex::encode(&ciphertext[..32]),
-            "766c326c3483444c5b6d917cdddc3c07fbf935295c8f17c92a187a80dc4d15f2"
+            "ffa4ebfcaacd3961ff3415e068c8e5b87772c62d819cc9141785a975f5bfefec"
         );
         assert_eq!(
             hex::encode(shared_secret),
-            "afcf18dfd6b710a09b5cf591d0eb8229d83aa10904934a3ca60a52da5ff36b96"
+            "1bdd0d32957656170294c6cb995159dc2525401805d04e96b84aa09689345c19"
         );
     }
 
@@ -1194,15 +1205,79 @@ mod tests {
         assert_eq!(shared_secret, decapsulated);
         assert_eq!(
             hex::encode(&public_key[..32]),
-            "2dd29da8b193397a4336c02382aab3bcfbac25f0cd71c888af379e1e75149a79"
+            "36785dd5a32af1151f8c5c1138dc2f17677e33338803b0c1cb8b46aedc6042b9"
         );
         assert_eq!(
             hex::encode(&ciphertext[..32]),
-            "5f12f173ef59a45f910d3a225913f3297b2277636a72401a273648015cccf079"
+            "373673b2532d1b1a9076db3142e06e686b48e96125a3e2bfb7199bf66b7a9eef"
         );
         assert_eq!(
             hex::encode(shared_secret),
-            "8bf157178aa556b55f95686ba9b5afe13a6b75c848f1ddd9a334d50287bec24e"
+            "efb9c707ce15652ab8d968d49c32d5f59edb08d88af1175380a53baed083115d"
         );
+    }
+
+    #[test]
+    fn ml_kem_768_cctv_intermediate_vector() {
+        // Source: https://github.com/C2SP/CCTV/blob/67c1397af2a57f935cc96ee112b446c051cdb68a/ML-KEM/intermediate/ML-KEM-768.txt
+        let d: [u8; 32] = decode_hex_array("f688563f7c66a5da2d8bdb5a5f3e07bd8dce6f7efcec7f41298d79863459f7cd");
+        let z: [u8; 32] = decode_hex_array("d1d49a515250dbceb9f6e3fcc1c7d5306918964b21ddb22207e03e57f0600da8");
+        let m: [u8; 32] = decode_hex_array("3dc27ca0a6594b0e56320457c45a0f76bb8a213ea4a76d442186a0aefadbcdb9");
+
+        let mut coins = [0u8; 64];
+        coins[..32].copy_from_slice(&d);
+        coins[32..].copy_from_slice(&z);
+
+        let (dk, ek) =
+            crypto_kem_keypair_derand::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_PUBLIC_KEY_SIZE>(&ML_KEM_768, &coins);
+        let (ct, k) =
+            crypto_kem_enc_derand::<3, ML_KEM_768_PUBLIC_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(&ML_KEM_768, &ek, &m);
+
+        assert_eq!(
+            sha3_256_hex(&ek),
+            "704649a5d8034c6224ae18950bd7b979342c03c7499f7bab9cdea742db9e086c"
+        );
+        assert_eq!(
+            sha3_256_hex(&dk),
+            "3e61fefc04d2e17be1f413dea9862cde9f2ce304d62d77a3d64b2d0d016e62e9"
+        );
+        assert_eq!(
+            sha3_256_hex(&ct),
+            "8f51465476690de0f2c9df600f7316d969975d0bc74627fb973ab1eb700708f7"
+        );
+        assert_eq!(hex::encode(k), "4b4eba37eff0315dc6009dcffb4dfbbb680f8f2ebde8715fa3d6daf70256a2d9");
+    }
+
+    #[test]
+    fn ml_kem_1024_cctv_intermediate_vector() {
+        // Source: https://github.com/C2SP/CCTV/blob/67c1397af2a57f935cc96ee112b446c051cdb68a/ML-KEM/intermediate/ML-KEM-1024.txt
+        let d: [u8; 32] = decode_hex_array("2a62c39ef4fc499f2d132716f480bb7521a49558ae84ee80d9352e66daf1e3a8");
+        let z: [u8; 32] = decode_hex_array("5f574ef7f013d4336801fed022178c3ed91d0b6d51325315fc1dcabf4770a2ea");
+        let m: [u8; 32] = decode_hex_array("e07d685ed308e609c9c7842026e35732f6ffc6e2fee10f0afd348f2b42a8acb4");
+
+        let mut coins = [0u8; 64];
+        coins[..32].copy_from_slice(&d);
+        coins[32..].copy_from_slice(&z);
+
+        let (dk, ek) = crypto_kem_keypair_derand::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_PUBLIC_KEY_SIZE>(
+            &ML_KEM_1024,
+            &coins,
+        );
+        let (ct, k) =
+            crypto_kem_enc_derand::<4, ML_KEM_1024_PUBLIC_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(&ML_KEM_1024, &ek, &m);
+
+        assert_eq!(
+            sha3_256_hex(&ek),
+            "fa12bd4f75caa74f23b4af606902f6187dd9be62a43b1b529344f1114e69391d"
+        );
+        assert_eq!(
+            sha3_256_hex(&dk),
+            "372dcfe73415c09799c6c9cfb1b270f832dd9c4bfd1e1d52f65f240eef6cf1d1"
+        );
+        assert_eq!(
+            sha3_256_hex(&ct),
+            "139f4eba814f88769e71f0f0a2cfd76ba6ae89e9072c204d64b1de0ef19ca7a2"
+        );
+        assert_eq!(hex::encode(k), "6c4f4a231255a8cdfb7424c8dabf3a624cefaffd28964efe220ab6178fa6b324");
     }
 }
