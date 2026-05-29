@@ -20,6 +20,8 @@ pub mod xwing;
 
 mod bytes;
 
+#[cfg(feature = "alloc")]
+pub mod encoding;
 pub mod p256;
 pub use aes::Aes256Gcm;
 pub use bytes::Bytes;
