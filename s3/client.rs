@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::BTreeMap,
     fmt,
     pin::Pin,
@@ -24,6 +25,7 @@ pub struct ClientConfig<'a> {
     pub endpoint: &'a str,
     pub credentials: StaticCredentials<'a>,
     pub region: &'a str,
+    pub virtual_hosted: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -38,13 +40,14 @@ pub struct Client<H: HttpClient> {
     pub(crate) endpoint: Url,
     pub(crate) region: String,
     pub(crate) credentials: OwnedCredentials,
+    pub(crate) virtual_hosted: bool,
     pub(crate) http: H,
 }
 
 #[derive(Debug)]
 pub enum Error {
     InvalidConfig(&'static str),
-    Http(String),
+    Http(Box<dyn std::error::Error + Send + Sync>),
     Time(std::time::SystemTimeError),
     Xml(quick_xml::DeError),
     Api { status: u16, body: String },
@@ -65,7 +68,14 @@ impl fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::Http(err) => Some(&**err),
+            _ => None,
+        }
+    }
+}
 
 impl From<std::time::SystemTimeError> for Error {
     fn from(value: std::time::SystemTimeError) -> Self {
@@ -210,6 +220,7 @@ impl<H: HttpClient> Client<H> {
                     Some(config.credentials.session_token.to_string())
                 },
             },
+            virtual_hosted: config.virtual_hosted,
             http,
         })
     }
@@ -220,8 +231,9 @@ impl<H: HttpClient> Client<H> {
         canonical_uri: &str,
         canonical_query: &str,
         body: &[u8],
+        bucket: &str,
     ) -> Result<HttpResponseData, Error> {
-        self.execute_with_headers(method, canonical_uri, canonical_query, body, &[])
+        self.execute_with_headers(method, canonical_uri, canonical_query, body, &[], bucket)
             .await
     }
 
@@ -232,11 +244,35 @@ impl<H: HttpClient> Client<H> {
         canonical_query: &str,
         body: &[u8],
         extra_headers: &[(String, String)],
+        bucket: &str,
     ) -> Result<HttpResponseData, Error> {
+        fn canonical_header_value(value: &str) -> String {
+            let trimmed = value.trim();
+            let mut out = String::with_capacity(trimmed.len());
+            let mut in_space = false;
+            for ch in trimmed.chars() {
+                if ch.is_whitespace() {
+                    if !in_space {
+                        out.push(' ');
+                        in_space = true;
+                    }
+                } else {
+                    out.push(ch);
+                    in_space = false;
+                }
+            }
+            out
+        }
+
         let (date, amz_datetime) = amz_datetime(SystemTime::now())?;
         let credential_scope = format!("{}/{}/s3/aws4_request", date, self.region);
 
-        let host = endpoint_host(&self.endpoint);
+        let base_host = endpoint_host(&self.endpoint);
+        let host = if self.virtual_hosted && !bucket.is_empty() {
+            Cow::Owned(format!("{bucket}.{base_host}"))
+        } else {
+            Cow::Borrowed(&base_host)
+        };
         let payload_hash = if body.is_empty() {
             EMPTY_PAYLOAD_SHA256.to_string()
         } else {
@@ -244,7 +280,7 @@ impl<H: HttpClient> Client<H> {
         };
 
         let mut headers = vec![
-            ("host".to_string(), host.clone()),
+            ("host".to_string(), host.to_string()),
             ("x-amz-date".to_string(), amz_datetime.clone()),
             ("x-amz-content-sha256".to_string(), payload_hash.clone()),
         ];
@@ -297,7 +333,16 @@ impl<H: HttpClient> Client<H> {
             self.credentials.access_key_id, credential_scope, signed_headers_joined, signature
         );
 
-        let url = if canonical_query.is_empty() {
+        let url = if self.virtual_hosted && !bucket.is_empty() {
+            let scheme = self.endpoint.scheme();
+            let host_str = endpoint_host(&self.endpoint);
+            let path = canonical_uri;
+            if canonical_query.is_empty() {
+                format!("{scheme}://{bucket}.{host_str}{path}")
+            } else {
+                format!("{scheme}://{bucket}.{host_str}{path}?{canonical_query}")
+            }
+        } else if canonical_query.is_empty() {
             format!("{}{}", self.endpoint.as_str().trim_end_matches('/'), canonical_uri)
         } else {
             format!(
@@ -316,18 +361,10 @@ impl<H: HttpClient> Client<H> {
             headers,
             body: body.to_vec(),
         };
-        let response = self
-            .http
-            .send(request)
-            .await
-            .map_err(|err| Error::Http(err.to_string()))?;
+        let response = self.http.send(request).await.map_err(Error::Http)?;
 
         if (200..300).contains(&response.status_code) {
             return Ok(response);
-        }
-
-        fn canonical_header_value(value: &str) -> &str {
-            value.trim()
         }
 
         let status = response.status_code;
@@ -416,14 +453,13 @@ fn sign_v4(secret_access_key: &str, date: &str, region: &str, string_to_sign: &s
 pub(crate) fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; Sha256::OUTPUT_SIZE] {
     let mut mac = Hmac::<Sha256>::new(key);
     mac.update(data);
-    return *mac.finalize().as_ref().as_array().unwrap();
+    *mac.finalize().as_ref().as_array().unwrap()
 }
 
 pub(crate) fn sha256(data: &[u8]) -> [u8; Sha256::OUTPUT_SIZE] {
-    use crypto::Hasher;
     let mut hasher = Sha256::new();
     hasher.update(data);
-    return hasher.sum().as_ref().try_into().unwrap();
+    hasher.sum().as_ref().try_into().unwrap()
 }
 
 fn amz_datetime(now: SystemTime) -> Result<(String, String), Error> {
@@ -462,14 +498,14 @@ fn civil_from_days(days_since_unix_epoch: i64) -> (i32, i64, i64) {
 pub(crate) async fn collect_body(mut stream: ByteStream) -> Result<Vec<u8>, Error> {
     let mut out = Vec::new();
     while let Some(chunk) = stream.next().await {
-        let bytes = chunk.map_err(|e| Error::Http(e.to_string()))?;
+        let bytes = chunk.map_err(Error::Http)?;
         out.extend_from_slice(&bytes);
     }
     Ok(out)
 }
 
 pub(crate) fn bytes_to_string(bytes: Vec<u8>) -> Result<String, Error> {
-    String::from_utf8(bytes).map_err(|e| Error::Http(e.to_string()))
+    String::from_utf8(bytes).map_err(|e| Error::Http(Box::new(e)))
 }
 
 pub(crate) fn header_to_string(response: &HttpResponseData, name: &str) -> Option<String> {
@@ -478,6 +514,10 @@ pub(crate) fn header_to_string(response: &HttpResponseData, name: &str) -> Optio
 
 pub(crate) fn header_to_u64(response: &HttpResponseData, name: &str) -> Option<u64> {
     response.header(name).and_then(|s| s.parse::<u64>().ok())
+}
+
+pub(crate) fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
 #[cfg(test)]
@@ -552,6 +592,7 @@ mod tests {
                 session_token: "",
             },
             region: "auto",
+            virtual_hosted: false,
         };
         assert!(matches!(
             Client::with_http_client(&cfg, NoopHttpClient),
@@ -573,32 +614,5 @@ mod tests {
     #[test]
     fn empty_payload_sha256_constant_is_correct() {
         assert_eq!(EMPTY_PAYLOAD_SHA256, hex::encode(&sha256(b"")));
-    }
-
-    #[test]
-    fn exposes_supported_actions_list() {
-        let actions = [
-            "ListBuckets",
-            "CreateBucket",
-            "HeadBucket",
-            "DeleteBucket",
-            "GetBucketLocation",
-            "DeleteObjects",
-            "ListMultipartUploads",
-            "ListParts",
-            "PutObjectTagging",
-            "GetObjectTagging",
-            "DeleteObjectTagging",
-            "PutObject",
-            "GetObject",
-            "HeadObject",
-            "DeleteObject",
-            "ListObjects",
-            "CreateMultipartUpload",
-            "UploadPart",
-            "CompleteMultipartUpload",
-            "AbortMultipartUpload",
-        ];
-        assert_eq!(actions.len(), 20);
     }
 }

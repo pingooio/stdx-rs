@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 use crate::client::{
     Client, HttpClient, HttpMethod, bytes_to_string, canonical_bucket_uri, canonical_query_string, collect_body,
-    consume_empty,
+    consume_empty, xml_escape,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,7 +46,7 @@ pub struct GetBucketLocationOutput {
 
 impl<H: HttpClient> Client<H> {
     pub async fn list_buckets(&self) -> Result<ListBucketsOutput, crate::client::Error> {
-        let response = self.execute(HttpMethod::Get, "/", "", b"").await?;
+        let response = self.execute(HttpMethod::Get, "/", "", b"", "").await?;
         let body = bytes_to_string(collect_body(response.body).await?)?;
         let xml: ListAllMyBucketsResultXml = from_str(&body)?;
 
@@ -63,21 +63,37 @@ impl<H: HttpClient> Client<H> {
         })
     }
 
-    pub async fn create_bucket(&self, bucket: &str) -> Result<(), crate::client::Error> {
+    pub async fn create_bucket(
+        &self,
+        bucket: &str,
+        location_constraint: Option<&str>,
+    ) -> Result<(), crate::client::Error> {
         let canonical_uri = canonical_bucket_uri(bucket);
-        let response = self.execute(HttpMethod::Put, &canonical_uri, "", b"").await?;
+        let body = match location_constraint {
+            Some(region) => format!(
+                "<CreateBucketConfiguration><LocationConstraint>{}</LocationConstraint></CreateBucketConfiguration>",
+                xml_escape(region)
+            )
+            .into_bytes(),
+            None => Vec::new(),
+        };
+        let response = self
+            .execute_with_headers(HttpMethod::Put, &canonical_uri, "", &body, &[], bucket)
+            .await?;
         consume_empty(response)
     }
 
     pub async fn head_bucket(&self, bucket: &str) -> Result<(), crate::client::Error> {
         let canonical_uri = canonical_bucket_uri(bucket);
-        let response = self.execute(HttpMethod::Head, &canonical_uri, "", b"").await?;
+        let response = self.execute(HttpMethod::Head, &canonical_uri, "", b"", bucket).await?;
         consume_empty(response)
     }
 
     pub async fn delete_bucket(&self, bucket: &str) -> Result<(), crate::client::Error> {
         let canonical_uri = canonical_bucket_uri(bucket);
-        let response = self.execute(HttpMethod::Delete, &canonical_uri, "", b"").await?;
+        let response = self
+            .execute(HttpMethod::Delete, &canonical_uri, "", b"", bucket)
+            .await?;
         consume_empty(response)
     }
 
@@ -104,7 +120,7 @@ impl<H: HttpClient> Client<H> {
 
         let canonical_query = canonical_query_string(&params);
         let response = self
-            .execute(HttpMethod::Get, &canonical_uri, &canonical_query, b"")
+            .execute(HttpMethod::Get, &canonical_uri, &canonical_query, b"", bucket)
             .await?;
         let body = bytes_to_string(collect_body(response.body).await?)?;
         let xml: ListBucketResultXml = from_str(&body)?;
@@ -132,7 +148,9 @@ impl<H: HttpClient> Client<H> {
 
     pub async fn get_bucket_location(&self, bucket: &str) -> Result<GetBucketLocationOutput, crate::client::Error> {
         let canonical_uri = canonical_bucket_uri(bucket);
-        let response = self.execute(HttpMethod::Get, &canonical_uri, "location=", b"").await?;
+        let response = self
+            .execute(HttpMethod::Get, &canonical_uri, "location=", b"", bucket)
+            .await?;
         let body = bytes_to_string(collect_body(response.body).await?)?;
         let xml: LocationConstraintXml = from_str(&body)?;
         Ok(GetBucketLocationOutput {

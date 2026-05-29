@@ -47,6 +47,7 @@ fn test_client() -> Client<ReqwestHttpClient> {
             session_token: &session_token,
         },
         region: &region,
+        virtual_hosted: false,
     };
 
     Client::new(&cfg).expect("failed to build s3 client")
@@ -58,7 +59,7 @@ async fn collect_stream(body: s3::ByteStream) -> Vec<u8> {
 }
 
 async fn create_bucket_or_panic(client: &Client<ReqwestHttpClient>, bucket: &str) {
-    match client.create_bucket(bucket).await {
+    match client.create_bucket(bucket, None).await {
         Ok(()) => {}
         Err(Error::Api {
             status: 409, ..

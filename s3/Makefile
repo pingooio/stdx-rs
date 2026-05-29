@@ -14,4 +14,4 @@ integration-test:
 	S3_ACCESS_KEY_ID=$${S3_ACCESS_KEY_ID:-minioadmin} \
 	S3_SECRET_ACCESS_KEY=$${S3_SECRET_ACCESS_KEY:-minioadmin} \
 	S3_TEST_BUCKET=$${S3_TEST_BUCKET:-stdx-rs-s3-integration} \
-	cargo test -p s3 --test minio_integration -- --nocapture
+	cargo test -p s3 --test minio_integration -- --nocapture  --test-threads=1

@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 use crate::client::{
     ByteStream, Client, HttpClient, HttpMethod, bytes_to_string, canonical_bucket_uri, canonical_object_uri,
-    canonical_query_string, collect_body, consume_empty, header_to_string, header_to_u64,
+    canonical_query_string, collect_body, consume_empty, header_to_string, header_to_u64, xml_escape,
 };
 
 #[derive(Debug, Clone)]
@@ -97,13 +97,13 @@ pub struct HeadObjectOutput {
 impl<H: HttpClient> Client<H> {
     pub async fn put_object(&self, bucket: &str, key: &str, body: &[u8]) -> Result<(), crate::client::Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
-        let response = self.execute(HttpMethod::Put, &canonical_uri, "", body).await?;
+        let response = self.execute(HttpMethod::Put, &canonical_uri, "", body, bucket).await?;
         consume_empty(response)
     }
 
     pub async fn get_object(&self, bucket: &str, key: &str) -> Result<GetObjectOutput, crate::client::Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
-        let response = self.execute(HttpMethod::Get, &canonical_uri, "", b"").await?;
+        let response = self.execute(HttpMethod::Get, &canonical_uri, "", b"", bucket).await?;
         let e_tag = header_to_string(&response, "etag");
         let content_type = header_to_string(&response, "content-type");
         let content_length = header_to_u64(&response, "content-length");
@@ -118,7 +118,7 @@ impl<H: HttpClient> Client<H> {
 
     pub async fn head_object(&self, bucket: &str, key: &str) -> Result<HeadObjectOutput, crate::client::Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
-        let response = self.execute(HttpMethod::Head, &canonical_uri, "", b"").await?;
+        let response = self.execute(HttpMethod::Head, &canonical_uri, "", b"", bucket).await?;
 
         Ok(HeadObjectOutput {
             e_tag: header_to_string(&response, "etag"),
@@ -129,7 +129,9 @@ impl<H: HttpClient> Client<H> {
 
     pub async fn delete_object(&self, bucket: &str, key: &str) -> Result<(), crate::client::Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
-        let response = self.execute(HttpMethod::Delete, &canonical_uri, "", b"").await?;
+        let response = self
+            .execute(HttpMethod::Delete, &canonical_uri, "", b"", bucket)
+            .await?;
         consume_empty(response)
     }
 
@@ -142,7 +144,7 @@ impl<H: HttpClient> Client<H> {
         let body = build_delete_objects_body(keys);
         let checksum_headers = delete_objects_checksum_headers(&body);
         let response = self
-            .execute_with_headers(HttpMethod::Post, &canonical_uri, "delete=", &body, &checksum_headers)
+            .execute_with_headers(HttpMethod::Post, &canonical_uri, "delete=", &body, &checksum_headers, bucket)
             .await?;
         let xml_text = bytes_to_string(collect_body(response.body).await?)?;
         let xml: DeleteResultXml = from_str(&xml_text)?;
@@ -168,7 +170,9 @@ impl<H: HttpClient> Client<H> {
 
     pub async fn create_multipart_upload(&self, bucket: &str, key: &str) -> Result<String, crate::client::Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
-        let response = self.execute(HttpMethod::Post, &canonical_uri, "uploads=", b"").await?;
+        let response = self
+            .execute(HttpMethod::Post, &canonical_uri, "uploads=", b"", bucket)
+            .await?;
         let xml_text = bytes_to_string(collect_body(response.body).await?)?;
         let xml: InitiateMultipartUploadResultXml = from_str(&xml_text)?;
         Ok(xml.upload_id)
@@ -188,7 +192,7 @@ impl<H: HttpClient> Client<H> {
         params.insert("uploadId".to_string(), upload_id.to_string());
         let canonical_query = canonical_query_string(&params);
         let response = self
-            .execute(HttpMethod::Put, &canonical_uri, &canonical_query, body)
+            .execute(HttpMethod::Put, &canonical_uri, &canonical_query, body, bucket)
             .await?;
         let e_tag = header_to_string(&response, "etag");
         Ok(UploadPartOutput {
@@ -209,7 +213,7 @@ impl<H: HttpClient> Client<H> {
         let canonical_query = canonical_query_string(&params);
         let xml_body = build_complete_multipart_body(parts);
         let response = self
-            .execute(HttpMethod::Post, &canonical_uri, &canonical_query, &xml_body)
+            .execute(HttpMethod::Post, &canonical_uri, &canonical_query, &xml_body, bucket)
             .await?;
         let xml_text = bytes_to_string(collect_body(response.body).await?)?;
         let xml: CompleteMultipartUploadResultXml = from_str(&xml_text)?;
@@ -229,7 +233,7 @@ impl<H: HttpClient> Client<H> {
         params.insert("uploadId".to_string(), upload_id.to_string());
         let canonical_query = canonical_query_string(&params);
         let response = self
-            .execute(HttpMethod::Delete, &canonical_uri, &canonical_query, b"")
+            .execute(HttpMethod::Delete, &canonical_uri, &canonical_query, b"", bucket)
             .await?;
         consume_empty(response)
     }
@@ -239,19 +243,19 @@ impl<H: HttpClient> Client<H> {
         bucket: &str,
     ) -> Result<ListMultipartUploadsOutput, crate::client::Error> {
         let canonical_uri = canonical_bucket_uri(bucket);
-        let response = self.execute(HttpMethod::Get, &canonical_uri, "uploads=", b"").await?;
+        let response = self
+            .execute(HttpMethod::Get, &canonical_uri, "uploads=", b"", bucket)
+            .await?;
         let xml_text = bytes_to_string(collect_body(response.body).await?)?;
         let xml: ListMultipartUploadsResultXml = from_str(&xml_text)?;
         Ok(ListMultipartUploadsOutput {
             uploads: xml
                 .uploads
                 .into_iter()
-                .filter_map(|entry| {
-                    Some(MultipartUpload {
-                        key: entry.key?,
-                        upload_id: entry.upload_id?,
-                        initiated: entry.initiated,
-                    })
+                .map(|entry| MultipartUpload {
+                    key: entry.key,
+                    upload_id: entry.upload_id,
+                    initiated: entry.initiated,
                 })
                 .collect(),
         })
@@ -268,7 +272,7 @@ impl<H: HttpClient> Client<H> {
         params.insert("uploadId".to_string(), upload_id.to_string());
         let canonical_query = canonical_query_string(&params);
         let response = self
-            .execute(HttpMethod::Get, &canonical_uri, &canonical_query, b"")
+            .execute(HttpMethod::Get, &canonical_uri, &canonical_query, b"", bucket)
             .await?;
         let xml_text = bytes_to_string(collect_body(response.body).await?)?;
         let xml: ListPartsResultXml = from_str(&xml_text)?;
@@ -276,13 +280,11 @@ impl<H: HttpClient> Client<H> {
             parts: xml
                 .parts
                 .into_iter()
-                .filter_map(|entry| {
-                    Some(UploadedPart {
-                        part_number: entry.part_number?,
-                        e_tag: entry.e_tag,
-                        size: entry.size,
-                        last_modified: entry.last_modified,
-                    })
+                .map(|entry| UploadedPart {
+                    part_number: entry.part_number,
+                    e_tag: entry.e_tag,
+                    size: entry.size,
+                    last_modified: entry.last_modified,
                 })
                 .collect(),
         })
@@ -291,7 +293,9 @@ impl<H: HttpClient> Client<H> {
     pub async fn put_object_tagging(&self, bucket: &str, key: &str, tags: &[Tag]) -> Result<(), crate::client::Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
         let body = build_tagging_body(tags);
-        let response = self.execute(HttpMethod::Put, &canonical_uri, "tagging=", &body).await?;
+        let response = self
+            .execute(HttpMethod::Put, &canonical_uri, "tagging=", &body, bucket)
+            .await?;
         consume_empty(response)
     }
 
@@ -301,7 +305,9 @@ impl<H: HttpClient> Client<H> {
         key: &str,
     ) -> Result<GetObjectTaggingOutput, crate::client::Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
-        let response = self.execute(HttpMethod::Get, &canonical_uri, "tagging=", b"").await?;
+        let response = self
+            .execute(HttpMethod::Get, &canonical_uri, "tagging=", b"", bucket)
+            .await?;
         let xml_text = bytes_to_string(collect_body(response.body).await?)?;
         let xml: TaggingXml = from_str(&xml_text)?;
         Ok(GetObjectTaggingOutput {
@@ -320,7 +326,7 @@ impl<H: HttpClient> Client<H> {
     pub async fn delete_object_tagging(&self, bucket: &str, key: &str) -> Result<(), crate::client::Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
         let response = self
-            .execute(HttpMethod::Delete, &canonical_uri, "tagging=", b"")
+            .execute(HttpMethod::Delete, &canonical_uri, "tagging=", b"", bucket)
             .await?;
         consume_empty(response)
     }
@@ -374,10 +380,6 @@ fn build_tagging_body(tags: &[Tag]) -> Vec<u8> {
     xml.into_bytes()
 }
 
-fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(rename = "InitiateMultipartUploadResult")]
 struct InitiateMultipartUploadResultXml {
@@ -427,9 +429,9 @@ struct ListMultipartUploadsResultXml {
 #[derive(Debug, Deserialize)]
 struct MultipartUploadXml {
     #[serde(rename = "Key")]
-    key: Option<String>,
+    key: String,
     #[serde(rename = "UploadId")]
-    upload_id: Option<String>,
+    upload_id: String,
     #[serde(rename = "Initiated")]
     initiated: Option<String>,
 }
@@ -444,7 +446,7 @@ struct ListPartsResultXml {
 #[derive(Debug, Deserialize)]
 struct PartXml {
     #[serde(rename = "PartNumber")]
-    part_number: Option<u32>,
+    part_number: u32,
     #[serde(rename = "ETag")]
     e_tag: Option<String>,
     #[serde(rename = "Size")]
@@ -538,6 +540,7 @@ mod tests {
                 session_token: "",
             },
             region: "auto",
+            virtual_hosted: false,
         };
         let client = Client::with_http_client(&cfg, http).unwrap();
 
@@ -601,7 +604,7 @@ mod tests {
 "#;
         let parsed: ListPartsResultXml = from_str(xml).unwrap();
         assert_eq!(parsed.parts.len(), 1);
-        assert_eq!(parsed.parts[0].part_number, Some(1));
+        assert_eq!(parsed.parts[0].part_number, 1);
     }
 
     #[test]
@@ -617,7 +620,7 @@ mod tests {
 "#;
         let parsed: ListMultipartUploadsResultXml = from_str(xml).unwrap();
         assert_eq!(parsed.uploads.len(), 1);
-        assert_eq!(parsed.uploads[0].key.as_deref(), Some("big.bin"));
-        assert_eq!(parsed.uploads[0].upload_id.as_deref(), Some("upload-1"));
+        assert_eq!(parsed.uploads[0].key, "big.bin");
+        assert_eq!(parsed.uploads[0].upload_id, "upload-1");
     }
 }
