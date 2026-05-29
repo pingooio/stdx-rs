@@ -1,5 +1,7 @@
 #![deny(trivial_casts, trivial_numeric_casts, unused_import_braces)]
 
+extern crate alloc;
+
 use std::{
     cmp::Ordering,
     collections::BTreeMap,
@@ -24,7 +26,7 @@ pub mod decoder;
 pub mod encoder;
 pub mod geoip2;
 pub mod writer;
-// pub use encoder::Value;
+pub use encoder::Value;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum MaxMindDBError {

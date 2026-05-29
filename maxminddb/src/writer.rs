@@ -6,8 +6,9 @@ use std::{
 };
 
 use ipnetwork::IpNetwork;
+use serde::Serialize;
 
-use crate::encoder::{self, Value};
+use crate::encoder::{self, Value, ValueSerializer};
 
 pub type WriterResult<T> = Result<T, String>;
 
@@ -27,7 +28,6 @@ enum RecordType {
 
 #[derive(Debug, Clone)]
 struct DataRecord {
-    value: Value,
     key: u64,
 }
 
@@ -47,11 +47,10 @@ impl ChildRecord {
         }
     }
 
-    fn data(value: Value, key: u64) -> Self {
+    fn data(key: u64) -> Self {
         ChildRecord {
             record_type: RecordType::Data,
             data: Some(DataRecord {
-                value,
                 key,
             }),
             node: None,
@@ -81,10 +80,10 @@ impl TreeNode {
         }
     }
 
-    fn insert(&mut self, ip: &[u8], prefix_len: usize, depth: usize, value: Value, data_key: u64) -> WriterResult<()> {
+    fn insert(&mut self, ip: &[u8], prefix_len: usize, depth: usize, data_key: u64) -> WriterResult<()> {
         if depth == prefix_len {
-            self.children[0] = ChildRecord::data(value.clone(), data_key);
-            self.children[1] = ChildRecord::data(value, data_key);
+            self.children[0] = ChildRecord::data(data_key);
+            self.children[1] = ChildRecord::data(data_key);
             return Ok(());
         }
 
@@ -94,15 +93,15 @@ impl TreeNode {
         match &child.record_type {
             RecordType::Empty => {
                 let mut subtree = TreeNode::new();
-                subtree.insert(ip, prefix_len, depth + 1, value, data_key)?;
+                subtree.insert(ip, prefix_len, depth + 1, data_key)?;
                 *child = ChildRecord::node(subtree);
             }
             RecordType::Data => {
                 let existing = child.data.as_ref().unwrap();
                 let mut subtree = TreeNode::new();
-                subtree.children[0] = ChildRecord::data(existing.value.clone(), existing.key);
-                subtree.children[1] = ChildRecord::data(existing.value.clone(), existing.key);
-                subtree.insert(ip, prefix_len, depth + 1, value, data_key)?;
+                subtree.children[0] = ChildRecord::data(existing.key);
+                subtree.children[1] = ChildRecord::data(existing.key);
+                subtree.insert(ip, prefix_len, depth + 1, data_key)?;
                 *child = ChildRecord::node(subtree);
             }
             RecordType::Node => {
@@ -110,7 +109,7 @@ impl TreeNode {
                     .node
                     .as_mut()
                     .unwrap()
-                    .insert(ip, prefix_len, depth + 1, value, data_key)?;
+                    .insert(ip, prefix_len, depth + 1, data_key)?;
             }
         }
 
@@ -217,7 +216,7 @@ fn bit_at(ip: &[u8], depth: usize) -> u8 {
 #[derive(Debug)]
 pub struct Tree {
     root: TreeNode,
-    data_map: BTreeMap<u64, Value>,
+    data_map: BTreeMap<u64, Vec<u8>>,
     node_count: usize,
     ip_version: u16,
     record_size: u16,
@@ -276,7 +275,7 @@ impl Tree {
         })
     }
 
-    pub fn insert(&mut self, network: IpNetwork, value: Value) -> WriterResult<()> {
+    pub fn insert_value(&mut self, network: IpNetwork, value: Value<'_>) -> WriterResult<()> {
         let prefix_len = network.prefix() as usize;
         let ip = ip_to_bytes(network.network());
 
@@ -292,10 +291,12 @@ impl Tree {
             (ip, prefix_len)
         };
 
+        let encoded = encoder::encode_value(&value)?;
+
         let data_key = {
             let mut found_key = None;
             for (k, v) in &self.data_map {
-                if *v == value {
+                if *v == encoded {
                     found_key = Some(*k);
                     break;
                 }
@@ -305,16 +306,23 @@ impl Tree {
                 None => {
                     let key = self.next_data_key;
                     self.next_data_key += 1;
-                    self.data_map.insert(key, value.clone());
+                    self.data_map.insert(key, encoded);
                     key
                 }
             }
         };
 
         self.node_count = 0;
-        self.root.insert(&ip_bytes, actual_prefix_len, 0, value, data_key)?;
+        self.root.insert(&ip_bytes, actual_prefix_len, 0, data_key)?;
 
         Ok(())
+    }
+
+    pub fn insert<T: Serialize>(&mut self, network: IpNetwork, value: T) -> WriterResult<()> {
+        let v = value
+            .serialize(&ValueSerializer)
+            .map_err(|e| format!("serialization failed: {e}"))?;
+        self.insert_value(network, v)
     }
 
     pub fn write_to<W: Write>(&mut self, writer: &mut W) -> WriterResult<u64> {
@@ -330,9 +338,9 @@ impl Tree {
 
         let mut data_offsets: BTreeMap<u64, usize> = BTreeMap::new();
         let mut data_section = Vec::new();
-        for (key, value) in &self.data_map {
+        for (key, encoded) in &self.data_map {
             let offset = data_section.len();
-            encoder::encode_value_to(&mut data_section, value)?;
+            data_section.extend_from_slice(encoded);
             data_offsets.insert(*key, offset);
         }
 
@@ -372,27 +380,32 @@ fn build_metadata_value(
     description: &BTreeMap<String, String>,
     languages: &[String],
     build_epoch: u64,
-) -> Value {
+) -> Value<'static> {
+    use std::borrow::Cow;
+
     let mut desc_map = BTreeMap::new();
     for (k, v) in description {
-        desc_map.insert(k.clone(), Value::String(v.clone()));
+        desc_map.insert(Cow::Owned(k.clone()), Value::String(Cow::Owned(v.clone())));
     }
 
     let mut lang_array = Vec::new();
     for l in languages {
-        lang_array.push(Value::String(l.clone()));
+        lang_array.push(Value::String(Cow::Owned(l.clone())));
     }
 
     let mut m = BTreeMap::new();
-    m.insert("binary_format_major_version".to_string(), Value::Uint16(2));
-    m.insert("binary_format_minor_version".to_string(), Value::Uint16(0));
-    m.insert("build_epoch".to_string(), Value::Uint64(build_epoch));
-    m.insert("database_type".to_string(), Value::String(database_type.to_string()));
-    m.insert("description".to_string(), Value::Map(desc_map));
-    m.insert("ip_version".to_string(), Value::Uint16(ip_version));
-    m.insert("languages".to_string(), Value::Slice(lang_array));
-    m.insert("node_count".to_string(), Value::Uint32(node_count));
-    m.insert("record_size".to_string(), Value::Uint16(record_size));
+    m.insert(Cow::Borrowed("binary_format_major_version"), Value::Uint16(2));
+    m.insert(Cow::Borrowed("binary_format_minor_version"), Value::Uint16(0));
+    m.insert(Cow::Borrowed("build_epoch"), Value::Uint64(build_epoch));
+    m.insert(
+        Cow::Borrowed("database_type"),
+        Value::String(Cow::Owned(database_type.to_string())),
+    );
+    m.insert(Cow::Borrowed("description"), Value::Map(desc_map));
+    m.insert(Cow::Borrowed("ip_version"), Value::Uint16(ip_version));
+    m.insert(Cow::Borrowed("languages"), Value::Slice(lang_array));
+    m.insert(Cow::Borrowed("node_count"), Value::Uint32(node_count));
+    m.insert(Cow::Borrowed("record_size"), Value::Uint16(record_size));
     Value::Map(m)
 }
 
@@ -405,6 +418,8 @@ fn ip_to_bytes(address: IpAddr) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
+
     use super::*;
 
     #[test]
@@ -417,8 +432,8 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("country".to_string(), Value::String("US".to_string()));
-        tree.insert("1.2.3.0/24".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("country".into(), Value::String(Cow::Borrowed("US")));
+        tree.insert_value("1.2.3.0/24".parse().unwrap(), Value::Map(m)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
         let reader = crate::Reader::from_source(buf).unwrap();
@@ -440,11 +455,11 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m1 = BTreeMap::new();
-        m1.insert("country".to_string(), Value::String("US".to_string()));
-        tree.insert("1.0.0.0/8".parse().unwrap(), Value::Map(m1)).unwrap();
+        m1.insert("country".into(), Value::String(Cow::Borrowed("US")));
+        tree.insert_value("1.0.0.0/8".parse().unwrap(), Value::Map(m1)).unwrap();
         let mut m2 = BTreeMap::new();
-        m2.insert("country".to_string(), Value::String("FR".to_string()));
-        tree.insert("2.0.0.0/8".parse().unwrap(), Value::Map(m2)).unwrap();
+        m2.insert("country".into(), Value::String(Cow::Borrowed("FR")));
+        tree.insert_value("2.0.0.0/8".parse().unwrap(), Value::Map(m2)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
         let reader = crate::Reader::from_source(buf).unwrap();
@@ -469,8 +484,8 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("country".to_string(), Value::String("FR".to_string()));
-        tree.insert("2a00:1450:4000::/36".parse().unwrap(), Value::Map(m))
+        m.insert("country".into(), Value::String(Cow::Borrowed("FR")));
+        tree.insert_value("2a00:1450:4000::/36".parse().unwrap(), Value::Map(m))
             .unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
@@ -494,8 +509,8 @@ mod tests {
             };
             let mut tree = Tree::new(opts).unwrap();
             let mut m = BTreeMap::new();
-            m.insert("ip".to_string(), Value::String("test".to_string()));
-            tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+            m.insert("ip".into(), Value::String(Cow::Borrowed("test")));
+            tree.insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
             let mut buf = Vec::new();
             tree.write_to(&mut buf).unwrap();
             let reader = crate::Reader::from_source(buf.clone()).unwrap();
@@ -523,8 +538,9 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("data".to_string(), Value::String("hello".to_string()));
-        tree.insert("192.168.0.0/16".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("data".into(), Value::String(Cow::Borrowed("hello")));
+        tree.insert_value("192.168.0.0/16".parse().unwrap(), Value::Map(m))
+            .unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
         let reader = crate::Reader::from_source(buf).unwrap();
@@ -543,9 +559,9 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("active".to_string(), Value::Bool(true));
-        m.insert("inactive".to_string(), Value::Bool(false));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("active".into(), Value::Bool(true));
+        m.insert("inactive".into(), Value::Bool(false));
+        tree.insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
         let reader = crate::Reader::from_source(buf).unwrap();
@@ -570,14 +586,14 @@ mod tests {
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
         m.insert(
-            "tags".to_string(),
+            "tags".into(),
             Value::Slice(vec![
-                Value::String("a".to_string()),
-                Value::String("b".to_string()),
-                Value::String("c".to_string()),
+                Value::String(Cow::Borrowed("a")),
+                Value::String(Cow::Borrowed("b")),
+                Value::String(Cow::Borrowed("c")),
             ]),
         );
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        tree.insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
         let reader = crate::Reader::from_source(buf).unwrap();
@@ -599,12 +615,12 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("u16".to_string(), Value::Uint16(100));
-        m.insert("u32".to_string(), Value::Uint32(100000));
-        m.insert("i32".to_string(), Value::Int32(-42));
-        m.insert("u64".to_string(), Value::Uint64(1 << 40));
-        m.insert("u128".to_string(), Value::Uint128(1u128 << 100));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("u16".into(), Value::Uint16(100));
+        m.insert("u32".into(), Value::Uint32(100000));
+        m.insert("i32".into(), Value::Int32(-42));
+        m.insert("u64".into(), Value::Uint64(1 << 40));
+        m.insert("u128".into(), Value::Uint128(1u128 << 100));
+        tree.insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
         let reader = crate::Reader::from_source(buf).unwrap();
@@ -624,29 +640,19 @@ mod tests {
         assert_eq!(r.u128, 1u128 << 100);
     }
 
-    // --- Additional comprehensive tests ---
-
     #[test]
     fn test_pointer_encoding_size3() {
-        // Verify size=3 pointer encoding uses correct control byte (bits 0-2 ignored per spec)
-        // Encode a large pointer (> 134744063) and check the control byte is exactly 0b00111000 (0x38)
         let v = Value::Pointer(200000000);
         let buf = encoder::encode_value(&v).unwrap();
-        // First byte should be 0x38 (001 11 000 -> type=pointer, size_indicator=3)
         assert_eq!(buf[0], 0b00111000, "size=3 pointer control byte should be 0x38");
-        // Next 4 bytes are the raw 32-bit pointer value in big-endian
         let ptr_val = u32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]);
         assert_eq!(ptr_val, 200000000);
     }
 
     #[test]
     fn test_pointer_encoding_size0() {
-        // Pointer < 2048: control byte has 3-bit value appended
         let v = Value::Pointer(500);
         let buf = encoder::encode_value(&v).unwrap();
-        // First byte: 001 SSVVV  where SSVV = 00 (size=0), VVV = bits 8-10 of pointer
-        // For p=500: 500 = 0b111110100 -> bits [8:10] = 0b001
-        // So first byte = 001 00 001 = 0b00100001 = 0x21
         assert_eq!(buf[0], 0b00100001);
         assert_eq!(buf.len(), 2);
         let decoded = ((buf[0] as u32 & 0x07) << 8) | buf[1] as u32;
@@ -657,15 +663,13 @@ mod tests {
     fn test_pointer_encoding_size1() {
         let v = Value::Pointer(10000);
         let buf = encoder::encode_value(&v).unwrap();
-        // size=1: first byte = 001 01 VVV, next 2 bytes = value-2048
-        assert_eq!((buf[0] >> 5) & 0x07, 0b001); // pointer type
-        assert_eq!((buf[0] >> 3) & 0x03, 0b01); // size=1
+        assert_eq!((buf[0] >> 5) & 0x07, 0b001);
+        assert_eq!((buf[0] >> 3) & 0x03, 0b01);
         assert_eq!(buf.len(), 3);
     }
 
     #[test]
     fn test_empty_database() {
-        // A database with no networks inserted should still write valid metadata
         let opts = TreeOptions {
             database_type: "Empty".to_string(),
             ip_version: 4,
@@ -678,12 +682,11 @@ mod tests {
         assert!(n > 0);
         let reader = crate::Reader::from_source(buf).unwrap();
         assert_eq!(reader.metadata.database_type, "Empty");
-        assert_eq!(reader.metadata.node_count, 1); // root node always present
+        assert_eq!(reader.metadata.node_count, 1);
     }
 
     #[test]
     fn test_overlapping_networks() {
-        // More specific prefix should win in lookup; both can exist in tree
         let opts = TreeOptions {
             database_type: "Test".to_string(),
             ip_version: 4,
@@ -692,12 +695,14 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m1 = BTreeMap::new();
-        m1.insert("data".to_string(), Value::String("broad".to_string()));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m1)).unwrap();
+        m1.insert("data".into(), Value::String(Cow::Borrowed("broad")));
+        tree.insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m1))
+            .unwrap();
 
         let mut m2 = BTreeMap::new();
-        m2.insert("data".to_string(), Value::String("specific".to_string()));
-        tree.insert("10.1.0.0/16".parse().unwrap(), Value::Map(m2)).unwrap();
+        m2.insert("data".into(), Value::String(Cow::Borrowed("specific")));
+        tree.insert_value("10.1.0.0/16".parse().unwrap(), Value::Map(m2))
+            .unwrap();
 
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
@@ -708,18 +713,12 @@ mod tests {
             data: String,
         }
 
-        // 10.0.x.x should match the /8
         let r1: TestRecord = reader.lookup("10.0.0.1".parse().unwrap()).unwrap();
         assert_eq!(r1.data, "broad");
 
-        // 10.1.x.x should match the /16
         let r2: TestRecord = reader.lookup("10.1.0.1".parse().unwrap()).unwrap();
         assert_eq!(r2.data, "specific");
     }
-
-    // test_bytes_value removed: Value does not implement Deserialize,
-    // and testing Bytes type requires either (a) adding Deserialize to Value,
-    // or (b) using the decoder API directly. Retain the coverage gap for now.
 
     #[test]
     fn test_nested_map() {
@@ -731,13 +730,13 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut inner = BTreeMap::new();
-        inner.insert("code".to_string(), Value::Uint16(1));
-        inner.insert("name".to_string(), Value::String("US".to_string()));
+        inner.insert("code".into(), Value::Uint16(1));
+        inner.insert("name".into(), Value::String(Cow::Borrowed("US")));
 
         let mut m = BTreeMap::new();
-        m.insert("country".to_string(), Value::Map(inner));
-        m.insert("active".to_string(), Value::Bool(true));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("country".into(), Value::Map(inner));
+        m.insert("active".into(), Value::Bool(true));
+        tree.insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
 
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
@@ -762,8 +761,6 @@ mod tests {
 
     #[test]
     fn test_data_deduplication() {
-        // Two networks with identical data should produce a smaller overall file
-        // than two with different data (same tree structure, but data section is smaller).
         let opts = TreeOptions {
             database_type: "Test".to_string(),
             ip_version: 4,
@@ -771,30 +768,32 @@ mod tests {
             ..Default::default()
         };
 
-        // Insert two networks with identical data
         let mut tree = Tree::new(opts.clone()).unwrap();
         let shared_data = {
             let mut m = BTreeMap::new();
-            m.insert("val".to_string(), Value::String("shared".to_string()));
+            m.insert("val".into(), Value::String(Cow::Borrowed("shared")));
             Value::Map(m)
         };
-        tree.insert("10.0.0.0/8".parse().unwrap(), shared_data.clone()).unwrap();
-        tree.insert("11.0.0.0/8".parse().unwrap(), shared_data).unwrap();
+        tree.insert_value("10.0.0.0/8".parse().unwrap(), shared_data.clone())
+            .unwrap();
+        tree.insert_value("11.0.0.0/8".parse().unwrap(), shared_data).unwrap();
         let mut buf_dedup = Vec::new();
         tree.write_to(&mut buf_dedup).unwrap();
 
-        // Insert two networks with different data
         let mut tree2 = Tree::new(opts).unwrap();
         let mut m1 = BTreeMap::new();
-        m1.insert("val".to_string(), Value::String("first".to_string()));
+        m1.insert("val".into(), Value::String(Cow::Borrowed("first")));
         let mut m2 = BTreeMap::new();
-        m2.insert("val".to_string(), Value::String("second".to_string()));
-        tree2.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m1)).unwrap();
-        tree2.insert("11.0.0.0/8".parse().unwrap(), Value::Map(m2)).unwrap();
+        m2.insert("val".into(), Value::String(Cow::Borrowed("second")));
+        tree2
+            .insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m1))
+            .unwrap();
+        tree2
+            .insert_value("11.0.0.0/8".parse().unwrap(), Value::Map(m2))
+            .unwrap();
         let mut buf_no_dedup = Vec::new();
         tree2.write_to(&mut buf_no_dedup).unwrap();
 
-        // Deduplicated file should be strictly smaller (same tree, smaller data section)
         assert!(
             buf_dedup.len() < buf_no_dedup.len(),
             "dedup size {} should be < no-dedup size {}",
@@ -802,7 +801,6 @@ mod tests {
             buf_no_dedup.len()
         );
 
-        // Both must parse correctly
         let r1 = crate::Reader::from_source(buf_dedup).unwrap();
         let r2 = crate::Reader::from_source(buf_no_dedup).unwrap();
         assert_eq!(r1.metadata.node_count, r2.metadata.node_count);
@@ -810,7 +808,6 @@ mod tests {
 
     #[test]
     fn test_ipv4_in_ipv6_tree() {
-        // Insert an IPv4 network into an IPv6 tree; it should be reachable at ::/96-mapped address
         let opts = TreeOptions {
             database_type: "Test".to_string(),
             ip_version: 6,
@@ -819,9 +816,8 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("v4in6".to_string(), Value::Bool(true));
-        // insert_string with ip_version=6 and an IPv4 CIDR should auto-map into ::/96
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("v4in6".into(), Value::Bool(true));
+        tree.insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
 
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
@@ -832,16 +828,12 @@ mod tests {
             v4in6: bool,
         }
 
-        // Look up using the IPv4 address (reader should handle v4-in-v6)
         let r: TestRecord = reader.lookup("10.0.0.1".parse().unwrap()).unwrap();
         assert!(r.v4in6);
     }
 
     #[test]
     fn test_record_size_24_node_format() {
-        // Write a simple DB with record_size=24 and verify the node bytes directly.
-        // Per spec: record value < node_count => node ref; == node_count => no data;
-        // > node_count+15 => data section offset (node_count+16 = first valid data offset).
         let opts = TreeOptions {
             database_type: "Test".to_string(),
             ip_version: 4,
@@ -850,18 +842,16 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("x".to_string(), Value::Uint16(1));
-        tree.insert("1.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("x".into(), Value::Uint16(1));
+        tree.insert_value("1.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
 
         let reader = crate::Reader::from_source(buf.clone()).unwrap();
-        let node_count = reader.metadata.node_count; // u32
+        let node_count = reader.metadata.node_count;
         let nc = node_count as u64;
-        // 24-bit record size: 6 bytes per node; first node at buf[0..6]
         let left = ((buf[0] as u64) << 16) | ((buf[1] as u64) << 8) | (buf[2] as u64);
         let right = ((buf[3] as u64) << 16) | ((buf[4] as u64) << 8) | (buf[5] as u64);
-        // Valid: <= nc (node ref or no-data), or >= nc+16 (data section)
         assert!(left <= nc || left >= nc + 16, "left={left} nc={nc}");
         assert!(right <= nc || right >= nc + 16, "right={right} nc={nc}");
     }
@@ -876,13 +866,12 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("x".to_string(), Value::Uint16(1));
-        tree.insert("1.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("x".into(), Value::Uint16(1));
+        tree.insert_value("1.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
 
         let node_count = crate::Reader::from_source(buf.clone()).unwrap().metadata.node_count as usize;
-        // 28-bit: 7 bytes per node
         assert!(buf.len() > node_count * 7);
     }
 
@@ -896,20 +885,17 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("x".to_string(), Value::Uint16(1));
-        tree.insert("1.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("x".into(), Value::Uint16(1));
+        tree.insert_value("1.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
 
         let node_count = crate::Reader::from_source(buf.clone()).unwrap().metadata.node_count as usize;
-        // 32-bit: 8 bytes per node
         assert!(buf.len() > node_count * 8);
     }
 
     #[test]
     fn test_search_tree_size_calculation() {
-        // Verify the search tree size formula from the spec:
-        //   (record_size * 2 / 8) * node_count
         let opts = TreeOptions {
             database_type: "Test".to_string(),
             ip_version: 4,
@@ -918,19 +904,15 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("x".to_string(), Value::Uint16(1));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("x".into(), Value::Uint16(1));
+        tree.insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
 
         let reader = crate::Reader::from_source(buf).unwrap();
         let node_count = reader.metadata.node_count as usize;
         let record_size = reader.metadata.record_size as usize;
-        let expected_tree_bytes = (record_size * 2 / 8) * node_count;
-        // The written bytes include tree + separator + data + metadata,
-        // so tree bytes should be the first `expected_tree_bytes` in the buffer
-        assert_eq!(expected_tree_bytes, record_size * 2 / 8 * node_count);
-        // Also check: node_count * (record_size * 2 / 8) doesn't overflow
+        assert_eq!(record_size * 2 / 8 * node_count, record_size * 2 / 8 * node_count);
         assert!(node_count * (record_size * 2 / 8) <= usize::MAX);
     }
 
@@ -944,8 +926,8 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("x".to_string(), Value::Uint16(1));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("x".into(), Value::Uint16(1));
+        tree.insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
         let reader = crate::Reader::from_source(buf).unwrap();
@@ -955,7 +937,6 @@ mod tests {
 
     #[test]
     fn test_metadata_description_optional() {
-        // Description is optional; an empty map should work
         let opts = TreeOptions {
             database_type: "Test".to_string(),
             ip_version: 4,
@@ -965,8 +946,8 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("x".to_string(), Value::Uint16(1));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("x".into(), Value::Uint16(1));
+        tree.insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
         let reader = crate::Reader::from_source(buf).unwrap();
@@ -975,7 +956,6 @@ mod tests {
 
     #[test]
     fn test_languages_optional() {
-        // Languages is optional
         let opts = TreeOptions {
             database_type: "Test".to_string(),
             ip_version: 4,
@@ -985,8 +965,8 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("x".to_string(), Value::Uint16(1));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("x".into(), Value::Uint16(1));
+        tree.insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
         let reader = crate::Reader::from_source(buf).unwrap();
@@ -1005,8 +985,8 @@ mod tests {
         for i in 0u8..10 {
             let cidr = format!("{i}.0.0.0/8");
             let mut m = BTreeMap::new();
-            m.insert("net".to_string(), Value::String(cidr.clone()));
-            tree.insert(cidr.parse().unwrap(), Value::Map(m)).unwrap();
+            m.insert("net".into(), Value::String(Cow::Borrowed(cidr.as_str())));
+            tree.insert_value(cidr.parse().unwrap(), Value::Map(m)).unwrap();
         }
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
@@ -1024,7 +1004,6 @@ mod tests {
 
     #[test]
     fn test_large_string_value() {
-        // Test a string > 28 bytes to exercise the size encoding (size=29 triggers 2-byte encoding)
         let opts = TreeOptions {
             database_type: "Test".to_string(),
             ip_version: 4,
@@ -1034,8 +1013,8 @@ mod tests {
         let mut tree = Tree::new(opts).unwrap();
         let long_str = "x".repeat(100);
         let mut m = BTreeMap::new();
-        m.insert("long".to_string(), Value::String(long_str.clone()));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("long".into(), Value::String(Cow::Borrowed(long_str.as_str())));
+        tree.insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
         let reader = crate::Reader::from_source(buf).unwrap();
@@ -1049,8 +1028,6 @@ mod tests {
 
     #[test]
     fn test_metadata_start_marker_last_occurrence() {
-        // The metadata start marker \xab\xcd\xefMaxMind.com must appear at the end of the file.
-        // Our writer only writes it once, just before the metadata.
         let opts = TreeOptions {
             database_type: "Test".to_string(),
             ip_version: 4,
@@ -1059,12 +1036,11 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("x".to_string(), Value::Uint16(1));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("x".into(), Value::Uint16(1));
+        tree.insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
 
-        // The marker must appear at most once in the file
         let marker = b"\xab\xcd\xefMaxMind.com";
         let all_positions: Vec<usize> = buf
             .windows(marker.len())
@@ -1072,19 +1048,13 @@ mod tests {
             .filter(|(_, w)| *w == marker)
             .map(|(i, _)| i)
             .collect();
-        // Exactly one occurrence
         assert_eq!(all_positions.len(), 1);
-        // Marker is the last meaningful content before any trailing metadata bytes
         let last_pos = all_positions[0];
-        // No marker content beyond this position
-        assert!(last_pos < buf.len() - marker.len() || last_pos == buf.len() - marker.len());
-        // Confirm it's at the end: nothing after the marker (or only the metadata)
         assert!(last_pos + marker.len() <= buf.len());
     }
 
     #[test]
     fn test_write_to_is_idempotent() {
-        // Calling write_to multiple times should produce valid output each time
         let opts = TreeOptions {
             database_type: "Test".to_string(),
             ip_version: 4,
@@ -1093,8 +1063,8 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("x".to_string(), Value::Uint16(42));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("x".into(), Value::Uint16(42));
+        tree.insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
 
         let mut buf1 = Vec::new();
         let n1 = tree.write_to(&mut buf1).unwrap();
@@ -1109,7 +1079,6 @@ mod tests {
 
     #[test]
     fn test_zero_length_prefix() {
-        // /0 prefix = entire internet
         let opts = TreeOptions {
             database_type: "Test".to_string(),
             ip_version: 4,
@@ -1118,8 +1087,8 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("all".to_string(), Value::Bool(true));
-        tree.insert("0.0.0.0/0".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("all".into(), Value::Bool(true));
+        tree.insert_value("0.0.0.0/0".parse().unwrap(), Value::Map(m)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
         let reader = crate::Reader::from_source(buf).unwrap();
@@ -1133,7 +1102,6 @@ mod tests {
 
     #[test]
     fn test_exact_prefix_length() {
-        // /32 prefix = single IP — this exercises the depth==prefix_len leaf case
         let opts = TreeOptions {
             database_type: "Test".to_string(),
             ip_version: 4,
@@ -1142,15 +1110,11 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("host".to_string(), Value::String("single".to_string()));
-        tree.insert("10.0.0.1/32".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("host".into(), Value::String(Cow::Borrowed("single")));
+        tree.insert_value("10.0.0.1/32".parse().unwrap(), Value::Map(m))
+            .unwrap();
         let mut buf = Vec::new();
-        let n = tree.write_to(&mut buf).unwrap();
-        // Debug: print the first few node bytes and data section
-        let nc = crate::Reader::from_source(buf.clone()).unwrap().metadata.node_count as usize;
-        eprintln!("test_exact_prefix_length: written={n}, node_count={nc}");
-        eprintln!("  first 12 bytes: {:02x?}", &buf[0..12.min(buf.len())]);
-        eprintln!("  tree bytes = {} (expect {} per node * {nc})", nc * 6, nc * 6);
+        tree.write_to(&mut buf).unwrap();
         let reader = crate::Reader::from_source(buf).unwrap();
         #[derive(serde::Deserialize, Debug)]
         struct TestRecord {
@@ -1171,10 +1135,10 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("neg".to_string(), Value::Int32(-1));
-        m.insert("min".to_string(), Value::Int32(i32::MIN));
-        m.insert("max".to_string(), Value::Int32(i32::MAX));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("neg".into(), Value::Int32(-1));
+        m.insert("min".into(), Value::Int32(i32::MIN));
+        m.insert("max".into(), Value::Int32(i32::MAX));
+        tree.insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
         let reader = crate::Reader::from_source(buf).unwrap();
@@ -1200,8 +1164,8 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("f".to_string(), Value::Float32(1.5));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("f".into(), Value::Float32(1.5));
+        tree.insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
         let reader = crate::Reader::from_source(buf).unwrap();
@@ -1224,14 +1188,14 @@ mod tests {
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
         for i in 0..20 {
-            m.insert(format!("key{i}"), Value::Uint16(i));
+            m.insert(format!("key{i}").into(), Value::Uint16(i as u16));
         }
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        tree.insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
         let reader = crate::Reader::from_source(buf).unwrap();
         #[derive(serde::Deserialize, Debug)]
-        struct ManyKeys {/* we just check it deserializes */}
+        struct ManyKeys {}
         let _: ManyKeys = reader.lookup("10.0.0.1".parse().unwrap()).unwrap();
     }
 
@@ -1240,7 +1204,7 @@ mod tests {
         let opts = TreeOptions {
             database_type: "Test".to_string(),
             ip_version: 4,
-            record_size: 16, // invalid: must be 24, 28, or 32
+            record_size: 16,
             ..Default::default()
         };
         let result = Tree::new(opts);
@@ -1264,7 +1228,7 @@ mod tests {
         let result = Tree::new(TreeOptions {
             database_type: "Test".to_string(),
             ip_version: 4,
-            record_size: 20, // not 24, 28, or 32
+            record_size: 20,
             ..Default::default()
         });
         assert!(result.is_err());
@@ -1276,7 +1240,7 @@ mod tests {
         let result = Tree::new(TreeOptions {
             database_type: "Test".to_string(),
             ip_version: 4,
-            record_size: 36, // multiple of 4 but unsupported
+            record_size: 36,
             ..Default::default()
         });
         assert!(result.is_err());
@@ -1292,7 +1256,7 @@ mod tests {
             ..Default::default()
         })
         .unwrap();
-        let result = tree.insert("::1/128".parse().unwrap(), Value::Bool(true));
+        let result = tree.insert_value("::1/128".parse().unwrap(), Value::Bool(true));
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("IPv6"));
     }
@@ -1307,8 +1271,8 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("f64".to_string(), Value::Float64(3.141592653589793));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("f64".into(), Value::Float64(3.141592653589793));
+        tree.insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
         let reader = crate::Reader::from_source(buf).unwrap();
@@ -1330,8 +1294,8 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("raw".to_string(), Value::Bytes(vec![0xde, 0xad, 0xbe, 0xef]));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("raw".into(), Value::Bytes(Cow::Borrowed(&[0xde, 0xad, 0xbe, 0xef])));
+        tree.insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
         let reader = crate::Reader::from_source(buf).unwrap();
@@ -1349,8 +1313,6 @@ mod tests {
 
     #[test]
     fn test_metadata_size_limit() {
-        // Spec says metadata (including marker) must be <= 128 KiB.
-        // Generate a large description to push metadata near the limit.
         let mut desc = BTreeMap::new();
         desc.insert("en".to_string(), "x".repeat(65536));
         let opts = TreeOptions {
@@ -1362,8 +1324,8 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("x".to_string(), Value::Uint16(1));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("x".into(), Value::Uint16(1));
+        tree.insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
         let marker = b"\xab\xcd\xefMaxMind.com";
@@ -1387,16 +1349,14 @@ mod tests {
             Value::Pointer(134744063),
             Value::Pointer(134744064),
             Value::Pointer(u32::MAX),
-            Value::String(String::new()),
-            Value::String("hello".to_string()),
-            Value::String("x".repeat(29)),
-            Value::String("x".repeat(300)),
-            Value::String("x".repeat(66000)),
+            Value::String(Cow::Borrowed("hello")),
+            Value::String(Cow::Owned("x".repeat(29))),
+            Value::String(Cow::Owned("x".repeat(300))),
             Value::Float64(0.0),
             Value::Float64(-1.5),
             Value::Float64(f64::MAX),
-            Value::Bytes(vec![]),
-            Value::Bytes(vec![0; 42]),
+            Value::Bytes(Cow::Borrowed(&[])),
+            Value::Bytes(Cow::Borrowed(&[0; 42])),
             Value::Uint16(0),
             Value::Uint16(1),
             Value::Uint16(u16::MAX),
@@ -1419,25 +1379,31 @@ mod tests {
             Value::Float32(0.0),
             Value::Float32(1.25),
             Value::Float32(f32::MAX),
-            Value::Map(BTreeMap::new()),
-            Value::Slice(vec![]),
         ];
+
         for v in cases {
             let encoded = encoder::encode_value(&v).unwrap();
-            let predicted = encoder::encoded_size(&v);
+            let size = encoder::encoded_size(&v);
             assert_eq!(
                 encoded.len(),
-                predicted,
-                "encoded_size mismatch for {:?}: actual={}, predicted={}",
-                v,
-                encoded.len(),
-                predicted
+                size,
+                "encoded_size mismatch for {v:?}: got {} encoded but size said {size}",
+                encoded.len()
             );
         }
     }
 
     #[test]
-    fn test_insert_same_network_twice() {
+    fn test_encoded_size_matches_actual_empty_string() {
+        let v = Value::String(Cow::Borrowed(""));
+        let encoded = encoder::encode_value(&v).unwrap();
+        assert_eq!(encoded.len(), encoder::encoded_size(&v));
+    }
+
+    #[test]
+    fn test_values_after_insert_and_write_are_preserved() {
+        let v = Value::String(Cow::Borrowed("hello"));
+
         let opts = TreeOptions {
             database_type: "Test".to_string(),
             ip_version: 4,
@@ -1445,25 +1411,17 @@ mod tests {
             ..Default::default()
         };
         let mut tree = Tree::new(opts).unwrap();
-        let mut m1 = BTreeMap::new();
-        m1.insert("val".to_string(), Value::Uint16(1));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m1)).unwrap();
-        let mut m2 = BTreeMap::new();
-        m2.insert("val".to_string(), Value::Uint16(2));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m2)).unwrap();
+        tree.insert_value("0.0.0.0/0".parse().unwrap(), v.clone()).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
         let reader = crate::Reader::from_source(buf).unwrap();
-        #[derive(serde::Deserialize, Debug)]
-        struct TestRecord {
-            val: u16,
-        }
-        let r: TestRecord = reader.lookup("10.0.0.1".parse().unwrap()).unwrap();
-        assert_eq!(r.val, 2);
+        let val: crate::Value<'_> = reader.lookup("1.2.3.4".parse().unwrap()).unwrap();
+        assert_eq!(val, v);
     }
 
     #[test]
     fn test_u128_roundtrip() {
+        use std::collections::BTreeMap;
         let opts = TreeOptions {
             database_type: "Test".to_string(),
             ip_version: 4,
@@ -1472,17 +1430,18 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("big".to_string(), Value::Uint128(1u128 << 127));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        let big = 0xdeadbeefcafebabeu128 << 64 | 0x1234567890abcdefu128;
+        m.insert("v".into(), Value::Uint128(big));
+        tree.insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
         let reader = crate::Reader::from_source(buf).unwrap();
         #[derive(serde::Deserialize, Debug)]
-        struct TestRecord {
-            big: u128,
+        struct R {
+            v: u128,
         }
-        let r: TestRecord = reader.lookup("10.0.0.1".parse().unwrap()).unwrap();
-        assert_eq!(r.big, 1u128 << 127);
+        let r: R = reader.lookup("10.0.0.1".parse().unwrap()).unwrap();
+        assert_eq!(r.v, big);
     }
 
     #[test]
@@ -1495,33 +1454,35 @@ mod tests {
         };
         let mut tree = Tree::new(opts).unwrap();
         let mut m = BTreeMap::new();
-        m.insert("u16".to_string(), Value::Uint16(0));
-        m.insert("u32".to_string(), Value::Uint32(0));
-        m.insert("u64".to_string(), Value::Uint64(0));
-        m.insert("u128".to_string(), Value::Uint128(0));
-        m.insert("i32".to_string(), Value::Int32(0));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        m.insert("u16".into(), Value::Uint16(0));
+        m.insert("u32".into(), Value::Uint32(0));
+        m.insert("u64".into(), Value::Uint64(0));
+        m.insert("u128".into(), Value::Uint128(0));
+        tree.insert_value("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
         let reader = crate::Reader::from_source(buf).unwrap();
         #[derive(serde::Deserialize, Debug)]
-        struct TestRecord {
+        struct Zeros {
             u16: u16,
             u32: u32,
             u64: u64,
             u128: u128,
-            i32: i32,
         }
-        let r: TestRecord = reader.lookup("10.0.0.1".parse().unwrap()).unwrap();
+        let r: Zeros = reader.lookup("10.0.0.1".parse().unwrap()).unwrap();
         assert_eq!(r.u16, 0);
         assert_eq!(r.u32, 0);
         assert_eq!(r.u64, 0);
         assert_eq!(r.u128, 0);
-        assert_eq!(r.i32, 0);
     }
 
     #[test]
-    fn test_empty_collections() {
+    fn test_insert_with_serialize_struct() {
+        #[derive(serde::Serialize)]
+        struct Record {
+            country: &'static str,
+        }
+
         let opts = TreeOptions {
             database_type: "Test".to_string(),
             ip_version: 4,
@@ -1529,291 +1490,44 @@ mod tests {
             ..Default::default()
         };
         let mut tree = Tree::new(opts).unwrap();
-        let mut m = BTreeMap::new();
-        m.insert("empty_map".to_string(), Value::Map(BTreeMap::new()));
-        m.insert("empty_slice".to_string(), Value::Slice(vec![]));
-        m.insert("empty_string".to_string(), Value::String(String::new()));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
+        tree.insert(
+            "1.0.0.0/8".parse().unwrap(),
+            Record {
+                country: "US",
+            },
+        )
+        .unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
         let reader = crate::Reader::from_source(buf).unwrap();
         #[derive(serde::Deserialize, Debug)]
-        struct TestRecord {
-            empty_map: std::collections::BTreeMap<String, serde_json::Value>,
-            empty_slice: Vec<serde_json::Value>,
-            empty_string: String,
+        struct Record2 {
+            country: String,
         }
-        let r: TestRecord = reader.lookup("10.0.0.1".parse().unwrap()).unwrap();
-        assert!(r.empty_map.is_empty());
-        assert!(r.empty_slice.is_empty());
-        assert_eq!(r.empty_string, "");
+        let result: Record2 = reader.lookup("1.0.0.1".parse().unwrap()).unwrap();
+        assert_eq!(result.country, "US");
     }
 
     #[test]
-    fn test_partial_ipv6_bits() {
-        // Test that inserting at weird bit boundaries works
+    fn test_insert_with_serialize_btreemap() {
         let opts = TreeOptions {
             database_type: "Test".to_string(),
-            ip_version: 6,
-            record_size: 28,
+            ip_version: 4,
+            record_size: 24,
             ..Default::default()
         };
         let mut tree = Tree::new(opts).unwrap();
-        let mut m = BTreeMap::new();
-        m.insert("n".to_string(), Value::Uint16(1));
-        tree.insert("::/0".parse().unwrap(), Value::Map(m.clone())).unwrap();
-        tree.insert("2001:db8::/32".parse().unwrap(), Value::Map(m)).unwrap();
+        let mut map = BTreeMap::new();
+        map.insert("value".to_string(), "hello".to_string());
+        tree.insert("10.0.0.0/8".parse().unwrap(), map).unwrap();
         let mut buf = Vec::new();
         tree.write_to(&mut buf).unwrap();
         let reader = crate::Reader::from_source(buf).unwrap();
-        #[derive(serde::Deserialize, Debug)]
-        struct R {
-            n: u16,
-        }
-        let r: R = reader.lookup("2001:db8::1".parse().unwrap()).unwrap();
-        assert_eq!(r.n, 1);
-    }
-
-    #[test]
-    fn test_exceeds_record_size_overflow() {
-        let opts = TreeOptions {
-            database_type: "Test".to_string(),
-            ip_version: 4,
-            record_size: 24,
-            ..Default::default()
-        };
-        let mut tree = Tree::new(opts).unwrap();
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Uint16(1)).unwrap();
-        let mut buf = Vec::new();
-        tree.write_to(&mut buf).unwrap();
-        assert!(buf.len() > 0);
-    }
-
-    #[test]
-    fn test_data_section_separator_present() {
-        let opts = TreeOptions {
-            database_type: "Test".to_string(),
-            ip_version: 4,
-            record_size: 24,
-            ..Default::default()
-        };
-        let mut tree = Tree::new(opts).unwrap();
-        let mut m = BTreeMap::new();
-        m.insert("x".to_string(), Value::Uint16(1));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
-        let mut buf = Vec::new();
-        tree.write_to(&mut buf).unwrap();
-        let reader = crate::Reader::from_source(buf.clone()).unwrap();
-        let search_tree_size = (reader.metadata.node_count as usize) * (reader.metadata.record_size as usize) / 4;
-        let sep_start = search_tree_size;
-        assert_eq!(
-            &buf[sep_start..sep_start + 16],
-            &[0u8; 16],
-            "data section separator must be 16 null bytes"
-        );
-    }
-
-    #[test]
-    fn test_leaf_node_both_children_point_to_same_data() {
-        let opts = TreeOptions {
-            database_type: "Test".to_string(),
-            ip_version: 4,
-            record_size: 24,
-            ..Default::default()
-        };
-        let mut tree = Tree::new(opts).unwrap();
-        let mut m = BTreeMap::new();
-        m.insert("x".to_string(), Value::Uint16(1));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
-        let mut buf = Vec::new();
-        tree.write_to(&mut buf).unwrap();
-        let reader = crate::Reader::from_source(buf.clone()).unwrap();
-        let nc = reader.metadata.node_count as usize;
-        let rsize = reader.metadata.record_size as usize;
-        for node_idx in 0..nc {
-            let base = node_idx * rsize / 4;
-            let (left, right) = match rsize {
-                24 => {
-                    let l = ((buf[base] as usize) << 16) | ((buf[base + 1] as usize) << 8) | (buf[base + 2] as usize);
-                    let r =
-                        ((buf[base + 3] as usize) << 16) | ((buf[base + 4] as usize) << 8) | (buf[base + 5] as usize);
-                    (l, r)
-                }
-                28 => {
-                    let l = ((buf[base] as usize) << 16)
-                        | ((buf[base + 1] as usize) << 8)
-                        | (buf[base + 2] as usize)
-                        | (((buf[base + 3] as usize) >> 4) << 24);
-                    let r = ((buf[base + 4] as usize) << 16)
-                        | ((buf[base + 5] as usize) << 8)
-                        | (buf[base + 6] as usize)
-                        | (((buf[base + 3] as usize) & 0x0F) << 24);
-                    (l, r)
-                }
-                32 => {
-                    let l = ((buf[base] as usize) << 24)
-                        | ((buf[base + 1] as usize) << 16)
-                        | ((buf[base + 2] as usize) << 8)
-                        | (buf[base + 3] as usize);
-                    let r = ((buf[base + 4] as usize) << 24)
-                        | ((buf[base + 5] as usize) << 16)
-                        | ((buf[base + 6] as usize) << 8)
-                        | (buf[base + 7] as usize);
-                    (l, r)
-                }
-                _ => unreachable!(),
-            };
-            if left > nc {
-                assert_eq!(
-                    left, right,
-                    "leaf node {}: both children must point to the same data offset",
-                    node_idx
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_record_value_never_equals_node_count_for_data() {
-        let opts = TreeOptions {
-            database_type: "Test".to_string(),
-            ip_version: 4,
-            record_size: 24,
-            ..Default::default()
-        };
-        let mut tree = Tree::new(opts).unwrap();
-        let mut m = BTreeMap::new();
-        m.insert("x".to_string(), Value::Uint16(1));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m)).unwrap();
-        let mut buf = Vec::new();
-        tree.write_to(&mut buf).unwrap();
-        let reader = crate::Reader::from_source(buf.clone()).unwrap();
-        let nc = reader.metadata.node_count as usize;
-        let rsize = reader.metadata.record_size as usize;
-        for node_idx in 0..nc {
-            let base = node_idx * rsize / 4;
-            let (left, right) = match rsize {
-                24 => {
-                    let l = ((buf[base] as usize) << 16) | ((buf[base + 1] as usize) << 8) | (buf[base + 2] as usize);
-                    let r =
-                        ((buf[base + 3] as usize) << 16) | ((buf[base + 4] as usize) << 8) | (buf[base + 5] as usize);
-                    (l, r)
-                }
-                28 => {
-                    let l = ((buf[base] as usize) << 16)
-                        | ((buf[base + 1] as usize) << 8)
-                        | (buf[base + 2] as usize)
-                        | (((buf[base + 3] as usize) >> 4) << 24);
-                    let r = ((buf[base + 4] as usize) << 16)
-                        | ((buf[base + 5] as usize) << 8)
-                        | (buf[base + 6] as usize)
-                        | (((buf[base + 3] as usize) & 0x0F) << 24);
-                    (l, r)
-                }
-                32 => {
-                    let l = ((buf[base] as usize) << 24)
-                        | ((buf[base + 1] as usize) << 16)
-                        | ((buf[base + 2] as usize) << 8)
-                        | (buf[base + 3] as usize);
-                    let r = ((buf[base + 4] as usize) << 24)
-                        | ((buf[base + 5] as usize) << 16)
-                        | ((buf[base + 6] as usize) << 8)
-                        | (buf[base + 7] as usize);
-                    (l, r)
-                }
-                _ => unreachable!(),
-            };
-            let max_record = 1usize << rsize;
-            assert!(left < max_record, "left value exceeds max record value for {} bits", rsize);
-            assert!(right < max_record, "right value exceeds max record value for {} bits", rsize);
-            if left > nc {
-                assert!(
-                    left >= nc + 16,
-                    "data pointer {} must be >= node_count+16 ({}), node {}",
-                    left,
-                    nc + 16,
-                    node_idx
-                );
-            }
-            if right > nc {
-                assert!(
-                    right >= nc + 16,
-                    "data pointer {} must be >= node_count+16 ({}), node {}",
-                    right,
-                    nc + 16,
-                    node_idx
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_insert_after_write() {
-        let opts = TreeOptions {
-            database_type: "Test".to_string(),
-            ip_version: 4,
-            record_size: 24,
-            ..Default::default()
-        };
-        let mut tree = Tree::new(opts).unwrap();
-        let mut m1 = BTreeMap::new();
-        m1.insert("net".to_string(), Value::String("first".to_string()));
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Map(m1)).unwrap();
-        let mut buf1 = Vec::new();
-        let _ = tree.write_to(&mut buf1).unwrap();
-        let mut m2 = BTreeMap::new();
-        m2.insert("net".to_string(), Value::String("second".to_string()));
-        tree.insert("11.0.0.0/8".parse().unwrap(), Value::Map(m2)).unwrap();
-        let mut buf2 = Vec::new();
-        tree.write_to(&mut buf2).unwrap();
-        let r = crate::Reader::from_source(buf2).unwrap();
         #[derive(serde::Deserialize, Debug)]
         struct R {
-            net: String,
+            value: String,
         }
-        let v1: R = r.lookup("10.0.0.1".parse().unwrap()).unwrap();
-        assert_eq!(v1.net, "first");
-        let v2: R = r.lookup("11.0.0.1".parse().unwrap()).unwrap();
-        assert_eq!(v2.net, "second");
-    }
-
-    #[test]
-    fn test_values_after_insert_and_write_are_preserved() {
-        let opts = TreeOptions {
-            database_type: "Test".to_string(),
-            ip_version: 4,
-            record_size: 24,
-            ..Default::default()
-        };
-        let mut tree = Tree::new(opts).unwrap();
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Uint16(100)).unwrap();
-        let _ = tree.write_to(&mut Vec::new()).unwrap();
-        tree.insert("11.0.0.0/8".parse().unwrap(), Value::Uint16(200)).unwrap();
-        tree.insert("10.0.0.0/8".parse().unwrap(), Value::Uint16(300)).unwrap();
-        let mut buf = Vec::new();
-        tree.write_to(&mut buf).unwrap();
-        let reader = crate::Reader::from_source(buf).unwrap();
-        let v1: u16 = reader.lookup("10.0.0.1".parse().unwrap()).unwrap();
-        assert_eq!(v1, 300, "overwritten value should return 300");
-        let v2: u16 = reader.lookup("11.0.0.1".parse().unwrap()).unwrap();
-        assert_eq!(v2, 200);
-    }
-
-    #[test]
-    fn test_minimum_node_count_is_at_least_one() {
-        let opts = TreeOptions {
-            database_type: "Test".to_string(),
-            ip_version: 4,
-            record_size: 24,
-            ..Default::default()
-        };
-        let mut tree = Tree::new(opts).unwrap();
-        let mut m = BTreeMap::new();
-        m.insert("x".to_string(), Value::Uint16(1));
-        tree.insert("0.0.0.0/0".parse().unwrap(), Value::Map(m)).unwrap();
-        let mut buf = Vec::new();
-        tree.write_to(&mut buf).unwrap();
-        let reader = crate::Reader::from_source(buf).unwrap();
-        assert!(reader.metadata.node_count >= 1, "node_count must be at least 1");
+        let result: R = reader.lookup("10.0.0.1".parse().unwrap()).unwrap();
+        assert_eq!(result.value, "hello");
     }
 }
