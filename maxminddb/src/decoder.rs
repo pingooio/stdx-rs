@@ -283,24 +283,6 @@ impl<'de> Decoder<'de> {
         unpacked + pointer_value_offset[pointer_size]
     }
 
-    #[cfg(feature = "unsafe-str-decode")]
-    fn decode_string(&mut self, size: usize) -> DecodeResult<&'de str> {
-        use std::str::from_utf8_unchecked;
-
-        let new_offset: usize = self.current_ptr + size;
-        let bytes = &self.buf[self.current_ptr..new_offset];
-        self.current_ptr = new_offset;
-        // SAFETY:
-        // A corrupt maxminddb will cause undefined behaviour.
-        // If the caller has verified the integrity of their database and trusts their upstream
-        // provider, they can opt-into the performance gains provided by this unsafe function via
-        // the `unsafe-str-decode` feature flag.
-        // This can provide around 20% performance increase in the lookup benchmark.
-        let v = unsafe { from_utf8_unchecked(bytes) };
-        Ok(v)
-    }
-
-    #[cfg(not(feature = "unsafe-str-decode"))]
     fn decode_string(&mut self, size: usize) -> DecodeResult<&'de str> {
         use std::str::from_utf8;
 

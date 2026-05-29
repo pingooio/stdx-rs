@@ -1,7 +1,5 @@
 #![deny(trivial_casts, trivial_numeric_casts, unused_import_braces)]
 
-#[cfg(feature = "mmap")]
-use std::fs::File;
 use std::{
     cmp::Ordering,
     collections::BTreeMap,
@@ -13,11 +11,20 @@ use std::{
 };
 
 use ipnetwork::IpNetwork;
-#[cfg(feature = "mmap")]
-pub use memmap2::Mmap;
-#[cfg(feature = "mmap")]
-use memmap2::MmapOptions;
 use serde::{Deserialize, Serialize, de};
+
+// #[cfg(feature = "mmap")]
+// pub use memmap2::Mmap;
+// #[cfg(feature = "mmap")]
+// use memmap2::MmapOptions;
+// #[cfg(feature = "mmap")]
+// use std::fs::File;
+
+pub mod decoder;
+pub mod encoder;
+pub mod geoip2;
+pub mod writer;
+// pub use encoder::Value;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum MaxMindDBError {
@@ -173,21 +180,21 @@ pub struct Reader<S: AsRef<[u8]>> {
     pointer_base: usize,
 }
 
-#[cfg(feature = "mmap")]
-impl<'de> Reader<Mmap> {
-    /// Open a MaxMind DB database file by memory mapping it.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// let reader = maxminddb::Reader::open_mmap("test-data/test-data/GeoIP2-City-Test.mmdb").unwrap();
-    /// ```
-    pub fn open_mmap<P: AsRef<Path>>(database: P) -> Result<Reader<Mmap>, MaxMindDBError> {
-        let file_read = File::open(database)?;
-        let mmap = unsafe { MmapOptions::new().map(&file_read) }?;
-        Reader::from_source(mmap)
-    }
-}
+// #[cfg(feature = "mmap")]
+// impl<'de> Reader<Mmap> {
+//     /// Open a MaxMind DB database file by memory mapping it.
+//     ///
+//     /// # Example
+//     ///
+//     /// ```
+//     /// let reader = maxminddb::Reader::open_mmap("test-data/test-data/GeoIP2-City-Test.mmdb").unwrap();
+//     /// ```
+//     pub fn open_mmap<P: AsRef<Path>>(database: P) -> Result<Reader<Mmap>, MaxMindDBError> {
+//         let file_read = File::open(database)?;
+//         let mmap = unsafe { MmapOptions::new().map(&file_read) }?;
+//         Reader::from_source(mmap)
+//     }
+// }
 
 impl Reader<Vec<u8>> {
     /// Open a MaxMind DB database file by loading it into memory.
@@ -305,7 +312,7 @@ impl<'de, S: AsRef<[u8]>> Reader<S> {
     ///     println!("ip_net={}, city={:?}", item.ip_net, item.info);
     /// }
     /// ```
-    pub fn within<T>(&'de self, cidr: IpNetwork) -> Result<Within<T, S>, MaxMindDBError>
+    pub fn within<T>(&'de self, cidr: IpNetwork) -> Result<Within<'de, T, S>, MaxMindDBError>
     where
         T: Deserialize<'de>,
     {
@@ -373,7 +380,17 @@ impl<'de, S: AsRef<[u8]>> Reader<S> {
         match node_count {
             n if n == node => Ok((0, prefix_len)),
             n if node > n => Ok((node, prefix_len)),
-            _ => Err(MaxMindDBError::InvalidDatabaseError("invalid node in search tree".to_owned())),
+            _ => {
+                // All bits consumed but we are at a node (exact prefix match).
+                // Read the left child to get the data pointer. For an exact prefix
+                // match the writer sets both children to the same data pointer.
+                let data_ptr = self.read_node(node, 0)?;
+                if data_ptr > node_count {
+                    Ok((data_ptr, prefix_len))
+                } else {
+                    Err(MaxMindDBError::InvalidDatabaseError("invalid node in search tree".to_owned()))
+                }
+            }
         }
     }
 
@@ -508,9 +525,6 @@ fn find_metadata_start(buf: &[u8]) -> Result<usize, MaxMindDBError> {
         .map(|x| x + METADATA_START_MARKER.len())
         .ok_or_else(|| MaxMindDBError::InvalidDatabaseError("Could not find MaxMind DB metadata in file.".to_owned()))
 }
-
-mod decoder;
-pub mod geoip2;
 
 #[cfg(test)]
 mod reader_test;
