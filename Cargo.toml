@@ -54,7 +54,9 @@ members = [
     "thiserror",
     "thiserror/impl",
     "tld",
-    "unsafe_libyaml"
+    "unsafe_libyaml",
+    "pg",
+    "pg-derive"
 ]
 
 [workspace.dependencies]
@@ -79,6 +81,9 @@ tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 walkdir = "2"
 zeroize = { version = "1", features = ["simd", "derive"] }
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "logging", "tls12"] }
+tokio-rustls = { version = "0.26" }
+lru = "0.15"
 
 
 # For macros

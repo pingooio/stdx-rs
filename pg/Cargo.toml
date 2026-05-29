@@ -1,0 +1,26 @@
+[package]
+name = "pg"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/pg.rs"
+
+[dependencies]
+base64 = { path = "../base64" }
+bytes = { workspace = true }
+chrono = { workspace = true }
+crypto = { path = "../crypto" }
+hex = { path = "../hex" }
+pg-derive = { path = "../pg-derive" }
+rand = { workspace = true }
+thiserror = { path = "../thiserror" }
+tokio = { workspace = true }
+tokio-stream = { version = "0.1" }
+uuid = { path = "../uuid" }
+rustls = { workspace = true }
+tokio-rustls = { workspace = true }
+lru = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
