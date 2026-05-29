@@ -289,8 +289,6 @@ mod tests {
 
     #[test]
     fn blake2b_selftest_individual_hashes() {
-        let b2b_md_len: [usize; 4] = [20, 32, 48, 64];
-        let b2b_in_len: [usize; 6] = [0, 3, 128, 129, 255, 1024];
         let expected_hashes: Vec<(&str, &str, &str)> = vec![
             (
                 "20,0",
@@ -415,7 +413,7 @@ mod tests {
         ];
 
         let mut ctx = Blake2b::new_keyed(&[], 32);
-        for (i, &(label, unkeyed_exp, keyed_exp)) in expected_hashes.iter().enumerate() {
+        for (label, unkeyed_exp, keyed_exp) in expected_hashes.iter() {
             let (outlen_str, inlen_str) = label.split_once(',').unwrap();
             let outlen: usize = outlen_str.parse().unwrap();
             let inlen: usize = inlen_str.parse().unwrap();
@@ -424,14 +422,14 @@ mod tests {
             let mut h = Blake2b::new_keyed(&[], outlen);
             h.update(&input);
             let md = h.sum();
-            assert_eq!(hex::encode(md.as_ref()), unkeyed_exp, "unkeyed mismatch at {}", label);
+            assert_eq!(hex::encode(md.as_ref()), *unkeyed_exp, "unkeyed mismatch at {}", label);
             ctx.update(md.as_ref());
 
             let key = selftest_seq(outlen, outlen as u32);
             let mut h2 = Blake2b::new_keyed(&key, outlen);
             h2.update(&input);
             let md2 = h2.sum();
-            assert_eq!(hex::encode(md2.as_ref()), keyed_exp, "keyed mismatch at {}", label);
+            assert_eq!(hex::encode(md2.as_ref()), *keyed_exp, "keyed mismatch at {}", label);
             ctx.update(md2.as_ref());
         }
         let blake2b_res: [u8; 32] = [

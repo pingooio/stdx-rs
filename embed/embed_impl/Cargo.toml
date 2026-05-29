@@ -12,6 +12,7 @@ authors = ["pyros2097 <pyros2097@gmail.com>"]
 edition = "2024"
 
 [lib]
+path = "./embed_impl.rs"
 proc-macro = true
 
 [dependencies]

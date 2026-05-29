@@ -12,6 +12,9 @@ authors = ["pyros2097 <pyros2097@gmail.com>"]
 edition = "2024"
 rust-version = "1.85"
 
+[lib]
+path = "./embed.rs"
+
 [dependencies]
 walkdir = { workspace = true }
 embed_impl = { path = "./embed_impl"}

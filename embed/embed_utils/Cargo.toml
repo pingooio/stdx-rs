@@ -11,6 +11,10 @@ categories = ["web-programming::http-server"]
 authors = ["pyros2097 <pyros2097@gmail.com>"]
 edition = "2024"
 
+
+[lib]
+path = "./embed_utils.rs"
+
 [dependencies]
 sha2 = { workspace = true }
 walkdir = { workspace = true }
