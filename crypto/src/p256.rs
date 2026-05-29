@@ -7,6 +7,69 @@ pub const PUBLIC_KEY_COMPRESSED_SIZE: usize = 33;
 pub const PUBLIC_KEY_UNCOMPRESSED_SIZE: usize = 65;
 pub const SIGNATURE_SIZE: usize = 64;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PrivateKey {
+    private_key: [u8; PRIVATE_KEY_SIZE],
+    public_key: [u8; PUBLIC_KEY_UNCOMPRESSED_SIZE],
+}
+
+impl PrivateKey {
+    pub fn generate() -> Result<PrivateKey, EllipticCurveError> {
+        let private_key: [u8; PRIVATE_KEY_SIZE] = rand::random();
+        let public_key = derive_public_key_uncompressed(&private_key)?;
+        Ok(PrivateKey {
+            private_key,
+            public_key,
+        })
+    }
+
+    pub fn from_bytes(key: &[u8; PRIVATE_KEY_SIZE]) -> Result<PrivateKey, EllipticCurveError> {
+        let public_key = derive_public_key_uncompressed(key)?;
+        Ok(PrivateKey {
+            private_key: *key,
+            public_key,
+        })
+    }
+
+    pub fn public_key(&self) -> PublicKey {
+        PublicKey {
+            public_key: self.public_key,
+        }
+    }
+
+    pub fn sign(&self, message: &[u8]) -> Result<[u8; SIGNATURE_SIZE], EllipticCurveError> {
+        ecdsa_sign(&self.private_key, message)
+    }
+
+    pub fn to_bytes(&self) -> &[u8] {
+        &self.private_key
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PublicKey {
+    public_key: [u8; PUBLIC_KEY_UNCOMPRESSED_SIZE],
+}
+
+impl PublicKey {
+    pub fn from_bytes(key: &[u8; PUBLIC_KEY_UNCOMPRESSED_SIZE]) -> Result<PublicKey, EllipticCurveError> {
+        if !is_valid_public_key(key) {
+            return Err(EllipticCurveError::InvalidKey);
+        }
+        Ok(PublicKey {
+            public_key: *key,
+        })
+    }
+
+    pub fn verify(&self, message: &[u8], signature: &[u8; SIGNATURE_SIZE]) -> Result<(), EllipticCurveError> {
+        ecdsa_verify(&self.public_key, message, signature)
+    }
+
+    pub fn to_bytes(&self) -> &[u8] {
+        &self.public_key
+    }
+}
+
 type U256 = Uint<256, 4>;
 
 const MODULUS_P: U256 = U256::from_limbs([
@@ -539,7 +602,7 @@ fn parse_public_key(public_key: &[u8]) -> Result<AffinePoint, EllipticCurveError
     AffinePoint::from_sec1_bytes(public_key).ok_or(EllipticCurveError::InvalidKey)
 }
 
-pub fn derive_public_key_uncompressed(
+fn derive_public_key_uncompressed(
     private_key: &[u8; PRIVATE_KEY_SIZE],
 ) -> Result<[u8; PUBLIC_KEY_UNCOMPRESSED_SIZE], EllipticCurveError> {
     let scalar = parse_private_key(private_key)?;
@@ -549,7 +612,7 @@ pub fn derive_public_key_uncompressed(
     Ok(point.to_uncompressed_bytes())
 }
 
-pub fn derive_public_key_compressed(
+fn derive_public_key_compressed(
     private_key: &[u8; PRIVATE_KEY_SIZE],
 ) -> Result<[u8; PUBLIC_KEY_COMPRESSED_SIZE], EllipticCurveError> {
     let scalar = parse_private_key(private_key)?;
@@ -559,7 +622,7 @@ pub fn derive_public_key_compressed(
     Ok(point.to_compressed_bytes())
 }
 
-pub fn ecdsa_sign(
+fn ecdsa_sign(
     private_key: &[u8; PRIVATE_KEY_SIZE],
     message: &[u8],
 ) -> Result<[u8; SIGNATURE_SIZE], EllipticCurveError> {
@@ -592,11 +655,7 @@ pub fn ecdsa_sign(
     }
 }
 
-pub fn ecdsa_verify(
-    public_key: &[u8],
-    message: &[u8],
-    signature: &[u8; SIGNATURE_SIZE],
-) -> Result<(), EllipticCurveError> {
+fn ecdsa_verify(public_key: &[u8], message: &[u8], signature: &[u8; SIGNATURE_SIZE]) -> Result<(), EllipticCurveError> {
     let public = parse_public_key(public_key)?;
     let r = Scalar::from_bytes(signature[..32].try_into().unwrap()).ok_or(EllipticCurveError::Unspecified)?;
     let s = Scalar::from_bytes(signature[32..].try_into().unwrap()).ok_or(EllipticCurveError::Unspecified)?;

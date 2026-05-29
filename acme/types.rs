@@ -1,9 +1,6 @@
 use std::fmt;
 
-use aws_lc_rs::{
-    digest::{Digest, SHA256, digest},
-    signature::{EcdsaKeyPair, KeyPair},
-};
+use crypto::{Hasher, p256::PublicKey, sha2::Sha256};
 use reqwest::Response;
 // use rustls_pki_types::CertificateDer;
 use serde::de::DeserializeOwned;
@@ -23,11 +20,11 @@ pub enum Error {
     #[error("base64 decoding failed: {0}")]
     Base64(#[from] base64::DecodeError),
     /// Failed from cryptographic operations
-    #[error("cryptographic operation failed: {0}")]
-    Crypto(aws_lc_rs::error::Unspecified),
+    #[error("cryptographic operation failed")]
+    Crypto,
     /// Failed to instantiate a private key
-    #[error("invalid key bytes: {0}")]
-    CryptoKey(aws_lc_rs::error::KeyRejected),
+    #[error("invalid key bytes")]
+    CryptoKey,
     /// HTTP request failure
     #[error("HTTP request failure: {0}")]
     Http(#[from] reqwest::Error),
@@ -180,7 +177,7 @@ pub(crate) enum KeyOrKeyId<'a> {
 }
 
 impl<'a> KeyOrKeyId<'a> {
-    pub(crate) fn from_key(key: &EcdsaKeyPair) -> KeyOrKeyId<'static> {
+    pub(crate) fn from_key(key: &PublicKey) -> KeyOrKeyId<'static> {
         KeyOrKeyId::Key(Jwk::new(key))
     }
 }
@@ -196,8 +193,9 @@ pub(crate) struct Jwk {
 }
 
 impl Jwk {
-    pub(crate) fn new(key: &EcdsaKeyPair) -> Self {
-        let (x, y) = key.public_key().as_ref()[1..].split_at(32);
+    pub(crate) fn new(key: &PublicKey) -> Self {
+        let bytes = key.to_bytes();
+        let (x, y) = bytes[1..].split_at(32);
         Self {
             alg: SigningAlgorithm::Es256,
             crv: "P-256",
@@ -208,17 +206,17 @@ impl Jwk {
         }
     }
 
-    pub(crate) fn thumb_sha256(key: &EcdsaKeyPair) -> Result<Digest, serde_json::Error> {
+    pub(crate) fn thumb_sha256(key: &PublicKey) -> Result<[u8; 32], serde_json::Error> {
         let jwk = Self::new(key);
-        Ok(digest(
-            &SHA256,
-            &serde_json::to_vec(&JwkThumb {
-                crv: jwk.crv,
-                kty: jwk.kty,
-                x: &jwk.x,
-                y: &jwk.y,
-            })?,
-        ))
+        let hash = Sha256::hash(&serde_json::to_vec(&JwkThumb {
+            crv: jwk.crv,
+            kty: jwk.kty,
+            x: &jwk.x,
+            y: &jwk.y,
+        })?);
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&hash.as_ref()[..32]);
+        Ok(out)
     }
 }
 

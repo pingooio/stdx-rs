@@ -5,16 +5,7 @@
 
 use std::{fmt, sync::Arc};
 
-// use hyper::client::connect::Connect;
-// #[cfg(feature = "hyper-rustls")]
-// use hyper::client::HttpConnector;
-// use hyper::header::{CONTENT_TYPE, LOCATION};
-use aws_lc_rs::{
-    digest::{SHA256, digest},
-    hmac, pkcs8,
-    rand::SystemRandom,
-    signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair},
-};
+use crypto::{Hasher, encoding::pkcs8, hmac::Hmac, p256::PrivateKey, sha2::Sha256};
 use reqwest::{
     Method, Response, StatusCode,
     header::{CONTENT_TYPE, LOCATION},
@@ -280,7 +271,13 @@ impl Account {
         let payload = NewAccountPayload {
             new_account: account,
             external_account_binding: external_account
-                .map(|eak| JoseJson::new(Some(&Jwk::new(&key.inner)), eak.header(None, &client.urls.new_account), eak))
+                .map(|eak| {
+                    JoseJson::new(
+                        Some(&Jwk::new(&key.inner.public_key())),
+                        eak.header(None, &client.urls.new_account),
+                        eak,
+                    )
+                })
                 .transpose()?,
         };
 
@@ -299,7 +296,7 @@ impl Account {
         let id = account_url.ok_or("failed to get account URL")?;
         let credentials = AccountCredentials {
             id: id.clone(),
-            key_pkcs8: key_pkcs8.as_ref().to_vec(),
+            key_pkcs8: key_pkcs8.to_vec(),
             directory: Some(server_url.to_owned()),
             // We support deserializing URLs for compatibility with versions pre 0.4,
             // but we prefer to get fresh URLs from the `server_url` for newer credentials.
@@ -498,60 +495,56 @@ impl fmt::Debug for Client {
 }
 
 struct Key {
-    rng: SystemRandom,
     signing_algorithm: SigningAlgorithm,
-    inner: EcdsaKeyPair,
+    inner: PrivateKey,
     thumb: String,
 }
 
 impl Key {
-    fn generate() -> Result<(Self, pkcs8::Document), Error> {
-        let rng = SystemRandom::new();
-        let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng).map_err(Error::Crypto)?;
-        let key =
-            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref()).map_err(Error::CryptoKey)?;
-        let thumb = base64::encode_with_alphabet(Jwk::thumb_sha256(&key)?.as_ref(), base64::Alphabet::UrlNoPadding);
+    fn generate() -> Result<(Self, [u8; 138]), Error> {
+        let inner = PrivateKey::generate().map_err(|_| Error::Crypto)?;
+        let pkcs8_der = pkcs8::encode_p256_pkcs8_der(&inner).map_err(|_| Error::Crypto)?;
+        let thumb =
+            base64::encode_with_alphabet(&Jwk::thumb_sha256(&inner.public_key())?, base64::Alphabet::UrlNoPadding);
 
         Ok((
             Self {
-                rng,
                 signing_algorithm: SigningAlgorithm::Es256,
-                inner: key,
+                inner,
                 thumb,
             },
-            pkcs8,
+            pkcs8_der,
         ))
     }
 
     fn from_pkcs8_der(pkcs8_der: &[u8]) -> Result<Self, Error> {
-        let rng = SystemRandom::new();
-        let key = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8_der).map_err(Error::CryptoKey)?;
-        let thumb = base64::encode_with_alphabet(Jwk::thumb_sha256(&key)?.as_ref(), base64::Alphabet::UrlNoPadding);
+        let inner = pkcs8::decode_p256_pkcs8_der(pkcs8_der).map_err(|_| Error::CryptoKey)?;
+        let thumb =
+            base64::encode_with_alphabet(&Jwk::thumb_sha256(&inner.public_key())?, base64::Alphabet::UrlNoPadding);
 
         Ok(Self {
-            rng,
             signing_algorithm: SigningAlgorithm::Es256,
-            inner: key,
+            inner,
             thumb,
         })
     }
 }
 
 impl Signer for Key {
-    type Signature = aws_lc_rs::signature::Signature;
+    type Signature = [u8; 64];
 
     fn header<'n, 'u: 'n, 's: 'u>(&'s self, nonce: Option<&'n str>, url: &'u str) -> Header<'n> {
         debug_assert!(nonce.is_some());
         Header {
             alg: self.signing_algorithm,
-            key: KeyOrKeyId::from_key(&self.inner),
+            key: KeyOrKeyId::from_key(&self.inner.public_key()),
             nonce,
             url,
         }
     }
 
     fn sign(&self, payload: &[u8]) -> Result<Self::Signature, Error> {
-        Ok(self.inner.sign(&self.rng, payload).map_err(Error::Crypto)?)
+        self.inner.sign(payload).map_err(|_| Error::Crypto)
     }
 }
 
@@ -580,7 +573,10 @@ impl KeyAuthorization {
     ///
     /// <https://datatracker.ietf.org/doc/html/rfc8737#section-3>
     pub fn digest(&self) -> impl AsRef<[u8]> {
-        digest(&SHA256, self.0.as_bytes())
+        let hash = Sha256::hash(self.0.as_bytes());
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&hash.as_ref()[..32]);
+        out
     }
 
     /// Get the base64-encoded SHA256 digest of the key authorization
@@ -602,7 +598,7 @@ impl fmt::Debug for KeyAuthorization {
 /// See RFC 8555 section 7.3.4 for more information.
 pub struct ExternalAccountKey {
     id: String,
-    key: hmac::Key,
+    key_value: Vec<u8>,
 }
 
 impl ExternalAccountKey {
@@ -610,13 +606,13 @@ impl ExternalAccountKey {
     pub fn new(id: String, key_value: &[u8]) -> Self {
         Self {
             id,
-            key: hmac::Key::new(hmac::HMAC_SHA256, key_value),
+            key_value: key_value.to_vec(),
         }
     }
 }
 
 impl Signer for ExternalAccountKey {
-    type Signature = hmac::Tag;
+    type Signature = [u8; 32];
 
     fn header<'n, 'u: 'n, 's: 'u>(&'s self, nonce: Option<&'n str>, url: &'u str) -> Header<'n> {
         debug_assert_eq!(nonce, None);
@@ -629,7 +625,10 @@ impl Signer for ExternalAccountKey {
     }
 
     fn sign(&self, payload: &[u8]) -> Result<Self::Signature, Error> {
-        Ok(hmac::sign(&self.key, payload))
+        let h = Hmac::<Sha256>::mac(&self.key_value, payload);
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&h.as_ref()[..32]);
+        Ok(out)
     }
 }
 

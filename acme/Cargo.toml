@@ -3,11 +3,14 @@ name = "acme"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+path = "./acme.rs"
+
 [dependencies]
 base64 = { path = "../base64" }
+crypto = { path = "../crypto" }
 thiserror = { path = "../thiserror" }
 
-aws-lc-rs = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
