@@ -2,12 +2,12 @@ use std::collections::BTreeMap;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use crypto::{Hasher, sha2::Sha256};
-use quick_xml::de::from_str;
-use serde::Deserialize;
+use quick_xml::{de::from_str, se::to_string};
+use serde::{Deserialize, Serialize};
 
 use crate::client::{
-    ByteStream, Client, HttpClient, HttpMethod, bytes_to_string, canonical_bucket_uri, canonical_object_uri,
-    canonical_query_string, collect_body, consume_empty, header_to_string, header_to_u64, xml_escape,
+    ByteStream, Client, Error, HttpClient, HttpMethod, bytes_to_string, canonical_bucket_uri, canonical_object_uri,
+    canonical_query_string, collect_body, consume_empty, header_to_string, header_to_u64,
 };
 
 #[derive(Debug, Clone)]
@@ -141,7 +141,16 @@ impl<H: HttpClient> Client<H> {
         keys: &[&str],
     ) -> Result<DeleteObjectsOutput, crate::client::Error> {
         let canonical_uri = canonical_bucket_uri(bucket);
-        let body = build_delete_objects_body(keys);
+        let body = to_string(&DeleteBodyXml {
+            object: keys
+                .iter()
+                .map(|k| DeleteObjectEntryXml {
+                    key: k.to_string(),
+                })
+                .collect(),
+        })
+        .map_err(|e| Error::Xml(quick_xml::DeError::Custom(e.to_string())))?
+        .into_bytes();
         let checksum_headers = delete_objects_checksum_headers(&body);
         let response = self
             .execute_with_headers(HttpMethod::Post, &canonical_uri, "delete=", &body, &checksum_headers, bucket)
@@ -211,7 +220,17 @@ impl<H: HttpClient> Client<H> {
         let mut params = BTreeMap::new();
         params.insert("uploadId".to_string(), upload_id.to_string());
         let canonical_query = canonical_query_string(&params);
-        let xml_body = build_complete_multipart_body(parts);
+        let xml_body = to_string(&CompleteMultipartBodyXml {
+            part: parts
+                .iter()
+                .map(|p| CompletePartEntryXml {
+                    part_number: p.part_number,
+                    e_tag: p.e_tag.clone(),
+                })
+                .collect(),
+        })
+        .map_err(|e| Error::Xml(quick_xml::DeError::Custom(e.to_string())))?
+        .into_bytes();
         let response = self
             .execute(HttpMethod::Post, &canonical_uri, &canonical_query, &xml_body, bucket)
             .await?;
@@ -292,7 +311,19 @@ impl<H: HttpClient> Client<H> {
 
     pub async fn put_object_tagging(&self, bucket: &str, key: &str, tags: &[Tag]) -> Result<(), crate::client::Error> {
         let canonical_uri = canonical_object_uri(bucket, key);
-        let body = build_tagging_body(tags);
+        let body = to_string(&TaggingBodyXml {
+            tag_set: TagSetBodyXml {
+                tag: tags
+                    .iter()
+                    .map(|t| TagEntryXml {
+                        key: t.key.clone(),
+                        value: t.value.clone(),
+                    })
+                    .collect(),
+            },
+        })
+        .map_err(|e| Error::Xml(quick_xml::DeError::Custom(e.to_string())))?
+        .into_bytes();
         let response = self
             .execute(HttpMethod::Put, &canonical_uri, "tagging=", &body, bucket)
             .await?;
@@ -332,17 +363,6 @@ impl<H: HttpClient> Client<H> {
     }
 }
 
-fn build_delete_objects_body(keys: &[&str]) -> Vec<u8> {
-    let mut xml = String::from("<Delete>");
-    for key in keys {
-        xml.push_str("<Object><Key>");
-        xml.push_str(&xml_escape(key));
-        xml.push_str("</Key></Object>");
-    }
-    xml.push_str("</Delete>");
-    xml.into_bytes()
-}
-
 fn delete_objects_checksum_headers(body: &[u8]) -> [(String, String); 2] {
     [
         ("x-amz-sdk-checksum-algorithm".to_string(), "SHA256".to_string()),
@@ -354,30 +374,53 @@ fn checksum_sha256(body: &[u8]) -> String {
     BASE64_STANDARD.encode(Sha256::hash(body).as_ref())
 }
 
-fn build_complete_multipart_body(parts: &[CompletedPart]) -> Vec<u8> {
-    let mut xml = String::from("<CompleteMultipartUpload>");
-    for part in parts {
-        xml.push_str("<Part><PartNumber>");
-        xml.push_str(&part.part_number.to_string());
-        xml.push_str("</PartNumber><ETag>");
-        xml.push_str(&xml_escape(&part.e_tag));
-        xml.push_str("</ETag></Part>");
-    }
-    xml.push_str("</CompleteMultipartUpload>");
-    xml.into_bytes()
+#[derive(Debug, Serialize)]
+#[serde(rename = "Delete")]
+struct DeleteBodyXml {
+    #[serde(rename = "Object")]
+    object: Vec<DeleteObjectEntryXml>,
 }
 
-fn build_tagging_body(tags: &[Tag]) -> Vec<u8> {
-    let mut xml = String::from("<Tagging><TagSet>");
-    for tag in tags {
-        xml.push_str("<Tag><Key>");
-        xml.push_str(&xml_escape(&tag.key));
-        xml.push_str("</Key><Value>");
-        xml.push_str(&xml_escape(&tag.value));
-        xml.push_str("</Value></Tag>");
-    }
-    xml.push_str("</TagSet></Tagging>");
-    xml.into_bytes()
+#[derive(Debug, Serialize)]
+struct DeleteObjectEntryXml {
+    #[serde(rename = "Key")]
+    key: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename = "CompleteMultipartUpload")]
+struct CompleteMultipartBodyXml {
+    #[serde(rename = "Part")]
+    part: Vec<CompletePartEntryXml>,
+}
+
+#[derive(Debug, Serialize)]
+struct CompletePartEntryXml {
+    #[serde(rename = "PartNumber")]
+    part_number: u32,
+    #[serde(rename = "ETag")]
+    e_tag: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename = "Tagging")]
+struct TaggingBodyXml {
+    #[serde(rename = "TagSet")]
+    tag_set: TagSetBodyXml,
+}
+
+#[derive(Debug, Serialize)]
+struct TagSetBodyXml {
+    #[serde(rename = "Tag")]
+    tag: Vec<TagEntryXml>,
+}
+
+#[derive(Debug, Serialize)]
+struct TagEntryXml {
+    #[serde(rename = "Key")]
+    key: String,
+    #[serde(rename = "Value")]
+    value: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -488,7 +531,17 @@ mod tests {
 
     #[test]
     fn builds_delete_objects_body() {
-        let xml = String::from_utf8(build_delete_objects_body(&["a", "b/c"])).unwrap();
+        let xml = to_string(&DeleteBodyXml {
+            object: vec![
+                DeleteObjectEntryXml {
+                    key: "a".to_string(),
+                },
+                DeleteObjectEntryXml {
+                    key: "b/c".to_string(),
+                },
+            ],
+        })
+        .unwrap();
         assert!(xml.contains("<Key>a</Key>"));
         assert!(xml.contains("<Key>b/c</Key>"));
     }
@@ -561,27 +614,39 @@ mod tests {
             .map(|(_, value)| value.as_str());
 
         assert_eq!(checksum_algorithm, Some("SHA256"));
-        assert_eq!(
-            checksum_sha256,
-            Some(super::checksum_sha256(&build_delete_objects_body(&["a", "b/c"])).as_str())
-        );
+        let expected_body = to_string(&DeleteBodyXml {
+            object: vec![
+                DeleteObjectEntryXml {
+                    key: "a".to_string(),
+                },
+                DeleteObjectEntryXml {
+                    key: "b/c".to_string(),
+                },
+            ],
+        })
+        .unwrap();
+        assert_eq!(checksum_sha256, Some(super::checksum_sha256(expected_body.as_bytes()).as_str()));
     }
 
     #[test]
     fn builds_and_parses_tagging_xml() {
-        let body = build_tagging_body(&[
-            Tag {
-                key: "env".to_string(),
-                value: "dev".to_string(),
+        let body = to_string(&TaggingBodyXml {
+            tag_set: TagSetBodyXml {
+                tag: vec![
+                    TagEntryXml {
+                        key: "env".to_string(),
+                        value: "dev".to_string(),
+                    },
+                    TagEntryXml {
+                        key: "team".to_string(),
+                        value: "infra".to_string(),
+                    },
+                ],
             },
-            Tag {
-                key: "team".to_string(),
-                value: "infra".to_string(),
-            },
-        ]);
-        let xml = String::from_utf8(body).unwrap();
-        assert!(xml.contains("<Key>env</Key><Value>dev</Value>"));
-        assert!(xml.contains("<Key>team</Key><Value>infra</Value>"));
+        })
+        .unwrap();
+        assert!(body.contains("<Key>env</Key><Value>dev</Value>"));
+        assert!(body.contains("<Key>team</Key><Value>infra</Value>"));
 
         let parsed: TaggingXml =
             from_str("<Tagging><TagSet><Tag><Key>a</Key><Value>b</Value></Tag></TagSet></Tagging>").unwrap();
