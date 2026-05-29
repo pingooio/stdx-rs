@@ -1,7 +1,5 @@
 #![deny(trivial_casts, trivial_numeric_casts, unused_import_braces)]
 
-extern crate alloc;
-
 use std::{
     cmp::Ordering,
     collections::BTreeMap,
