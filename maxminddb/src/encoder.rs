@@ -925,203 +925,7 @@ pub fn encode_serialize(v: &impl Serialize) -> Result<Vec<u8>, SerError> {
     Ok(ser.buf)
 }
 
-// ---------------------------------------------------------------------------
-// Existing Value-based encoding (unchanged except s/String/Bytes type)
-// ---------------------------------------------------------------------------
-
-fn type_number(v: &Value) -> u8 {
-    match v {
-        Value::Pointer(_) => 1,
-        Value::String(_) => 2,
-        Value::Float64(_) => 3,
-        Value::Bytes(_) => 4,
-        Value::Uint16(_) => 5,
-        Value::Uint32(_) => 6,
-        Value::Int32(_) => 8,
-        Value::Map(_) => 7,
-        Value::Uint64(_) => 9,
-        Value::Uint128(_) => 10,
-        Value::Slice(_) => 11,
-        Value::Bool(_) => 14,
-        Value::Float32(_) => 15,
-    }
-}
-
-fn payload_size(v: &Value) -> usize {
-    match v {
-        Value::Pointer(p) => match *p {
-            p if p < 2048 => 0,
-            p if p < 526336 => 1,
-            p if p < 134744064 => 2,
-            _ => 3,
-        },
-        Value::String(s) => s.len(),
-        Value::Float64(_) => 8,
-        Value::Bytes(b) => b.len(),
-        Value::Uint16(n) => 2 - (n.leading_zeros() as usize / 8),
-        Value::Uint32(n) => 4 - (n.leading_zeros() as usize / 8),
-        Value::Int32(n) => {
-            let u = *n as u32;
-            4 - (u.leading_zeros() as usize / 8)
-        }
-        Value::Uint64(n) => 8 - (n.leading_zeros() as usize / 8),
-        Value::Uint128(n) => 16 - (n.leading_zeros() as usize / 8),
-        Value::Map(m) => m.len(),
-        Value::Slice(s) => s.len(),
-        Value::Bool(b) => {
-            if *b {
-                1
-            } else {
-                0
-            }
-        }
-        Value::Float32(_) => 4,
-    }
-}
-
-fn write_size_bytes(w: &mut Vec<u8>, size: usize) -> EncodeResult<()> {
-    match size {
-        s if s < FIRST_SIZE => {}
-        s if s < SECOND_SIZE => {
-            w.push((s - FIRST_SIZE) as u8);
-        }
-        s if s < THIRD_SIZE => {
-            let v = s - SECOND_SIZE;
-            w.push((v >> 8) as u8);
-            w.push((v & 0xFF) as u8);
-        }
-        s => {
-            let v = s - THIRD_SIZE;
-            w.push((v >> 16) as u8);
-            w.push((v >> 8) as u8);
-            w.push((v & 0xFF) as u8);
-        }
-    }
-    Ok(())
-}
-
-fn size_extra_bytes(size: usize) -> usize {
-    match size {
-        s if s < FIRST_SIZE => 0,
-        s if s < SECOND_SIZE => 1,
-        s if s < THIRD_SIZE => 2,
-        _ => 3,
-    }
-}
-
-fn write_ctrl_byte(w: &mut Vec<u8>, v: &Value) -> EncodeResult<()> {
-    let type_num = type_number(v);
-    let size = payload_size(v);
-
-    let first_byte: u8;
-    let second_byte: u8;
-
-    if type_num < 8 {
-        first_byte = type_num << 5;
-        second_byte = 0;
-    } else {
-        first_byte = 0;
-        second_byte = type_num - 7;
-    }
-
-    let size_val = match size {
-        s if s < FIRST_SIZE => s as u8,
-        s if s < SECOND_SIZE => 29u8,
-        s if s < THIRD_SIZE => 30u8,
-        _ => 31u8,
-    };
-    let first_byte = first_byte | size_val;
-    w.push(first_byte);
-
-    if second_byte != 0 {
-        w.push(second_byte);
-    }
-
-    write_size_bytes(w, size)
-}
-
-pub fn encode_value(v: &Value) -> EncodeResult<Vec<u8>> {
-    let mut buf = Vec::new();
-    encode_value_to(&mut buf, v)?;
-    Ok(buf)
-}
-
-pub fn encode_value_to(w: &mut Vec<u8>, v: &Value) -> EncodeResult<()> {
-    match v {
-        Value::Pointer(p) => encode_pointer(w, *p)?,
-        Value::String(s) => {
-            write_ctrl_byte(w, v)?;
-            w.extend_from_slice(s.as_bytes());
-        }
-        Value::Float64(f) => {
-            write_ctrl_byte(w, v)?;
-            w.extend_from_slice(&f.to_bits().to_be_bytes());
-        }
-        Value::Bytes(b) => {
-            write_ctrl_byte(w, v)?;
-            w.extend_from_slice(b);
-        }
-        Value::Uint16(n) => {
-            write_ctrl_byte(w, v)?;
-            let size = payload_size(v);
-            for i in (0..size).rev() {
-                w.push((n >> (8 * i)) as u8);
-            }
-        }
-        Value::Uint32(n) => {
-            write_ctrl_byte(w, v)?;
-            let size = payload_size(v);
-            for i in (0..size).rev() {
-                w.push((n >> (8 * i)) as u8);
-            }
-        }
-        Value::Int32(n) => {
-            write_ctrl_byte(w, v)?;
-            let size = payload_size(v);
-            for i in (0..size).rev() {
-                w.push(((*n as u32) >> (8 * i)) as u8);
-            }
-        }
-        Value::Uint64(n) => {
-            write_ctrl_byte(w, v)?;
-            let size = payload_size(v);
-            for i in (0..size).rev() {
-                w.push((n >> (8 * i)) as u8);
-            }
-        }
-        Value::Uint128(n) => {
-            write_ctrl_byte(w, v)?;
-            let size = payload_size(v);
-            for i in (0..size).rev() {
-                w.push((n >> (8 * i)) as u8);
-            }
-        }
-        Value::Map(m) => {
-            write_ctrl_byte(w, v)?;
-            for (k, val) in m.iter() {
-                let key = Value::String(k.clone());
-                encode_value_to(w, &key)?;
-                encode_value_to(w, val)?;
-            }
-        }
-        Value::Slice(s) => {
-            write_ctrl_byte(w, v)?;
-            for val in s {
-                encode_value_to(w, val)?;
-            }
-        }
-        Value::Bool(_b) => {
-            write_ctrl_byte(w, v)?;
-        }
-        Value::Float32(f) => {
-            write_ctrl_byte(w, v)?;
-            w.extend_from_slice(&f.to_bits().to_be_bytes());
-        }
-    }
-    Ok(())
-}
-
-fn encode_pointer(w: &mut Vec<u8>, pointer: u32) -> EncodeResult<()> {
+fn encode_pointer_raw(w: &mut Vec<u8>, pointer: u32) {
     match pointer {
         p if p < 2048 => {
             w.push(0b00100000 | ((p >> 8) as u8 & 0x07));
@@ -1148,53 +952,104 @@ fn encode_pointer(w: &mut Vec<u8>, pointer: u32) -> EncodeResult<()> {
             w.push((p & 0xFF) as u8);
         }
     }
-    Ok(())
+}
+
+impl ByteSerializerRef<'_> {
+    fn serialize_value(self, v: &Value) -> Result<(), SerError> {
+        match v {
+            Value::Pointer(p) => {
+                encode_pointer_raw(&mut self.0.buf, *p);
+                Ok(())
+            }
+            Value::String(s) => {
+                write_str_raw(&mut self.0.buf, s);
+                Ok(())
+            }
+            Value::Float64(f) => {
+                ctrl_and_size(&mut self.0.buf, 3, 8);
+                self.0.buf.extend_from_slice(&f.to_bits().to_be_bytes());
+                Ok(())
+            }
+            Value::Bytes(b) => {
+                write_bytes_raw(&mut self.0.buf, b);
+                Ok(())
+            }
+            Value::Uint16(n) => {
+                let size = 2 - (n.leading_zeros() as usize / 8);
+                ctrl_and_size(&mut self.0.buf, 5, size);
+                for i in (0..size).rev() {
+                    self.0.buf.push((n >> (8 * i)) as u8);
+                }
+                Ok(())
+            }
+            Value::Uint32(n) => {
+                let size = 4 - (n.leading_zeros() as usize / 8);
+                ctrl_and_size(&mut self.0.buf, 6, size);
+                for i in (0..size).rev() {
+                    self.0.buf.push((n >> (8 * i)) as u8);
+                }
+                Ok(())
+            }
+            Value::Int32(n) => {
+                let u = *n as u32;
+                let size = 4 - (u.leading_zeros() as usize / 8);
+                ctrl_and_size(&mut self.0.buf, 8, size);
+                for i in (0..size).rev() {
+                    self.0.buf.push((u >> (8 * i)) as u8);
+                }
+                Ok(())
+            }
+            Value::Uint64(n) => {
+                let size = 8 - (n.leading_zeros() as usize / 8);
+                ctrl_and_size(&mut self.0.buf, 9, size);
+                for i in (0..size).rev() {
+                    self.0.buf.push((n >> (8 * i)) as u8);
+                }
+                Ok(())
+            }
+            Value::Uint128(n) => {
+                let size = 16 - (n.leading_zeros() as usize / 8);
+                ctrl_and_size(&mut self.0.buf, 10, size);
+                for i in (0..size).rev() {
+                    self.0.buf.push((n >> (8 * i)) as u8);
+                }
+                Ok(())
+            }
+            Value::Map(m) => {
+                ctrl_and_size(&mut self.0.buf, 7, m.len());
+                for (k, val) in m.iter() {
+                    write_str_raw(&mut self.0.buf, k);
+                    ByteSerializerRef(&mut *self.0).serialize_value(val)?;
+                }
+                Ok(())
+            }
+            Value::Slice(s) => {
+                ctrl_and_size(&mut self.0.buf, 11, s.len());
+                for val in s {
+                    ByteSerializerRef(&mut *self.0).serialize_value(val)?;
+                }
+                Ok(())
+            }
+            Value::Bool(b) => {
+                let payload_len = if *b { 1 } else { 0 };
+                ctrl_and_size(&mut self.0.buf, 14, payload_len);
+                Ok(())
+            }
+            Value::Float32(f) => {
+                ctrl_and_size(&mut self.0.buf, 15, 4);
+                self.0.buf.extend_from_slice(&f.to_bits().to_be_bytes());
+                Ok(())
+            }
+        }
+    }
+}
+
+pub fn encode_value(v: &Value) -> EncodeResult<Vec<u8>> {
+    let mut ser = ByteSerializer::new();
+    ByteSerializerRef(&mut ser).serialize_value(v).map_err(|e| e.0)?;
+    Ok(ser.into_bytes())
 }
 
 pub fn encoded_size(v: &Value) -> usize {
-    let type_num = type_number(v);
-    let size = payload_size(v);
-
-    let mut total = 1;
-    if type_num >= 8 {
-        total += 1;
-    }
-    total += size_extra_bytes(size);
-
-    match v {
-        Value::Pointer(p) => {
-            total += match *p {
-                p if p < 2048 => 1,
-                p if p < 526336 => 2,
-                p if p < 134744064 => 3,
-                _ => 4,
-            };
-            total
-        }
-        Value::String(s) => total + s.len(),
-        Value::Float64(_) => total + 8,
-        Value::Bytes(b) => total + b.len(),
-        Value::Uint16(_) => total + size,
-        Value::Uint32(_) => total + size,
-        Value::Int32(_) => total + size,
-        Value::Uint64(_) => total + size,
-        Value::Uint128(_) => total + size,
-        Value::Map(m) => {
-            let mut s = total;
-            for (k, val) in m.iter() {
-                s += encoded_size(&Value::String(k.clone()));
-                s += encoded_size(val);
-            }
-            s
-        }
-        Value::Slice(sl) => {
-            let mut s = total;
-            for val in sl {
-                s += encoded_size(val);
-            }
-            s
-        }
-        Value::Bool(_) => total,
-        Value::Float32(_) => total + 4,
-    }
+    encode_value(v).map(|b| b.len()).unwrap_or(0)
 }

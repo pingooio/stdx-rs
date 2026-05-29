@@ -47,12 +47,8 @@ impl<'de> Decoder<'de> {
         b
     }
 
-    fn size_from_ctrl_byte(&mut self, ctrl_byte: u8, type_num: u8) -> usize {
+    fn size_from_ctrl_byte(&mut self, ctrl_byte: u8) -> usize {
         let size = (ctrl_byte & 0x1f) as usize;
-        // extended
-        if type_num == 0 {
-            return size;
-        }
 
         let bytes_to_read = if size > 28 { size - 28 } else { 0 };
 
@@ -75,7 +71,7 @@ impl<'de> Decoder<'de> {
         if type_num == 0 {
             type_num = self.eat_byte() + 7;
         }
-        let size = self.size_from_ctrl_byte(ctrl_byte, type_num);
+        let size = self.size_from_ctrl_byte(ctrl_byte);
         (size, type_num)
     }
 
