@@ -1174,10 +1174,8 @@ mod tests {
     fn test_ml_dsa_65_sigver_kat() {
         use std::collections::HashMap;
 
-        let kg_rust: serde_json::Value =
-            serde_json::from_str(include_str!("../testdata/mldsa/key-gen.json")).unwrap();
-        let sv_rust: serde_json::Value =
-            serde_json::from_str(include_str!("../testdata/mldsa/sig-ver.json")).unwrap();
+        let kg_rust: serde_json::Value = serde_json::from_str(include_str!("../testdata/mldsa/key-gen.json")).unwrap();
+        let sv_rust: serde_json::Value = serde_json::from_str(include_str!("../testdata/mldsa/sig-ver.json")).unwrap();
 
         let mut seed_map: HashMap<u64, [u8; 32]> = HashMap::new();
         for g in kg_rust["testGroups"].as_array().unwrap() {
@@ -1395,5 +1393,163 @@ mod tests {
 
         assert!(ml_dsa_65_verify(&pk1, msg, &sig2, &[]).is_err());
         assert!(ml_dsa_65_verify(&pk1, msg, &sig1, &[]).is_ok());
+    }
+
+    #[test]
+    #[cfg(not(debug_assertions))]
+    fn test_field_ops_exhaustive() {
+        for x in 0..Q {
+            let mr = field_to_montgomery(x);
+            assert_eq!(field_from_montgomery(mr), x);
+
+            let (r1, r0) = decompose32(mr);
+            let recovered = (r1 as u32) * 2 * ((Q - 1) / 32);
+            let r0_centered = if r0 > (Q / 2) as i32 { r0 - Q as i32 } else { r0 };
+            assert!(
+                r0_centered >= -(Q as i32 / 2) && r0_centered <= (Q as i32 / 2),
+                "decompose32: r0 out of range at x={}",
+                x
+            );
+            assert!((r1 as u32) <= 15, "decompose32: r1={} out of range at x={}", r1, x);
+
+            let h = highbits32(x);
+            assert!(h < 16, "highbits32: h={} out of range at x={}", h, x);
+            assert_eq!(h, r1, "highbits32 vs decompose32 r1 mismatch at x={}", x);
+
+            let centered = field_centered_mod(mr);
+            assert!(
+                centered >= -((Q / 2) as i32) && centered <= (Q / 2) as i32,
+                "field_centered_mod out of range at x={}",
+                x
+            );
+
+            let norm = field_infinity_norm(mr);
+            let abs_centered = centered.unsigned_abs();
+            assert_eq!(norm, abs_centered, "field_infinity_norm mismatch at x={}", x);
+
+            let (pr1, pr0) = power2round(mr);
+            assert!(
+                pr1 <= (1 << 10) - 1 || x == Q - 1,
+                "power2round: r1={} out of range at x={}",
+                pr1,
+                x
+            );
+            let pr0_val = field_from_montgomery(pr0);
+            assert!(
+                pr0_val < (1 << D) || pr0_val > Q - (1 << D),
+                "power2round: r0={} out of range at x={}",
+                pr0_val,
+                x
+            );
+        }
+    }
+
+    #[test]
+    fn test_ml_dsa_65_ntt_round_trip() {
+        let mut shake = Shake128::new();
+        for _ in 0..100 {
+            let mut poly = Poly::default();
+            for j in 0..N {
+                let mut b = [0u8; 4];
+                shake.squeeze(&mut b);
+                let x = u32::from_le_bytes(b) % Q;
+                poly.coeffs[j] = field_to_montgomery(x);
+            }
+            let fwd = ntt(&poly);
+            let back = invntt(&fwd);
+            for j in 0..N {
+                assert_eq!(poly.coeffs[j], back.coeffs[j], "NTT round-trip failed at coeff {}", j);
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(not(debug_assertions))]
+    fn test_ml_dsa_65_power2round_consistency() {
+        for x in 0u32..Q {
+            let mr = field_to_montgomery(x);
+            let (r1, r0) = power2round(mr);
+            let recovered = (r1 as u32) << D;
+
+            let expected_r0 = if x >= recovered {
+                x - recovered
+            } else {
+                x.wrapping_sub(recovered)
+            };
+
+            assert!(
+                expected_r0 < (1 << D) || expected_r0 >= Q - (1 << D) + 1,
+                "power2round: r0 out of range at x={}, r1={}, r0_expected={}",
+                x,
+                r1,
+                expected_r0
+            );
+
+            let got_r0 = field_from_montgomery(r0);
+            assert!(
+                got_r0 == expected_r0 || got_r0 == expected_r0.wrapping_add(Q) || got_r0 == expected_r0.wrapping_sub(Q),
+                "power2round: r0 mismatch at x={}, r1={}, expected_r0={}, got_r0={}",
+                x,
+                r1,
+                expected_r0,
+                got_r0
+            );
+        }
+    }
+
+    #[test]
+    fn test_ml_dsa_65_cctv_benchmark_messages() {
+        let msgs: Vec<Vec<u8>> = vec![
+            b"NDGEUBUDWGRJJ3A4UNZZQOEKNL".to_vec(),
+            b"ACGYQUXN4POOFUENCLNCIPHFAZ".to_vec(),
+            b"Z3XETEYKROVJH7SIHOIAYCTO42".to_vec(),
+        ];
+        let seed = [0u8; 32];
+        let (_, pk) = ml_dsa_65_keypair_derand(&seed);
+        let zero_rnd = [0u8; 32];
+
+        for msg in &msgs {
+            let sig = ml_dsa_65_sign_derand(&seed, msg, &[], &zero_rnd).unwrap();
+            ml_dsa_65_verify(&pk, msg, &sig, &[]).unwrap();
+        }
+    }
+
+    #[test]
+    #[cfg(not(debug_assertions))]
+    fn test_ml_dsa_65_highbits32_exhaustive() {
+        for x in 0u32..Q {
+            let h = highbits32(x);
+            assert!(h < 16, "highbits32: h={} out of range at x={}", h, x);
+            let (r1, _) = decompose32(field_to_montgomery(x));
+            assert_eq!(h, r1, "highbits32 vs decompose32 r1 mismatch at x={}", x);
+        }
+    }
+
+    #[test]
+    fn test_ml_dsa_65_make_hint32_correctness() {
+        let mut shake = Shake128::new();
+        for _ in 0..5000 {
+            let mut b = [0u8; 12];
+            shake.squeeze(&mut b);
+            let ct0_val = u32::from_le_bytes(b[0..4].try_into().unwrap()) % Q;
+            let w_val = u32::from_le_bytes(b[4..8].try_into().unwrap()) % Q;
+            let cs2_val = u32::from_le_bytes(b[8..12].try_into().unwrap()) % Q;
+            let ct0 = field_to_montgomery(ct0_val);
+            let w = field_to_montgomery(w_val);
+            let cs2 = field_to_montgomery(cs2_val);
+            let h = make_hint32(ct0, w, cs2);
+            assert!(h == 0 || h == 1, "make_hint32: hint not 0 or 1");
+        }
+    }
+
+    #[test]
+    fn test_ml_dsa_65_zero_seed_zero_rnd() {
+        let seed = [0u8; 32];
+        let zero_rnd = [0u8; 32];
+        let (_, pk) = ml_dsa_65_keypair_derand(&seed);
+
+        let msg = b"Hello world";
+        let sig = ml_dsa_65_sign_derand(&seed, msg, &[], &zero_rnd).unwrap();
+        ml_dsa_65_verify(&pk, msg, &sig, &[]).unwrap();
     }
 }
