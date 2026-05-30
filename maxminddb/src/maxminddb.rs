@@ -422,9 +422,19 @@ impl<'de, S: AsRef<[u8]>> Reader<S> {
         let val = match self.metadata.record_size {
             24 => {
                 let offset = base_offset + index * 3;
+                if offset + 3 > buf.len() {
+                    return Err(MaxMindDBError::InvalidDatabaseError(
+                        "search tree node offset beyond end of file".to_owned(),
+                    ));
+                }
                 to_usize(0, &buf[offset..offset + 3])
             }
             28 => {
+                if base_offset + 4 > buf.len() {
+                    return Err(MaxMindDBError::InvalidDatabaseError(
+                        "search tree node offset beyond end of file".to_owned(),
+                    ));
+                }
                 let mut middle = buf[base_offset + 3];
                 if index != 0 {
                     middle &= 0x0F
@@ -432,10 +442,20 @@ impl<'de, S: AsRef<[u8]>> Reader<S> {
                     middle = (0xF0 & middle) >> 4
                 }
                 let offset = base_offset + index * 4;
+                if offset + 3 > buf.len() {
+                    return Err(MaxMindDBError::InvalidDatabaseError(
+                        "search tree node offset beyond end of file".to_owned(),
+                    ));
+                }
                 to_usize(middle, &buf[offset..offset + 3])
             }
             32 => {
                 let offset = base_offset + index * 4;
+                if offset + 4 > buf.len() {
+                    return Err(MaxMindDBError::InvalidDatabaseError(
+                        "search tree node offset beyond end of file".to_owned(),
+                    ));
+                }
                 to_usize(0, &buf[offset..offset + 4])
             }
             s => {
@@ -449,9 +469,19 @@ impl<'de, S: AsRef<[u8]>> Reader<S> {
     }
 
     fn resolve_data_pointer(&self, pointer: usize) -> Result<usize, MaxMindDBError> {
-        let resolved = pointer - (self.metadata.node_count as usize) - 16;
+        let node_count = self.metadata.node_count as usize;
+        if pointer <= node_count {
+            return Err(MaxMindDBError::AddressNotFoundError(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))));
+        }
+        let separator_size = 16;
+        if pointer < node_count + separator_size {
+            return Err(MaxMindDBError::InvalidDatabaseError(format!(
+                "data pointer value {pointer} falls in the invalid range (node_count + 1 to node_count + 15)"
+            )));
+        }
+        let resolved = pointer - node_count - separator_size;
 
-        if resolved > self.buf.as_ref().len() {
+        if self.pointer_base + resolved >= self.buf.as_ref().len() {
             return Err(MaxMindDBError::InvalidDatabaseError(
                 "the MaxMind DB file's search tree \
                  is corrupt"
