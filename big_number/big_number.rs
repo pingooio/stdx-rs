@@ -14,7 +14,7 @@ pub const MAX_LIMBS: usize = 64;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Uint<const BITS: usize, const LIMBS: usize> {
-    pub(crate) limbs: [u64; LIMBS],
+    pub limbs: [u64; LIMBS],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
