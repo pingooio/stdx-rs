@@ -15,12 +15,6 @@ const XWING_LABEL: &[u8; 6] = b"\\.//^\\";
 
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum XWingError {
-    #[error("invalid public key length")]
-    InvalidPublicKey,
-    #[error("invalid ciphertext length")]
-    InvalidCiphertext,
-    #[error("invalid secret key length")]
-    InvalidSecretKey,
     #[error("ML-KEM error")]
     MlKem,
 }

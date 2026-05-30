@@ -47,10 +47,6 @@ const ML_KEM_1024: MlKemParams<4> = MlKemParams {
 pub enum MlKemError {
     #[error("key is not valid")]
     InvalidKey,
-    #[error("ciphertext is not valid")]
-    InvalidCiphertext,
-    #[error("unknown")]
-    Unspecified,
 }
 
 #[derive(Clone, Copy)]
@@ -722,11 +718,11 @@ fn poly_frombytes(input: &[u8]) -> Poly {
 #[inline]
 fn poly_frommsg(msg: &[u8]) -> Poly {
     let mut out = Poly::default();
+    let half_q: i16 = ((Q + 1) / 2) as i16;
     for i in 0..(N / 8) {
         for j in 0..8 {
-            if (msg[i] >> j) & 1 == 1 {
-                out.coeffs[8 * i + j] = (Q + 1) / 2;
-            }
+            let bit = ((msg[i] >> j) & 1) as i16;
+            out.coeffs[8 * i + j] = (-bit) & half_q;
         }
     }
     out
@@ -1292,5 +1288,228 @@ mod tests {
             hex::encode(k),
             "d53825c3ff666bb2881215dbec04a8bdce9099b2a3680938c2f199b54d505953"
         );
+    }
+
+    #[test]
+    fn ml_kem_1024_decapsulation_rejects_tampered_ciphertext() {
+        let (private_key, public_key) = ml_kem_1024_generate_keypair();
+        let (mut ciphertext, encapsulated_secret) = ml_kem_1024_encapsulate(&public_key);
+
+        ciphertext[0] ^= 0x80;
+
+        let decapsulated_secret = ml_kem_1024_decapsulate(&private_key, &ciphertext).unwrap();
+
+        assert_ne!(encapsulated_secret, decapsulated_secret);
+    }
+
+    #[test]
+    fn ml_kem_768_decapsulation_with_wrong_key_rejects() {
+        let (alice_sk, alice_pk) = ml_kem_768_generate_keypair();
+        let (bob_sk, _bob_pk) = ml_kem_768_generate_keypair();
+        let (ct, _alice_ss) = ml_kem_768_encapsulate(&alice_pk);
+
+        let wrong_ss = ml_kem_768_decapsulate(&bob_sk, &ct).unwrap();
+        assert_ne!(_alice_ss, wrong_ss);
+    }
+
+    #[test]
+    fn ml_kem_1024_decapsulation_with_wrong_key_rejects() {
+        let (alice_sk, alice_pk) = ml_kem_1024_generate_keypair();
+        let (bob_sk, _bob_pk) = ml_kem_1024_generate_keypair();
+        let (ct, _alice_ss) = ml_kem_1024_encapsulate(&alice_pk);
+
+        let wrong_ss = ml_kem_1024_decapsulate(&bob_sk, &ct).unwrap();
+        assert_ne!(_alice_ss, wrong_ss);
+    }
+
+    #[test]
+    fn ml_kem_768_round_trip_many() {
+        for _ in 0..100 {
+            let (sk, pk) = ml_kem_768_generate_keypair();
+            let (ct, ss_enc) = ml_kem_768_encapsulate(&pk);
+            let ss_dec = ml_kem_768_decapsulate(&sk, &ct).unwrap();
+            assert_eq!(ss_enc, ss_dec);
+        }
+    }
+
+    #[test]
+    fn ml_kem_1024_round_trip_many() {
+        for _ in 0..100 {
+            let (sk, pk) = ml_kem_1024_generate_keypair();
+            let (ct, ss_enc) = ml_kem_1024_encapsulate(&pk);
+            let ss_dec = ml_kem_1024_decapsulate(&sk, &ct).unwrap();
+            assert_eq!(ss_enc, ss_dec);
+        }
+    }
+
+    #[test]
+    fn ml_kem_768_all_zero_ciphertext_does_not_panic() {
+        let (sk, _pk) = ml_kem_768_generate_keypair();
+        let ct = [0u8; ML_KEM_768_CIPHERTEXT_SIZE];
+        let _result = ml_kem_768_decapsulate(&sk, &ct);
+    }
+
+    #[test]
+    fn ml_kem_1024_all_zero_ciphertext_does_not_panic() {
+        let (sk, _pk) = ml_kem_1024_generate_keypair();
+        let ct = [0u8; ML_KEM_1024_CIPHERTEXT_SIZE];
+        let _result = ml_kem_1024_decapsulate(&sk, &ct);
+    }
+
+    #[test]
+    fn ml_kem_768_all_ones_ciphertext_does_not_panic() {
+        let (sk, _pk) = ml_kem_768_generate_keypair();
+        let ct = [0xffu8; ML_KEM_768_CIPHERTEXT_SIZE];
+        let _result = ml_kem_768_decapsulate(&sk, &ct);
+    }
+
+    #[test]
+    fn ml_kem_1024_all_ones_ciphertext_does_not_panic() {
+        let (sk, _pk) = ml_kem_1024_generate_keypair();
+        let ct = [0xffu8; ML_KEM_1024_CIPHERTEXT_SIZE];
+        let _result = ml_kem_1024_decapsulate(&sk, &ct);
+    }
+
+    #[test]
+    fn ml_kem_768_derand_keygen_is_deterministic() {
+        let coins = [7u8; 64];
+        let (sk1, pk1) =
+            crypto_kem_keypair_derand::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_PUBLIC_KEY_SIZE>(&ML_KEM_768, &coins);
+        let (sk2, pk2) =
+            crypto_kem_keypair_derand::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_PUBLIC_KEY_SIZE>(&ML_KEM_768, &coins);
+        assert_eq!(sk1, sk2);
+        assert_eq!(pk1, pk2);
+    }
+
+    #[test]
+    fn ml_kem_1024_derand_keygen_is_deterministic() {
+        let coins = [3u8; 64];
+        let (sk1, pk1) = crypto_kem_keypair_derand::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_PUBLIC_KEY_SIZE>(
+            &ML_KEM_1024,
+            &coins,
+        );
+        let (sk2, pk2) = crypto_kem_keypair_derand::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_PUBLIC_KEY_SIZE>(
+            &ML_KEM_1024,
+            &coins,
+        );
+        assert_eq!(sk1, sk2);
+        assert_eq!(pk1, pk2);
+    }
+
+    #[test]
+    fn ml_kem_768_key_sizes_are_correct() {
+        let (sk, pk) = ml_kem_768_generate_keypair();
+        assert_eq!(sk.len(), ML_KEM_768_SECRET_KEY_SIZE);
+        assert_eq!(pk.len(), ML_KEM_768_PUBLIC_KEY_SIZE);
+        let (ct, _) = ml_kem_768_encapsulate(&pk);
+        assert_eq!(ct.len(), ML_KEM_768_CIPHERTEXT_SIZE);
+    }
+
+    #[test]
+    fn ml_kem_1024_key_sizes_are_correct() {
+        let (sk, pk) = ml_kem_1024_generate_keypair();
+        assert_eq!(sk.len(), ML_KEM_1024_SECRET_KEY_SIZE);
+        assert_eq!(pk.len(), ML_KEM_1024_PUBLIC_KEY_SIZE);
+        let (ct, _) = ml_kem_1024_encapsulate(&pk);
+        assert_eq!(ct.len(), ML_KEM_1024_CIPHERTEXT_SIZE);
+    }
+
+    #[test]
+    fn poly_frommsg_tomsg_roundtrip() {
+        for pattern in 0..=255u16 {
+            let mut msg = [0u8; 32];
+            msg[0] = pattern as u8;
+            msg[1] = (pattern >> 8) as u8;
+            let poly = poly_frommsg(&msg);
+            let recovered = poly_tomsg(&poly);
+            assert_eq!(msg, recovered, "roundtrip failed for pattern {pattern:#06x}");
+        }
+    }
+
+    #[test]
+    fn poly_frommsg_constant_time_produces_expected_values() {
+        // Verify the constant-time version produces correct mapped coefficients
+        let half_q = ((Q + 1) / 2) as i16;
+        let mut msg = [0u8; 32];
+        msg[0] = 0b1010_1010;
+        msg[1] = 0b0101_0101;
+        let poly = poly_frommsg(&msg);
+        // For msg[0] = 0xAA, bits 1,3,5,7 are set
+        assert_eq!(poly.coeffs[0], 0); // bit 0 not set
+        assert_eq!(poly.coeffs[1], half_q); // bit 1 set
+        assert_eq!(poly.coeffs[2], 0); // bit 2 not set
+        assert_eq!(poly.coeffs[3], half_q); // bit 3 set
+        // msg[1] = 0x55, bits 0,2,4,6 are set
+        assert_eq!(poly.coeffs[8], half_q); // bit 0 of msg[1] is 1
+        assert_eq!(poly.coeffs[9], 0); // bit 1 of msg[1] is 0
+        assert_eq!(poly.coeffs[10], half_q); // bit 2 of msg[1] is 1
+        assert_eq!(poly.coeffs[11], 0); // bit 3 of msg[1] is 0
+    }
+
+    #[test]
+    fn ml_kem_768_encaps_is_deterministic_with_same_coins() {
+        let enc_coins = [9u8; 32];
+        let key_coins = [7u8; 64];
+        let (_sk, pk) = crypto_kem_keypair_derand::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_PUBLIC_KEY_SIZE>(
+            &ML_KEM_768,
+            &key_coins,
+        );
+        let (ct1, ss1) = crypto_kem_enc_derand::<3, ML_KEM_768_PUBLIC_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(
+            &ML_KEM_768,
+            &pk,
+            &enc_coins,
+        );
+        let (ct2, ss2) = crypto_kem_enc_derand::<3, ML_KEM_768_PUBLIC_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(
+            &ML_KEM_768,
+            &pk,
+            &enc_coins,
+        );
+        assert_eq!(ct1, ct2);
+        assert_eq!(ss1, ss2);
+    }
+
+    #[test]
+    fn ml_kem_1024_encaps_is_deterministic_with_same_coins() {
+        let enc_coins = [5u8; 32];
+        let key_coins = [3u8; 64];
+        let (_sk, pk) = crypto_kem_keypair_derand::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_PUBLIC_KEY_SIZE>(
+            &ML_KEM_1024,
+            &key_coins,
+        );
+        let (ct1, ss1) = crypto_kem_enc_derand::<4, ML_KEM_1024_PUBLIC_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(
+            &ML_KEM_1024,
+            &pk,
+            &enc_coins,
+        );
+        let (ct2, ss2) = crypto_kem_enc_derand::<4, ML_KEM_1024_PUBLIC_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(
+            &ML_KEM_1024,
+            &pk,
+            &enc_coins,
+        );
+        assert_eq!(ct1, ct2);
+        assert_eq!(ss1, ss2);
+    }
+
+    #[test]
+    fn ml_kem_768_decapsulation_with_wrong_key_is_deterministic() {
+        // The implicit rejection must be deterministic: same (sk, ct) → same K
+        let (sk_a, pk_a) = ml_kem_768_generate_keypair();
+        let (sk_b, _pk_b) = ml_kem_768_generate_keypair();
+        let (ct, _) = ml_kem_768_encapsulate(&pk_a);
+
+        let ss1 = ml_kem_768_decapsulate(&sk_b, &ct).unwrap();
+        let ss2 = ml_kem_768_decapsulate(&sk_b, &ct).unwrap();
+        assert_eq!(ss1, ss2, "implicit rejection must be deterministic");
+    }
+
+    #[test]
+    fn ml_kem_1024_decapsulation_with_wrong_key_is_deterministic() {
+        let (sk_a, pk_a) = ml_kem_1024_generate_keypair();
+        let (sk_b, _pk_b) = ml_kem_1024_generate_keypair();
+        let (ct, _) = ml_kem_1024_encapsulate(&pk_a);
+
+        let ss1 = ml_kem_1024_decapsulate(&sk_b, &ct).unwrap();
+        let ss2 = ml_kem_1024_decapsulate(&sk_b, &ct).unwrap();
+        assert_eq!(ss1, ss2, "implicit rejection must be deterministic");
     }
 }
