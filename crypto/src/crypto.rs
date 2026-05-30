@@ -10,6 +10,8 @@ pub mod curve25519;
 pub mod hkdf;
 pub mod hmac;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod mldsa;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod mlkem;
 pub mod poly1305;
 pub mod sha2;
