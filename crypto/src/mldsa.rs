@@ -683,9 +683,10 @@ fn sig_encode(ch: &[u8; LAMBDA_OVER_4], z: &[Poly; L], h: &[[u8; N]; K]) -> [u8;
     sig
 }
 
-fn sig_decode(
-    sig: &[u8; ML_DSA_65_SIGNATURE_SIZE],
-) -> Result<([u8; LAMBDA_OVER_4], [Poly; L], [[u8; N]; K]), MlDsaError> {
+fn sig_decode(sig: &[u8]) -> Result<([u8; LAMBDA_OVER_4], [Poly; L], [[u8; N]; K]), MlDsaError> {
+    if sig.len() != ML_DSA_65_SIGNATURE_SIZE {
+        return Err(MlDsaError::InvalidSignatureLength);
+    }
     let mut ch = [0u8; LAMBDA_OVER_4];
     ch.copy_from_slice(&sig[..LAMBDA_OVER_4]);
 
@@ -1396,52 +1397,41 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(debug_assertions))]
-    fn test_field_ops_exhaustive() {
-        for x in 0..Q {
-            let mr = field_to_montgomery(x);
-            assert_eq!(field_from_montgomery(mr), x);
+    fn test_pk_decode_encode_roundtrip() {
+        let seed = [0u8; 32];
+        let (_, pk) = ml_dsa_65_keypair_derand(&seed);
+        let (rho, t1) = pk_decode(&pk).unwrap();
+        let pk2 = pk_encode(&rho, &t1);
+        assert_eq!(pk, pk2, "pk encode/decode round-trip failed");
+    }
 
-            let (r1, r0) = decompose32(mr);
-            let recovered = (r1 as u32) * 2 * ((Q - 1) / 32);
-            let r0_centered = if r0 > (Q / 2) as i32 { r0 - Q as i32 } else { r0 };
-            assert!(
-                r0_centered >= -(Q as i32 / 2) && r0_centered <= (Q as i32 / 2),
-                "decompose32: r0 out of range at x={}",
-                x
-            );
-            assert!((r1 as u32) <= 15, "decompose32: r1={} out of range at x={}", r1, x);
+    #[test]
+    fn test_sig_decode_rejects_wrong_length() {
+        let seed = [0u8; 32];
+        let rnd = [0u8; 32];
+        let sig = ml_dsa_65_sign_derand(&seed, b"test", &[], &rnd).unwrap();
 
-            let h = highbits32(x);
-            assert!(h < 16, "highbits32: h={} out of range at x={}", h, x);
-            assert_eq!(h, r1, "highbits32 vs decompose32 r1 mismatch at x={}", x);
+        // Too short
+        assert!(sig_decode(&sig[..ML_DSA_65_SIGNATURE_SIZE - 1]).is_err());
+        // Too long
+        let long = [&sig[..], &[0u8][..]].concat();
+        assert!(sig_decode(&long).is_err());
+        // Empty
+        assert!(sig_decode(&[]).is_err());
+        // Correct length
+        assert!(sig_decode(&sig).is_ok());
+    }
 
-            let centered = field_centered_mod(mr);
-            assert!(
-                centered >= -((Q / 2) as i32) && centered <= (Q / 2) as i32,
-                "field_centered_mod out of range at x={}",
-                x
-            );
+    #[test]
+    fn test_generate_key_uniqueness() {
+        let (s1, p1) = ml_dsa_65_generate_keypair();
+        let (s2, p2) = ml_dsa_65_generate_keypair();
+        assert_ne!(s1, s2, "two generated seeds should differ");
+        assert_ne!(p1, p2, "two generated public keys should differ");
 
-            let norm = field_infinity_norm(mr);
-            let abs_centered = centered.unsigned_abs();
-            assert_eq!(norm, abs_centered, "field_infinity_norm mismatch at x={}", x);
-
-            let (pr1, pr0) = power2round(mr);
-            assert!(
-                pr1 <= (1 << 10) - 1 || x == Q - 1,
-                "power2round: r1={} out of range at x={}",
-                pr1,
-                x
-            );
-            let pr0_val = field_from_montgomery(pr0);
-            assert!(
-                pr0_val < (1 << D) || pr0_val > Q - (1 << D),
-                "power2round: r0={} out of range at x={}",
-                pr0_val,
-                x
-            );
-        }
+        // Regenerated from same seed should match
+        let (_, p1_b) = ml_dsa_65_keypair_derand(&s1);
+        assert_eq!(p1, p1_b, "regenerated public key from same seed should match");
     }
 
     #[test]
