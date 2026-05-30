@@ -2,7 +2,7 @@
 
 use std::{borrow::Cow, fs, io, path::Path, time::SystemTime};
 
-use sha2::{Digest, Sha256};
+use crypto::{Hasher, sha2::Sha256};
 
 #[cfg_attr(all(debug_assertions, not(feature = "debug-embed")), allow(unused))]
 pub struct FileEntry {
@@ -102,7 +102,7 @@ pub fn read_file_from_fs(file_path: &Path) -> io::Result<EmbeddedFile> {
     let data = fs::read(file_path)?;
     let data = Cow::from(data);
 
-    let hash: [u8; 32] = *Sha256::digest(&data).as_array().unwrap();
+    let hash = Sha256::hash(&data).as_ref().try_into().unwrap();
 
     let source_date_epoch = match std::env::var("SOURCE_DATE_EPOCH") {
         Ok(value) => value.parse::<u64>().ok(),

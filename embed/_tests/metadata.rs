@@ -1,5 +1,5 @@
+use crypto::{sha2::Sha256, Hasher};
 use rust_embed::{Embed, EmbeddedFile};
-use sha2::Digest;
 use std::{fs, time::SystemTime};
 
 #[derive(Embed)]
@@ -9,9 +9,7 @@ struct Asset;
 #[test]
 fn hash_is_accurate() {
   let index_file: EmbeddedFile = Asset::get("index.html").expect("index.html exists");
-  let mut hasher = sha2::Sha256::new();
-  hasher.update(index_file.data);
-  let expected_hash: [u8; 32] = hasher.finalize().into();
+  let expected_hash = Sha256::hash(&data).as_ref().try_into().unwrap();
 
   assert_eq!(index_file.metadata.sha3_256_hash(), expected_hash);
 }

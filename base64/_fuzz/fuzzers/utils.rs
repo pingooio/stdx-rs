@@ -1,20 +1,17 @@
 extern crate rand;
 extern crate rand_pcg;
-extern crate sha2;
 
 use base64::{alphabet, engine::{self, general_purpose}};
+use crypto::{sha2::Sha256, Hasher};
 use self::rand::{Rng, SeedableRng};
 use self::rand_pcg::Pcg32;
-use self::sha2::Digest as _;
 
 pub fn random_engine(data: &[u8]) -> general_purpose::GeneralPurpose {
     // use sha256 of data as rng seed so it's repeatable
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(data);
-    let sha = hasher.finalize();
+    let sha = Sha256::hash(data);
 
     let mut seed: [u8; 16] = [0; 16];
-    seed.copy_from_slice(&sha.as_slice()[0..16]);
+    seed.copy_from_slice(&sha.as_ref()[0..16]);
 
     let mut rng = Pcg32::from_seed(seed);
 

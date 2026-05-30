@@ -16,7 +16,7 @@ edition = "2024"
 path = "./embed_utils.rs"
 
 [dependencies]
-sha2 = { workspace = true }
+crypto = { path = "../../crypto" }
 walkdir = { workspace = true }
 
 
