@@ -56,8 +56,7 @@ fn field_from_montgomery(a: FieldElement) -> u32 {
 fn field_montgomery_reduce(x: u64) -> u32 {
     let t = (x as u32).wrapping_mul(QINV);
     let u = (x + (t as u64) * (Q as u64)) >> 32;
-    let u = u as u32;
-    if u >= Q { u - Q } else { u }
+    field_reduce_once(u as u32)
 }
 
 fn field_montgomery_mul(a: FieldElement, b: FieldElement) -> FieldElement {
@@ -65,11 +64,13 @@ fn field_montgomery_mul(a: FieldElement, b: FieldElement) -> FieldElement {
 }
 
 fn field_reduce_once(x: u32) -> FieldElement {
-    if x >= Q { x - Q } else { x }
+    let t = x.wrapping_sub(Q);
+    let mask = ((t as i32) >> 31) as u32;
+    t.wrapping_add(Q & mask)
 }
 
 fn field_add(a: FieldElement, b: FieldElement) -> FieldElement {
-    field_reduce_once(a + b)
+    field_reduce_once(a.wrapping_add(b))
 }
 
 fn field_sub(a: FieldElement, b: FieldElement) -> FieldElement {
@@ -83,15 +84,18 @@ fn field_sub_to_montgomery(a: u32, b: u32) -> FieldElement {
 
 fn field_infinity_norm(r: FieldElement) -> u32 {
     let x = field_from_montgomery(r);
-    let x = x as i32;
-    let half_q = (Q / 2) as i32;
-    if x > half_q { (Q as i32 - x) as u32 } else { x as u32 }
+    let q_minus_x = Q - x;
+    let half_q = Q / 2;
+    let mask = ((half_q.wrapping_sub(x)) as i32 >> 31) as u32;
+    (mask & q_minus_x) | (!mask & x)
 }
 
 fn field_centered_mod(r: FieldElement) -> i32 {
-    let x = field_from_montgomery(r) as i32;
+    let x = field_from_montgomery(r);
+    let x = x as i32;
     let half_q = (Q / 2) as i32;
-    if x > half_q { x - Q as i32 } else { x }
+    let mask = ((half_q - x) >> 31) as i32;
+    (mask & (x - Q as i32)) | (!mask & x)
 }
 
 fn power2round(r: FieldElement) -> (u16, FieldElement) {
@@ -108,11 +112,12 @@ fn highbits32(x: u32) -> u8 {
 }
 
 fn decompose32(r: FieldElement) -> (u8, i32) {
-    let x = field_from_montgomery(r);
-    let r1 = highbits32(x);
-    let r0 = x as i32 - (r1 as i32) * 2 * (Q as i32 - 1) / 32;
+    let x = field_from_montgomery(r) as i32;
+    let r1 = highbits32(x as u32);
+    let r0 = x - (r1 as i32) * 2 * (Q as i32 - 1) / 32;
     let half_q = (Q / 2) as i32;
-    let r0 = if r0 > half_q { r0 - Q as i32 } else { r0 };
+    let mask = ((half_q - r0) >> 31) as i32;
+    let r0 = (mask & (r0 - Q as i32)) | (!mask & r0);
     (r1, r0)
 }
 
@@ -121,19 +126,18 @@ fn make_hint32(ct0: FieldElement, w: FieldElement, cs2: FieldElement) -> u8 {
     let v1 = highbits32(field_from_montgomery(r_plus_z));
     let r = field_add(r_plus_z, ct0);
     let r1 = highbits32(field_from_montgomery(r));
-    if v1 != r1 { 1 } else { 0 }
+    (v1 ^ r1) as u8 & 1u8
 }
 
 fn use_hint32(r: FieldElement, hint: u8) -> u8 {
-    let (mut r1, r0) = decompose32(r);
-    if hint == 1 {
-        if r0 > 0 {
-            r1 = (r1 + 1) & 0x0F;
-        } else {
-            r1 = (r1.wrapping_sub(1)) & 0x0F;
-        }
+    let (r1, r0) = decompose32(r);
+    if hint == 0 {
+        return r1;
     }
-    r1
+    let r0_gt_0 = !(r0.wrapping_sub(1) >> 31) as u8;
+    let r1_plus = r1.wrapping_add(1) & 0x0F;
+    let r1_minus = r1.wrapping_sub(1) & 0x0F;
+    (r0_gt_0 & r1_plus) | ((!r0_gt_0) & r1_minus)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -248,7 +252,6 @@ fn ntt(f: &Poly) -> NttPoly {
                 let t = field_montgomery_mul(zeta, f.coeffs[j + len + 1]);
                 f.coeffs[j + len + 1] = field_sub(f.coeffs[j + 1], t);
                 f.coeffs[j + 1] = field_add(f.coeffs[j + 1], t);
-                f.coeffs[j + len] = f.coeffs[j + len];
             }
             start += 2 * len;
         }
@@ -534,7 +537,7 @@ fn coefficients_exceed_bound(w: &Poly, bound: u32) -> bool {
 fn lowbits_exceed_bound(w: &Poly, bound: u32) -> bool {
     for i in 0..N {
         let (_, r0) = decompose32(w.coeffs[i]);
-        let abs_r0 = if r0 < 0 { (-r0) as u32 } else { r0 as u32 };
+        let abs_r0 = (r0 ^ (r0 >> 31)).wrapping_sub(r0 >> 31) as u32;
         if abs_r0 >= bound {
             return true;
         }
