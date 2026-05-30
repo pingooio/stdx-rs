@@ -1,3 +1,5 @@
+use std::sync::atomic::AtomicBool;
+
 use tokio::sync::Semaphore;
 
 use crate::{PgError, error::Result as PgResult};
@@ -76,14 +78,20 @@ impl Default for PoolConfig {
     }
 }
 
-#[derive(Debug)]
+pub(crate) struct IdleConn {
+    pub(crate) conn: super::connection::Connection,
+    pub(crate) since: std::time::Instant,
+    pub(crate) created: std::time::Instant,
+    pub(crate) _permit: tokio::sync::OwnedSemaphorePermit,
+}
+
 pub(crate) struct PoolInner {
     pub(crate) params: ConnectParams,
     pub(crate) config: PoolConfig,
-    pub(crate) idle: tokio::sync::Mutex<Vec<std::time::Instant>>,
-    pub(crate) idle_conns: tokio::sync::Mutex<Vec<super::connection::Connection>>,
+    pub(crate) idle: tokio::sync::Mutex<Vec<IdleConn>>,
     pub(crate) semaphore: std::sync::Arc<Semaphore>,
-    pub(crate) closed: tokio::sync::Notify,
+    pub(crate) closed: AtomicBool,
+    pub(crate) closed_notify: tokio::sync::Notify,
 }
 
 impl PoolInner {
@@ -91,10 +99,10 @@ impl PoolInner {
         std::sync::Arc::new(PoolInner {
             semaphore: std::sync::Arc::new(Semaphore::new(config.max_connections as usize)),
             idle: tokio::sync::Mutex::new(Vec::new()),
-            idle_conns: tokio::sync::Mutex::new(Vec::new()),
             params,
             config,
-            closed: tokio::sync::Notify::new(),
+            closed: AtomicBool::new(false),
+            closed_notify: tokio::sync::Notify::new(),
         })
     }
 }

@@ -76,20 +76,22 @@ async fn wait_for_ready(params: &ConnectParams) -> pg::Connection {
     }
 }
 
-#[tokio::test]
-#[ignore = "requires docker"]
-async fn integration_test_basic_query() {
-    let (cid, port) = start_postgres();
-
-    let params = ConnectParams {
+fn make_params(port: u16) -> ConnectParams {
+    ConnectParams {
         host: "localhost".to_string(),
         port,
         user: "testuser".to_string(),
         password: Some("testpass".to_string()),
         dbname: Some("testdb".to_string()),
         connect_timeout: Duration::from_secs(10),
-    };
+    }
+}
 
+#[tokio::test]
+#[ignore = "requires docker"]
+async fn integration_test_basic_query() {
+    let (cid, port) = start_postgres();
+    let params = make_params(port);
     let conn = wait_for_ready(&params).await;
 
     let rows = conn.query_raw("SELECT 1 AS num, 'hello' AS text", &[]).await.unwrap();
@@ -106,16 +108,7 @@ async fn integration_test_basic_query() {
 #[ignore = "requires docker"]
 async fn integration_test_parameterized_query() {
     let (cid, port) = start_postgres();
-
-    let params = ConnectParams {
-        host: "localhost".to_string(),
-        port,
-        user: "testuser".to_string(),
-        password: Some("testpass".to_string()),
-        dbname: Some("testdb".to_string()),
-        connect_timeout: Duration::from_secs(10),
-    };
-
+    let params = make_params(port);
     let conn = wait_for_ready(&params).await;
 
     conn.execute_raw(
@@ -157,15 +150,7 @@ async fn integration_test_parameterized_query() {
 #[ignore = "requires docker"]
 async fn integration_test_pool() {
     let (cid, port) = start_postgres();
-
-    let params = ConnectParams {
-        host: "localhost".to_string(),
-        port,
-        user: "testuser".to_string(),
-        password: Some("testpass".to_string()),
-        dbname: Some("testdb".to_string()),
-        connect_timeout: Duration::from_secs(10),
-    };
+    let params = make_params(port);
 
     let pool = Pool::connect_with_config(
         params,
@@ -190,16 +175,7 @@ async fn integration_test_pool() {
 #[ignore = "requires docker"]
 async fn integration_test_transaction() {
     let (cid, port) = start_postgres();
-
-    let params = ConnectParams {
-        host: "localhost".to_string(),
-        port,
-        user: "testuser".to_string(),
-        password: Some("testpass".to_string()),
-        dbname: Some("testdb".to_string()),
-        connect_timeout: Duration::from_secs(10),
-    };
-
+    let params = make_params(port);
     let conn = wait_for_ready(&params).await;
 
     conn.execute_raw("CREATE TABLE IF NOT EXISTS txn_test (id INT PRIMARY KEY, val TEXT)", &[])
@@ -239,16 +215,7 @@ async fn integration_test_transaction() {
 #[ignore = "requires docker"]
 async fn integration_test_from_row() {
     let (cid, port) = start_postgres();
-
-    let params = ConnectParams {
-        host: "localhost".to_string(),
-        port,
-        user: "testuser".to_string(),
-        password: Some("testpass".to_string()),
-        dbname: Some("testdb".to_string()),
-        connect_timeout: Duration::from_secs(10),
-    };
-
+    let params = make_params(port);
     let conn = wait_for_ready(&params).await;
 
     conn.execute_raw(
@@ -297,16 +264,7 @@ async fn integration_test_from_row() {
 #[ignore = "requires docker"]
 async fn integration_test_vec_binding() {
     let (cid, port) = start_postgres();
-
-    let params = ConnectParams {
-        host: "localhost".to_string(),
-        port,
-        user: "testuser".to_string(),
-        password: Some("testpass".to_string()),
-        dbname: Some("testdb".to_string()),
-        connect_timeout: Duration::from_secs(10),
-    };
-
+    let params = make_params(port);
     let conn = wait_for_ready(&params).await;
 
     conn.execute_raw("CREATE TABLE IF NOT EXISTS vec_test (id INT PRIMARY KEY, val INT)", &[])
@@ -326,6 +284,104 @@ async fn integration_test_vec_binding() {
     assert_eq!(id1, 1);
     let id2: i32 = rows[1].try_get("id").unwrap();
     assert_eq!(id2, 3);
+
+    stop_postgres(&cid);
+}
+
+#[tokio::test]
+#[ignore = "requires docker"]
+async fn integration_test_pool_begin_transaction() {
+    let (cid, port) = start_postgres();
+    let params = make_params(port);
+
+    let pool = Pool::connect_with_config(
+        params,
+        PoolConfig {
+            min_connections: 1,
+            max_connections: 5,
+            ..PoolConfig::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    pool.execute_raw("CREATE TABLE IF NOT EXISTS pool_txn (id INT PRIMARY KEY, val TEXT)", &[])
+        .await
+        .unwrap();
+
+    let txn = pool.begin().await.unwrap();
+    txn.execute_raw(
+        "INSERT INTO pool_txn (id, val) VALUES ($1, $2)",
+        &[&1i32, &"pooled".to_string()],
+    )
+    .await
+    .unwrap();
+    txn.commit().await.unwrap();
+
+    let rows = pool
+        .query_raw("SELECT val FROM pool_txn WHERE id = $1", &[&1i32])
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    let val: String = rows[0].try_get("val").unwrap();
+    assert_eq!(val, "pooled");
+
+    stop_postgres(&cid);
+}
+
+#[tokio::test]
+#[ignore = "requires docker"]
+async fn integration_test_pool_queryer_trait() {
+    let (cid, port) = start_postgres();
+    let params = make_params(port);
+
+    let pool = Pool::connect_with_config(
+        params,
+        PoolConfig {
+            min_connections: 1,
+            max_connections: 5,
+            ..PoolConfig::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let val: Option<i32> = pool.query_first("SELECT 99", &[]).await.unwrap();
+    assert_eq!(val, Some(99));
+
+    stop_postgres(&cid);
+}
+
+#[tokio::test]
+#[ignore = "requires docker"]
+async fn integration_test_connection_acquire_after_close() {
+    let (cid, port) = start_postgres();
+    let params = make_params(port);
+
+    let pool = Pool::connect_with_config(
+        params,
+        PoolConfig {
+            min_connections: 0,
+            max_connections: 3,
+            ..PoolConfig::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let conn = pool.get().await.unwrap();
+    let rows = conn.query_raw("SELECT 1 AS ok", &[]).await.unwrap();
+    let val: i32 = rows[0].try_get("ok").unwrap();
+    assert_eq!(val, 1);
+    drop(conn);
+
+    pool.close().await;
+    let result = pool.get().await;
+    assert!(result.is_err());
+    match result {
+        Err(PgError::PoolClosed) => {}
+        _ => panic!("expected PoolClosed error"),
+    }
 
     stop_postgres(&cid);
 }

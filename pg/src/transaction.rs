@@ -1,11 +1,17 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
-use crate::{config::PoolInner, connection::Connection, encode::ToSql, error::Result, queryer::Queryer, row::Row};
+use crate::{
+    config::{IdleConn, PoolInner},
+    connection::Connection,
+    encode::ToSql,
+    error::Result,
+    queryer::Queryer,
+    row::Row,
+};
 
 pub struct Transaction {
     conn: Option<Connection>,
     done: bool,
-    /// If set, return the connection to this pool on completion.
     pool: Option<PoolBacking>,
 }
 
@@ -29,29 +35,39 @@ impl Transaction {
         pool: Arc<PoolInner>,
         permit: tokio::sync::OwnedSemaphorePermit,
     ) -> Result<Self> {
-        conn.execute_raw("BEGIN", &[]).await?;
-        Ok(Transaction {
-            conn: Some(conn),
-            done: false,
-            pool: Some(PoolBacking {
-                inner: pool,
-                _permit: permit,
+        match conn.execute_raw("BEGIN", &[]).await {
+            Ok(_) => Ok(Transaction {
+                conn: Some(conn),
+                done: false,
+                pool: Some(PoolBacking {
+                    inner: pool,
+                    _permit: permit,
+                }),
             }),
-        })
+            Err(e) => {
+                pool.idle.lock().await.push(IdleConn {
+                    conn,
+                    since: Instant::now(),
+                    created: Instant::now(),
+                    _permit: permit,
+                });
+                Err(e)
+            }
+        }
     }
 
     pub async fn commit(mut self) -> Result<()> {
         let conn = self.conn.as_ref().expect("Transaction already completed");
-        conn.execute_raw("COMMIT", &[]).await?;
+        let result = conn.execute_raw("COMMIT", &[]).await.map(|_| ());
         self.done = true;
-        Ok(())
+        result
     }
 
     pub async fn rollback(mut self) -> Result<()> {
         let conn = self.conn.as_ref().expect("Transaction already completed");
-        conn.execute_raw("ROLLBACK", &[]).await?;
+        let result = conn.execute_raw("ROLLBACK", &[]).await.map(|_| ());
         self.done = true;
-        Ok(())
+        result
     }
 
     pub async fn query_raw(&self, sql: &str, params: &[&dyn ToSql]) -> Result<Vec<Row>> {
@@ -69,19 +85,26 @@ impl Transaction {
 
 impl Drop for Transaction {
     fn drop(&mut self) {
-        if !self.done {
-            if let Some(conn) = self.conn.take() {
+        let done = self.done;
+
+        if let (Some(conn), Some(pool)) = (self.conn.take(), self.pool.take()) {
+            tokio::spawn(async move {
+                if !done {
+                    let _ = conn.execute_raw("ROLLBACK", &[]).await;
+                }
+                pool.inner.idle.lock().await.push(IdleConn {
+                    conn,
+                    since: Instant::now(),
+                    created: Instant::now(),
+                    _permit: pool._permit,
+                });
+            });
+        } else if let Some(conn) = self.conn.take() {
+            if !done {
                 tokio::spawn(async move {
                     let _ = conn.execute_raw("ROLLBACK", &[]).await;
                 });
             }
-            return;
-        }
-
-        // Return connection to pool if applicable
-        if let (Some(conn), Some(pool)) = (self.conn.take(), self.pool.take()) {
-            pool.inner.idle_conns.blocking_lock().push(conn);
-            pool.inner.idle.blocking_lock().push(std::time::Instant::now());
         }
     }
 }

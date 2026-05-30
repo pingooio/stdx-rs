@@ -1,4 +1,6 @@
 use std::{
+    collections::HashMap,
+    hash::{Hash, Hasher},
     num::NonZeroUsize,
     pin::Pin,
     sync::Arc,
@@ -64,8 +66,8 @@ struct Inner {
     buf: BytesMut,
     _pid: i32,
     _secret_key: i32,
-    _parameter_status: std::collections::HashMap<String, String>,
-    statement_cache: LruCache<String, Vec<FieldDescription>>,
+    _parameter_status: HashMap<String, String>,
+    statement_cache: LruCache<String, (String, Vec<FieldDescription>)>,
 }
 
 #[derive(Clone)]
@@ -77,6 +79,12 @@ impl std::fmt::Debug for Connection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Connection").finish_non_exhaustive()
     }
+}
+
+fn sql_statement_name(sql: &str) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    sql.hash(&mut hasher);
+    format!("s{:x}", hasher.finish())
 }
 
 impl Connection {
@@ -96,7 +104,7 @@ impl Connection {
             buf: BytesMut::with_capacity(8192),
             _pid: 0,
             _secret_key: 0,
-            _parameter_status: std::collections::HashMap::new(),
+            _parameter_status: HashMap::new(),
             statement_cache: LruCache::new(NonZeroUsize::new(100).unwrap()),
         };
 
@@ -114,32 +122,47 @@ impl Connection {
             return simple_query(&mut guard, sql).await;
         }
 
+        let stmt_name = sql_statement_name(sql);
         let param_oids: Vec<u32> = params.iter().map(|p| p.pg_type().oid).collect();
 
-        let is_cached = guard.statement_cache.contains(sql);
-        if !is_cached {
-            send_parse(&mut guard, sql, &param_oids).await?;
-            read_until_parse_complete(&mut guard).await?;
-            guard.statement_cache.put(sql.to_string(), Vec::new());
+        let cached_name = guard.statement_cache.get(sql).map(|(name, _)| name.clone());
+        if let Some(ref old_name) = cached_name {
+            if *old_name != stmt_name {
+                send_close_statement(&mut guard, old_name).await?;
+                guard.statement_cache.pop(sql);
+            }
         }
 
-        let param_binary: Vec<Vec<u8>> = params.iter().map(|p| p.to_sql()).collect();
+        if !guard.statement_cache.contains(sql) {
+            send_parse(&mut guard, &stmt_name, sql, &param_oids).await?;
+            read_until_parse_complete(&mut guard).await?;
+
+            send_describe_statement(&mut guard, &stmt_name).await?;
+            let fields = match read_describe_response(&mut guard).await? {
+                Some(fields) => fields,
+                None => Vec::new(),
+            };
+
+            guard.statement_cache.put(sql.to_string(), (stmt_name.clone(), fields));
+        }
+
+        let (cached_stmt_name, fields) = guard.statement_cache.get(sql).expect("just cached").clone();
+
+        let param_binary: Vec<Vec<u8>> = params.iter().map(|p| p.to_sql()).collect::<Result<Vec<Vec<u8>>>>()?;
         let param_formats: Vec<crate::types::Format> = params.iter().map(|_| crate::types::Format::Binary).collect();
 
-        send_bind(&mut guard, "", sql, &param_formats, &param_binary, crate::types::Format::Binary).await?;
+        send_bind(
+            &mut guard,
+            "",
+            &cached_stmt_name,
+            &param_formats,
+            &param_binary,
+            crate::types::Format::Binary,
+        )
+        .await?;
         read_until_bind_complete(&mut guard).await?;
 
         send_describe_portal(&mut guard, "").await?;
-        let fields = match read_describe_response(&mut guard).await? {
-            Some(fields) => fields,
-            None => Vec::new(),
-        };
-
-        if let Some(cached) = guard.statement_cache.get_mut(sql) {
-            if cached.is_empty() && !fields.is_empty() {
-                *cached = fields.clone();
-            }
-        }
 
         send_execute(&mut guard, "", 0).await?;
         let rows = read_rows_until_complete(&mut guard, &fields).await?;
@@ -157,15 +180,43 @@ impl Connection {
             return simple_execute(&mut guard, sql).await;
         }
 
+        let stmt_name = sql_statement_name(sql);
         let param_oids: Vec<u32> = params.iter().map(|p| p.pg_type().oid).collect();
 
-        send_parse(&mut guard, sql, &param_oids).await?;
-        read_until_parse_complete(&mut guard).await?;
+        if let Some((old_name, _)) = guard.statement_cache.get(sql) {
+            if *old_name != stmt_name {
+                let old = old_name.clone();
+                guard.statement_cache.pop(sql);
+                send_close_statement(&mut guard, &old).await?;
+            }
+        }
 
-        let param_binary: Vec<Vec<u8>> = params.iter().map(|p| p.to_sql()).collect();
+        if !guard.statement_cache.contains(sql) {
+            send_parse(&mut guard, &stmt_name, sql, &param_oids).await?;
+            read_until_parse_complete(&mut guard).await?;
+            guard
+                .statement_cache
+                .put(sql.to_string(), (stmt_name.clone(), Vec::new()));
+        }
+
+        let cached_stmt_name = guard
+            .statement_cache
+            .get(sql)
+            .map(|(n, _)| n.clone())
+            .expect("just cached");
+
+        let param_binary: Vec<Vec<u8>> = params.iter().map(|p| p.to_sql()).collect::<Result<Vec<Vec<u8>>>>()?;
         let param_formats: Vec<crate::types::Format> = params.iter().map(|_| crate::types::Format::Binary).collect();
 
-        send_bind(&mut guard, "", sql, &param_formats, &param_binary, crate::types::Format::Binary).await?;
+        send_bind(
+            &mut guard,
+            "",
+            &cached_stmt_name,
+            &param_formats,
+            &param_binary,
+            crate::types::Format::Binary,
+        )
+        .await?;
         read_until_bind_complete(&mut guard).await?;
 
         send_execute(&mut guard, "", 0).await?;
@@ -319,11 +370,9 @@ async fn simple_execute(inner: &mut Inner, sql: &str) -> Result<u64> {
         let backend = read_message(inner).await?;
         match backend {
             BackendMessage::RowDescription(_) => {}
-            BackendMessage::DataRow(_) => {
-                rows_affected += 1;
-            }
+            BackendMessage::DataRow(_) => {}
             BackendMessage::CommandComplete(tag) => {
-                let _ = parse_command_tag(&tag, &mut rows_affected);
+                parse_command_tag(&tag, &mut rows_affected);
             }
             BackendMessage::ReadyForQuery(_) => {
                 return Ok(rows_affected);
@@ -346,8 +395,8 @@ fn parse_command_tag(tag: &str, affected: &mut u64) -> u64 {
     }
 }
 
-async fn send_parse(inner: &mut Inner, sql: &str, param_oids: &[u32]) -> Result<()> {
-    let msg = FrontendMessage::Parse(String::new(), sql.to_string(), param_oids.to_vec());
+async fn send_parse(inner: &mut Inner, stmt_name: &str, sql: &str, param_oids: &[u32]) -> Result<()> {
+    let msg = FrontendMessage::Parse(stmt_name.to_string(), sql.to_string(), param_oids.to_vec());
     inner.write_all(&msg.encode()).await?;
     Ok(())
 }
@@ -391,6 +440,12 @@ async fn read_until_bind_complete(inner: &mut Inner) -> Result<()> {
             _ => return Err(PgError::Protocol("expected BindComplete".into())),
         }
     }
+}
+
+async fn send_describe_statement(inner: &mut Inner, stmt: &str) -> Result<()> {
+    let msg = FrontendMessage::Describe(b'S', stmt.to_string());
+    inner.write_all(&msg.encode()).await?;
+    Ok(())
 }
 
 async fn send_describe_portal(inner: &mut Inner, portal: &str) -> Result<()> {
@@ -458,6 +513,23 @@ async fn send_sync(inner: &mut Inner) -> Result<()> {
     let msg = FrontendMessage::Sync;
     inner.write_all(&msg.encode()).await?;
     Ok(())
+}
+
+async fn send_close_statement(inner: &mut Inner, stmt: &str) -> Result<()> {
+    let msg = FrontendMessage::Close(b'S', stmt.to_string());
+    inner.write_all(&msg.encode()).await?;
+    read_until_close_complete(inner).await
+}
+
+async fn read_until_close_complete(inner: &mut Inner) -> Result<()> {
+    loop {
+        let backend = read_message(inner).await?;
+        match backend {
+            BackendMessage::CloseComplete => return Ok(()),
+            BackendMessage::NoticeResponse(_) => {}
+            _ => return Err(PgError::Protocol("expected CloseComplete".into())),
+        }
+    }
 }
 
 async fn read_until_ready(inner: &mut Inner) -> Result<u8> {

@@ -17,6 +17,7 @@ pub const TIMESTAMPOID: Oid = 1114;
 pub const TIMESTAMPTZOID: Oid = 1184;
 pub const JSONOID: Oid = 114;
 pub const JSONBOID: Oid = 3802;
+pub const INT2_ARRAY_OID: Oid = 1005;
 pub const INT4_ARRAY_OID: Oid = 1007;
 pub const INT8_ARRAY_OID: Oid = 1016;
 pub const TEXT_ARRAY_OID: Oid = 1009;
@@ -58,6 +59,7 @@ pub static TEXT: PgType = PgType::new(TEXTOID, "text");
 pub static BYTEA: PgType = PgType::new(BYTEAOID, "bytea");
 pub static UUID: PgType = PgType::new(UUIDOID, "uuid");
 pub static TIMESTAMPTZ: PgType = PgType::new(TIMESTAMPTZOID, "timestamptz");
+pub static INT2_ARRAY: PgType = PgType::new(INT2_ARRAY_OID, "_int2");
 pub static INT4_ARRAY: PgType = PgType::new(INT4_ARRAY_OID, "_int4");
 pub static INT8_ARRAY: PgType = PgType::new(INT8_ARRAY_OID, "_int8");
 pub static TEXT_ARRAY: PgType = PgType::new(TEXT_ARRAY_OID, "_text");
@@ -67,7 +69,8 @@ pub static UUID_ARRAY: PgType = PgType::new(UUID_ARRAY_OID, "_uuid");
 
 pub fn element_to_array(elem: &PgType) -> &'static PgType {
     match elem.oid {
-        INT2OID | INT4OID => &INT4_ARRAY,
+        INT2OID => &INT2_ARRAY,
+        INT4OID => &INT4_ARRAY,
         INT8OID => &INT8_ARRAY,
         FLOAT8OID => &FLOAT8_ARRAY,
         BOOLOID => &BOOL_ARRAY,
@@ -80,7 +83,7 @@ pub fn element_to_array(elem: &PgType) -> &'static PgType {
 impl PgType {
     pub fn array_of(elem: &PgType) -> Self {
         let oid = match elem.oid {
-            INT2OID => INT4_ARRAY_OID,
+            INT2OID => INT2_ARRAY_OID,
             INT4OID => INT4_ARRAY_OID,
             INT8OID => INT8_ARRAY_OID,
             FLOAT8OID => FLOAT8_ARRAY_OID,
@@ -93,7 +96,7 @@ impl PgType {
         };
         PgType {
             oid,
-            name: elem.name,
+            name: "", // array name not preserved
         }
     }
 }

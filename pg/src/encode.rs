@@ -1,13 +1,16 @@
-use crate::types::PgType;
+use crate::{
+    error::{PgError, Result},
+    types::PgType,
+};
 
 pub trait ToSql: Send + Sync {
-    fn to_sql(&self) -> Vec<u8>;
+    fn to_sql(&self) -> Result<Vec<u8>>;
     fn pg_type(&self) -> &'static PgType;
 }
 
 impl ToSql for i16 {
-    fn to_sql(&self) -> Vec<u8> {
-        self.to_be_bytes().to_vec()
+    fn to_sql(&self) -> Result<Vec<u8>> {
+        Ok(self.to_be_bytes().to_vec())
     }
     fn pg_type(&self) -> &'static PgType {
         &crate::types::INT2
@@ -15,8 +18,8 @@ impl ToSql for i16 {
 }
 
 impl ToSql for i32 {
-    fn to_sql(&self) -> Vec<u8> {
-        self.to_be_bytes().to_vec()
+    fn to_sql(&self) -> Result<Vec<u8>> {
+        Ok(self.to_be_bytes().to_vec())
     }
     fn pg_type(&self) -> &'static PgType {
         &crate::types::INT4
@@ -24,8 +27,8 @@ impl ToSql for i32 {
 }
 
 impl ToSql for i64 {
-    fn to_sql(&self) -> Vec<u8> {
-        self.to_be_bytes().to_vec()
+    fn to_sql(&self) -> Result<Vec<u8>> {
+        Ok(self.to_be_bytes().to_vec())
     }
     fn pg_type(&self) -> &'static PgType {
         &crate::types::INT8
@@ -33,8 +36,8 @@ impl ToSql for i64 {
 }
 
 impl ToSql for f32 {
-    fn to_sql(&self) -> Vec<u8> {
-        self.to_be_bytes().to_vec()
+    fn to_sql(&self) -> Result<Vec<u8>> {
+        Ok(self.to_be_bytes().to_vec())
     }
     fn pg_type(&self) -> &'static PgType {
         &crate::types::FLOAT4
@@ -42,8 +45,8 @@ impl ToSql for f32 {
 }
 
 impl ToSql for f64 {
-    fn to_sql(&self) -> Vec<u8> {
-        self.to_be_bytes().to_vec()
+    fn to_sql(&self) -> Result<Vec<u8>> {
+        Ok(self.to_be_bytes().to_vec())
     }
     fn pg_type(&self) -> &'static PgType {
         &crate::types::FLOAT8
@@ -51,8 +54,8 @@ impl ToSql for f64 {
 }
 
 impl ToSql for bool {
-    fn to_sql(&self) -> Vec<u8> {
-        vec![if *self { 1 } else { 0 }]
+    fn to_sql(&self) -> Result<Vec<u8>> {
+        Ok(vec![if *self { 1 } else { 0 }])
     }
     fn pg_type(&self) -> &'static PgType {
         &crate::types::BOOL
@@ -60,8 +63,8 @@ impl ToSql for bool {
 }
 
 impl ToSql for String {
-    fn to_sql(&self) -> Vec<u8> {
-        self.as_bytes().to_vec()
+    fn to_sql(&self) -> Result<Vec<u8>> {
+        Ok(self.as_bytes().to_vec())
     }
     fn pg_type(&self) -> &'static PgType {
         &crate::types::TEXT
@@ -69,8 +72,8 @@ impl ToSql for String {
 }
 
 impl ToSql for &str {
-    fn to_sql(&self) -> Vec<u8> {
-        self.as_bytes().to_vec()
+    fn to_sql(&self) -> Result<Vec<u8>> {
+        Ok(self.as_bytes().to_vec())
     }
     fn pg_type(&self) -> &'static PgType {
         &crate::types::TEXT
@@ -78,8 +81,8 @@ impl ToSql for &str {
 }
 
 impl ToSql for uuid::Uuid {
-    fn to_sql(&self) -> Vec<u8> {
-        self.as_bytes().to_vec()
+    fn to_sql(&self) -> Result<Vec<u8>> {
+        Ok(self.as_bytes().to_vec())
     }
     fn pg_type(&self) -> &'static PgType {
         &crate::types::UUID
@@ -87,14 +90,16 @@ impl ToSql for uuid::Uuid {
 }
 
 impl ToSql for chrono::DateTime<chrono::Utc> {
-    fn to_sql(&self) -> Vec<u8> {
+    fn to_sql(&self) -> Result<Vec<u8>> {
         let pg_epoch = chrono::NaiveDate::from_ymd_opt(2000, 1, 1)
             .and_then(|d| d.and_hms_opt(0, 0, 0))
             .map(|d| d.and_utc())
             .unwrap();
         let diff = *self - pg_epoch;
-        let micros = diff.num_microseconds().unwrap_or(0);
-        micros.to_be_bytes().to_vec()
+        let micros = diff.num_microseconds().ok_or_else(|| {
+            PgError::Encode("timestamptz value out of range for PostgreSQL microsecond encoding".into())
+        })?;
+        Ok(micros.to_be_bytes().to_vec())
     }
     fn pg_type(&self) -> &'static PgType {
         &crate::types::TIMESTAMPTZ
@@ -102,10 +107,10 @@ impl ToSql for chrono::DateTime<chrono::Utc> {
 }
 
 impl<T: ToSql> ToSql for Option<T> {
-    fn to_sql(&self) -> Vec<u8> {
+    fn to_sql(&self) -> Result<Vec<u8>> {
         match self {
             Some(val) => val.to_sql(),
-            None => Vec::new(),
+            None => Ok(Vec::new()),
         }
     }
     fn pg_type(&self) -> &'static PgType {
@@ -116,7 +121,7 @@ impl<T: ToSql> ToSql for Option<T> {
 }
 
 impl<T: ToSql> ToSql for Vec<T> {
-    fn to_sql(&self) -> Vec<u8> {
+    fn to_sql(&self) -> Result<Vec<u8>> {
         let elem_type = self.first().map(|e| e.pg_type()).unwrap_or(&crate::types::INT4);
         let elem_oid = elem_type.oid;
         let mut buf = Vec::new();
@@ -126,11 +131,11 @@ impl<T: ToSql> ToSql for Vec<T> {
         buf.extend_from_slice(&(self.len() as i32).to_be_bytes());
         buf.extend_from_slice(&1i32.to_be_bytes());
         for elem in self {
-            let data = elem.to_sql();
+            let data = elem.to_sql()?;
             buf.extend_from_slice(&(data.len() as i32).to_be_bytes());
             buf.extend_from_slice(&data);
         }
-        buf
+        Ok(buf)
     }
     fn pg_type(&self) -> &'static PgType {
         self.first()
@@ -140,8 +145,8 @@ impl<T: ToSql> ToSql for Vec<T> {
 }
 
 impl ToSql for Vec<u8> {
-    fn to_sql(&self) -> Vec<u8> {
-        self.clone()
+    fn to_sql(&self) -> Result<Vec<u8>> {
+        Ok(self.clone())
     }
     fn pg_type(&self) -> &'static PgType {
         &crate::types::BYTEA
@@ -149,8 +154,8 @@ impl ToSql for Vec<u8> {
 }
 
 impl ToSql for &[u8] {
-    fn to_sql(&self) -> Vec<u8> {
-        self.to_vec()
+    fn to_sql(&self) -> Result<Vec<u8>> {
+        Ok(self.to_vec())
     }
     fn pg_type(&self) -> &'static PgType {
         &crate::types::BYTEA
@@ -158,7 +163,7 @@ impl ToSql for &[u8] {
 }
 
 impl<T: ToSql> ToSql for &[T] {
-    fn to_sql(&self) -> Vec<u8> {
+    fn to_sql(&self) -> Result<Vec<u8>> {
         let elem_type = self.first().map(|e| e.pg_type()).unwrap_or(&crate::types::INT4);
         let elem_oid = elem_type.oid;
         let mut buf = Vec::new();
@@ -168,11 +173,11 @@ impl<T: ToSql> ToSql for &[T] {
         buf.extend_from_slice(&(self.len() as i32).to_be_bytes());
         buf.extend_from_slice(&1i32.to_be_bytes());
         for elem in *self {
-            let data = elem.to_sql();
+            let data = elem.to_sql()?;
             buf.extend_from_slice(&(data.len() as i32).to_be_bytes());
             buf.extend_from_slice(&data);
         }
-        buf
+        Ok(buf)
     }
     fn pg_type(&self) -> &'static PgType {
         self.first()
@@ -192,14 +197,14 @@ impl<T: ToSql> ToSql for &[T] {
 /// conn.execute_raw("SELECT * FROM unnest($1::uuid[])", &[&param]).await?;
 /// ```
 pub struct BindIter<I> {
-    inner: std::sync::Mutex<I>,
+    inner: std::sync::Mutex<Option<I>>,
     elem_type: &'static PgType,
 }
 
 impl<I> BindIter<I> {
     pub fn new(iter: I, elem_type: &'static PgType) -> Self {
         BindIter {
-            inner: std::sync::Mutex::new(iter),
+            inner: std::sync::Mutex::new(Some(iter)),
             elem_type,
         }
     }
@@ -210,12 +215,11 @@ where
     I: Iterator<Item = T> + Send,
     T: ToSql,
 {
-    fn to_sql(&self) -> Vec<u8> {
+    fn to_sql(&self) -> Result<Vec<u8>> {
         let mut buf = Vec::new();
         buf.extend_from_slice(&1i32.to_be_bytes());
         buf.extend_from_slice(&0i32.to_be_bytes());
         buf.extend_from_slice(&self.elem_type.oid.to_be_bytes());
-        // dim_count placeholder — replaced with actual count below
         buf.extend_from_slice(&0i32.to_be_bytes());
         buf.extend_from_slice(&1i32.to_be_bytes());
 
@@ -227,23 +231,26 @@ where
             crate::types::BOOLOID => 4 + 1,
             _ => 4 + 64,
         };
-        let (lower, _) = self.inner.lock().unwrap().size_hint();
-        if lower > 0 {
-            buf.reserve(20 + lower * per_elem_guess);
+        if let Some(ref iter) = *self.inner.lock().unwrap() {
+            let (lower, _) = iter.size_hint();
+            if lower > 0 {
+                buf.reserve(20 + lower * per_elem_guess);
+            }
         }
 
         let mut count = 0i32;
-        let mut iter = self.inner.lock().unwrap();
-        while let Some(item) = iter.next() {
-            let data = item.to_sql();
-            buf.extend_from_slice(&(data.len() as i32).to_be_bytes());
-            buf.extend_from_slice(&data);
-            count += 1;
+        let mut iter_guard = self.inner.lock().unwrap();
+        if let Some(ref mut iter) = *iter_guard {
+            while let Some(item) = iter.next() {
+                let data = item.to_sql()?;
+                buf.extend_from_slice(&(data.len() as i32).to_be_bytes());
+                buf.extend_from_slice(&data);
+                count += 1;
+            }
         }
-        drop(iter);
 
         buf[12..16].copy_from_slice(&count.to_be_bytes());
-        buf
+        Ok(buf)
     }
 
     fn pg_type(&self) -> &'static PgType {
