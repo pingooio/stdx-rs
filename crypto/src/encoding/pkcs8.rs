@@ -122,8 +122,8 @@ pub fn encode_p256_pkcs8_der(key: &PrivateKey) -> Result<[u8; PKCS8_DER_LEN], Pk
     let priv_bytes = key.to_bytes();
 
     let mut der = TEMPLATE;
-    der[PUBLIC_KEY_OFFSET..PUBLIC_KEY_OFFSET + PUBLIC_KEY_UNCOMPRESSED_SIZE].copy_from_slice(pub_bytes);
-    der[PRIVATE_KEY_OFFSET..PRIVATE_KEY_OFFSET + PRIVATE_KEY_SIZE].copy_from_slice(priv_bytes);
+    der[PUBLIC_KEY_OFFSET..PUBLIC_KEY_OFFSET + PUBLIC_KEY_UNCOMPRESSED_SIZE].copy_from_slice(&pub_bytes);
+    der[PRIVATE_KEY_OFFSET..PRIVATE_KEY_OFFSET + PRIVATE_KEY_SIZE].copy_from_slice(&priv_bytes);
 
     Ok(der)
 }

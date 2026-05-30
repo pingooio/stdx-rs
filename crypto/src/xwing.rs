@@ -1,7 +1,6 @@
 use crate::{
-    mlkem,
+    curve25519, mlkem,
     sha3::{Sha3_256, Shake256},
-    x25519,
 };
 
 pub const XWING_SECRET_KEY_SIZE: usize = 32;
@@ -44,7 +43,7 @@ fn expand_decapsulation_key(
 
     let mut sk_x = [0u8; XWING_X25519_KEY_SIZE];
     sk_x.copy_from_slice(&expanded[64..96]);
-    let pk_x = x25519::x25519_derive_public_key(&sk_x);
+    let pk_x = curve25519::x25519_derive_public_key(&sk_x);
 
     (sk_m, sk_x, pk_m, pk_x)
 }
@@ -95,8 +94,8 @@ pub fn encapsulate_derand(
 
     let mut ek_x = [0u8; XWING_X25519_KEY_SIZE];
     ek_x.copy_from_slice(&eseed[32..64]);
-    let ct_x = x25519::x25519_derive_public_key(&ek_x);
-    let ss_x = x25519::x25519(&ek_x, &pk_x).expect("X25519 encapsulation should not fail");
+    let ct_x = curve25519::x25519_derive_public_key(&ek_x);
+    let ss_x = curve25519::x25519::x25519(&ek_x, &pk_x).expect("X25519 encapsulation should not fail");
 
     let mut m = [0u8; 32];
     m.copy_from_slice(&eseed[..32]);
@@ -123,7 +122,7 @@ pub fn decapsulate(
     ct_x.copy_from_slice(&ct[mlkem::ML_KEM_768_CIPHERTEXT_SIZE..]);
 
     let ss_m = mlkem::ml_kem_768_decapsulate(&sk_m, &ct_m).map_err(|_| XWingError::MlKem)?;
-    let ss_x = x25519::x25519(&sk_x, &ct_x).expect("X25519 decapsulation should not fail");
+    let ss_x = curve25519::x25519::x25519(&sk_x, &ct_x).expect("X25519 decapsulation should not fail");
 
     Ok(combiner(&ss_m, &ss_x, &ct_x, &pk_x))
 }
@@ -310,7 +309,7 @@ mod tests {
     fn pk_x_recovered_from_sk_matches_pk() {
         let seed: [u8; 32] = hex_to_array("7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26");
         let (_, sk_x, _, pk_x) = expand_decapsulation_key(&seed);
-        let recovered_pk_x = x25519::x25519_derive_public_key(&sk_x);
+        let recovered_pk_x = curve25519::x25519_derive_public_key(&sk_x);
         assert_eq!(recovered_pk_x, pk_x);
     }
 }

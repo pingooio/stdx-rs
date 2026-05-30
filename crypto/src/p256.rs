@@ -1,4 +1,4 @@
-use big_number::Uint;
+use big_number::{Uint, adc, mac};
 
 use crate::{EllipticCurveError, Hasher, hmac::Hmac, sha2::Sha256};
 
@@ -6,67 +6,69 @@ pub const PRIVATE_KEY_SIZE: usize = 32;
 pub const PUBLIC_KEY_COMPRESSED_SIZE: usize = 33;
 pub const PUBLIC_KEY_UNCOMPRESSED_SIZE: usize = 65;
 pub const SIGNATURE_SIZE: usize = 64;
+pub const ECDH_SHARED_SECRET_SIZE: usize = 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PrivateKey {
-    private_key: [u8; PRIVATE_KEY_SIZE],
-    public_key: [u8; PUBLIC_KEY_UNCOMPRESSED_SIZE],
+    scalar: Scalar,
+    public_point: AffinePoint,
 }
 
 impl PrivateKey {
     pub fn generate() -> Result<PrivateKey, EllipticCurveError> {
-        let private_key: [u8; PRIVATE_KEY_SIZE] = rand::random();
-        let public_key = derive_public_key_uncompressed(&private_key)?;
-        Ok(PrivateKey {
-            private_key,
-            public_key,
-        })
+        let key: [u8; PRIVATE_KEY_SIZE] = rand::random();
+        Self::from_bytes(&key)
     }
 
     pub fn from_bytes(key: &[u8; PRIVATE_KEY_SIZE]) -> Result<PrivateKey, EllipticCurveError> {
-        let public_key = derive_public_key_uncompressed(key)?;
+        let scalar = Scalar::from_bytes(key).ok_or(EllipticCurveError::InvalidKey)?;
+        let public_point = scalar_mul_generator(&scalar)
+            .to_affine()
+            .ok_or(EllipticCurveError::Unspecified)?;
         Ok(PrivateKey {
-            private_key: *key,
-            public_key,
+            scalar,
+            public_point,
         })
     }
 
     pub fn public_key(&self) -> PublicKey {
         PublicKey {
-            public_key: self.public_key,
+            point: self.public_point,
         }
     }
 
     pub fn sign(&self, message: &[u8]) -> Result<[u8; SIGNATURE_SIZE], EllipticCurveError> {
-        ecdsa_sign(&self.private_key, message)
+        ecdsa_sign_inner(&self.scalar, message)
     }
 
-    pub fn to_bytes(&self) -> &[u8] {
-        &self.private_key
+    pub fn ecdh(&self, peer_public: &PublicKey) -> Result<[u8; ECDH_SHARED_SECRET_SIZE], EllipticCurveError> {
+        ecdh_inner(&self.scalar, &peer_public.point)
+    }
+
+    pub fn to_bytes(&self) -> [u8; PRIVATE_KEY_SIZE] {
+        self.scalar.to_bytes()
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PublicKey {
-    public_key: [u8; PUBLIC_KEY_UNCOMPRESSED_SIZE],
+    point: AffinePoint,
 }
 
 impl PublicKey {
-    pub fn from_bytes(key: &[u8; PUBLIC_KEY_UNCOMPRESSED_SIZE]) -> Result<PublicKey, EllipticCurveError> {
-        if !is_valid_public_key(key) {
-            return Err(EllipticCurveError::InvalidKey);
-        }
+    pub fn from_bytes(key: &[u8]) -> Result<PublicKey, EllipticCurveError> {
+        let point = AffinePoint::from_sec1_bytes(key).ok_or(EllipticCurveError::InvalidKey)?;
         Ok(PublicKey {
-            public_key: *key,
+            point,
         })
     }
 
     pub fn verify(&self, message: &[u8], signature: &[u8; SIGNATURE_SIZE]) -> Result<(), EllipticCurveError> {
-        ecdsa_verify(&self.public_key, message, signature)
+        ecdsa_verify_inner(&self.point, message, signature)
     }
 
-    pub fn to_bytes(&self) -> &[u8] {
-        &self.public_key
+    pub fn to_bytes(&self) -> [u8; PUBLIC_KEY_UNCOMPRESSED_SIZE] {
+        self.point.to_uncompressed_bytes()
     }
 }
 
@@ -121,6 +123,58 @@ const GENERATOR_Y: FieldElement = FieldElement(U256::from_limbs([
     0x8ee7_eb4a_7c0f_9e16,
     0x4fe3_42e2_fe1a_7f9b,
 ]));
+
+// Montgomery constants for fast p = 2^256 - 2^224 + 2^192 + 2^96 - 1
+// inv = -p^(-1) mod 2^64
+// p ≡ -1 mod 2^64, so inv = 1
+const MONT_INV: u64 = 1;
+// R2 = 2^512 mod p
+const MONT_R2: [u64; 4] = [
+    0x0000000000000003,
+    0xfffffffbffffffff,
+    0xfffffffffffffffe,
+    0x00000004fffffffd,
+];
+
+#[inline]
+fn mont_mul(a: &[u64; 4], b: &[u64; 4], p: &[u64; 4], inv: u64) -> [u64; 4] {
+    let mut t = [0u64; 6];
+
+    for i in 0..4 {
+        let mut c = 0u64;
+        for j in 0..4 {
+            let (v, cc) = mac(t[j], a[i], b[j], c);
+            t[j] = v;
+            c = cc;
+        }
+        let (v, cc) = adc(t[4], c, 0);
+        t[4] = v;
+        t[5] = cc;
+
+        let q = t[0].wrapping_mul(inv);
+
+        c = 0;
+        for j in 0..4 {
+            let (v, cc) = mac(t[j], q, p[j], c);
+            t[j] = v;
+            c = cc;
+        }
+        let (v, cc) = adc(t[4], c, 0);
+        t[4] = v;
+        let (v, cc2) = adc(t[5], cc, 0);
+        t[5] = v;
+
+        for j in 0..4 {
+            t[j] = t[j + 1];
+        }
+        t[4] = t[5];
+        t[5] = 0;
+    }
+
+    let result = U256::from_limbs([t[0], t[1], t[2], t[3]]);
+    let (sub, borrow) = result.sub_raw(&MODULUS_P);
+    U256::ct_select(&sub, &result, borrow == 0).limbs
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct FieldElement(U256);
@@ -622,15 +676,27 @@ fn derive_public_key_compressed(
     Ok(point.to_compressed_bytes())
 }
 
-fn ecdsa_sign(
+fn ecdh_inner(scalar: &Scalar, peer_point: &AffinePoint) -> Result<[u8; ECDH_SHARED_SECRET_SIZE], EllipticCurveError> {
+    let shared_point = scalar_mul_affine(peer_point, scalar)
+        .to_affine()
+        .ok_or(EllipticCurveError::Unspecified)?;
+    Ok(shared_point.x.to_bytes())
+}
+
+pub fn ecdh(
     private_key: &[u8; PRIVATE_KEY_SIZE],
-    message: &[u8],
-) -> Result<[u8; SIGNATURE_SIZE], EllipticCurveError> {
-    let private_scalar = parse_private_key(private_key)?;
+    peer_public_key: &[u8],
+) -> Result<[u8; ECDH_SHARED_SECRET_SIZE], EllipticCurveError> {
+    let scalar = parse_private_key(private_key)?;
+    let peer_point = parse_public_key(peer_public_key)?;
+    ecdh_inner(&scalar, &peer_point)
+}
+
+fn ecdsa_sign_inner(scalar: &Scalar, message: &[u8]) -> Result<[u8; SIGNATURE_SIZE], EllipticCurveError> {
     let message_hash = hash_message(message);
     let z = Scalar::from_hash(&message_hash);
 
-    let mut k = rfc6979_generate_k(&private_scalar, &message_hash);
+    let mut k = rfc6979_generate_k(scalar, &message_hash);
     loop {
         let r_point = scalar_mul_generator(&k)
             .to_affine()
@@ -642,7 +708,7 @@ fn ecdsa_sign(
         }
 
         let kinv = k.invert().ok_or(EllipticCurveError::Unspecified)?;
-        let s = kinv.mul(z.add(r.mul(private_scalar)));
+        let s = kinv.mul(z.add(r.mul(*scalar)));
         if s.is_zero() {
             k = rfc6979_generate_k(&k, &message_hash);
             continue;
@@ -655,8 +721,11 @@ fn ecdsa_sign(
     }
 }
 
-fn ecdsa_verify(public_key: &[u8], message: &[u8], signature: &[u8; SIGNATURE_SIZE]) -> Result<(), EllipticCurveError> {
-    let public = parse_public_key(public_key)?;
+fn ecdsa_verify_inner(
+    public_point: &AffinePoint,
+    message: &[u8],
+    signature: &[u8; SIGNATURE_SIZE],
+) -> Result<(), EllipticCurveError> {
     let r = Scalar::from_bytes(signature[..32].try_into().unwrap()).ok_or(EllipticCurveError::Unspecified)?;
     let s = Scalar::from_bytes(signature[32..].try_into().unwrap()).ok_or(EllipticCurveError::Unspecified)?;
     let z = Scalar::from_hash(&hash_message(message));
@@ -665,7 +734,7 @@ fn ecdsa_verify(public_key: &[u8], message: &[u8], signature: &[u8; SIGNATURE_SI
     let u1 = z.mul(w);
     let u2 = r.mul(w);
 
-    let point = scalar_mul_generator(&u1).add(&scalar_mul_affine(&public, &u2));
+    let point = scalar_mul_generator(&u1).add(&scalar_mul_affine(public_point, &u2));
     let affine = point.to_affine().ok_or(EllipticCurveError::Unspecified)?;
     let x_mod_n = Scalar::from_hash(&affine.x.to_bytes());
 
@@ -721,14 +790,15 @@ mod tests {
     #[test]
     fn ecdsa_sign_matches_rfc6979_vectors() {
         let private_key = decode_hex::<32>("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721");
-        let sample_signature = ecdsa_sign(&private_key, b"sample").unwrap();
+        let key = PrivateKey::from_bytes(&private_key).unwrap();
+        let sample_signature = key.sign(b"sample").unwrap();
         let expected_sample = decode_hex::<64>(
             "efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3716\
              f7cb1c942d657c41d436c7a1b6e29f65f3e900dbb9aff4064dc4ab2f843acda8",
         );
         assert_eq!(sample_signature, expected_sample);
 
-        let test_signature = ecdsa_sign(&private_key, b"test").unwrap();
+        let test_signature = key.sign(b"test").unwrap();
         let expected_test = decode_hex::<64>(
             "f1abb023518351cd71d881567b1ea663ed3efcf6c5132b354f28d3b0b7d38367\
              019f4113742a2b14bd25926b49c649155f267e60d3814b4c0cc84250e46f0083",
@@ -804,30 +874,34 @@ mod tests {
     #[test]
     fn ecdsa_verify_accepts_compressed_and_uncompressed_public_keys() {
         let private_key = decode_hex::<32>("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721");
-        let public_key = derive_public_key_uncompressed(&private_key).unwrap();
+        let key = PrivateKey::from_bytes(&private_key).unwrap();
+        let uncompressed = key.public_key();
         let compressed = derive_public_key_compressed(&private_key).unwrap();
-        let signature = ecdsa_sign(&private_key, b"sample").unwrap();
+        let signature = key.sign(b"sample").unwrap();
 
-        assert!(ecdsa_verify(&public_key, b"sample", &signature).is_ok());
-        assert!(ecdsa_verify(&compressed, b"sample", &signature).is_ok());
+        assert!(uncompressed.verify(b"sample", &signature).is_ok());
+        let point = AffinePoint::from_sec1_bytes(&compressed).unwrap();
+        assert!(ecdsa_verify_inner(&point, b"sample", &signature).is_ok());
     }
 
     #[test]
     fn verify_rejects_tampering_and_invalid_points() {
         let private_key = decode_hex::<32>("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721");
-        let public_key = derive_public_key_uncompressed(&private_key).unwrap();
-        let signature = ecdsa_sign(&private_key, b"sample").unwrap();
+        let key = PrivateKey::from_bytes(&private_key).unwrap();
+        let pub_key = key.public_key();
+        let mut off_curve = [0u8; 65];
+        off_curve.copy_from_slice(&pub_key.to_bytes());
+        let signature = key.sign(b"sample").unwrap();
 
-        assert!(ecdsa_verify(&public_key, b"tampered", &signature).is_err());
+        assert!(pub_key.verify(b"tampered", &signature).is_err());
 
         let mut bad_signature = signature;
         bad_signature[10] ^= 0x80;
-        assert!(ecdsa_verify(&public_key, b"sample", &bad_signature).is_err());
+        assert!(pub_key.verify(b"sample", &bad_signature).is_err());
 
-        let mut off_curve = public_key;
         off_curve[64] ^= 0x01;
         assert!(!is_valid_public_key(&off_curve));
-        assert!(ecdsa_verify(&off_curve, b"sample", &signature).is_err());
+        assert!(PublicKey::from_bytes(&off_curve).is_err());
 
         let invalid_x = decode_hex::<33>("02ffffffff00000001000000000000000000000000ffffffffffffffffffffffff");
         assert!(!is_valid_public_key(&invalid_x));
@@ -836,15 +910,16 @@ mod tests {
     #[test]
     fn invalid_inputs_are_rejected() {
         let invalid_private_key = [0u8; PRIVATE_KEY_SIZE];
+        assert!(PrivateKey::from_bytes(&invalid_private_key).is_err());
         assert!(derive_public_key_uncompressed(&invalid_private_key).is_err());
         assert!(derive_public_key_compressed(&invalid_private_key).is_err());
-        assert!(ecdsa_sign(&invalid_private_key, b"msg").is_err());
 
         let private_key = decode_hex::<32>("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721");
-        let signature = ecdsa_sign(&private_key, b"msg").unwrap();
+        let key = PrivateKey::from_bytes(&private_key).unwrap();
+        let signature = key.sign(b"msg").unwrap();
         let mut zero_r = signature;
         zero_r[..32].fill(0);
-        assert!(ecdsa_verify(&derive_public_key_uncompressed(&private_key).unwrap(), b"msg", &zero_r).is_err());
+        assert!(key.public_key().verify(b"msg", &zero_r).is_err());
     }
 
     #[test]
@@ -868,6 +943,7 @@ mod tests {
             "0404aaec73635726f213fb8a9e64da3b8632e41495a944d0045b522eba7240fad5\
              87d9315798aaa3a5ba01775787ced05eaaf7b4e09fc81d6d1aa546e8365d525d",
         );
+        let pk = PublicKey::from_bytes(&pubkey).unwrap();
 
         // tcId 1: empty message
         let msg = b"";
@@ -875,7 +951,7 @@ mod tests {
             "b292a619339f6e567a305c951c0dcbcc42d16e47f219f9e98e76e09d8770b34a\
              0177e60492c5a8242f76f07bfe3661bde59ec2a17ce5bd2dab2abebdf89a62e2",
         );
-        assert!(ecdsa_verify(&pubkey, msg, &sig).is_ok(), "tcId 1 failed");
+        assert!(pk.verify(msg, &sig).is_ok(), "tcId 1 failed");
 
         // tcId 2: message = "Msg" (hex: 4d7367)
         let msg = b"Msg";
@@ -883,7 +959,7 @@ mod tests {
             "530bd6b0c9af2d69ba897f6b5fb59695cfbf33afe66dbadcf5b8d2a2a6538e23\
              d85e489cb7a161fd55ededcedbf4cc0c0987e3e3f0f242cae934c72caa3f43e9",
         );
-        assert!(ecdsa_verify(&pubkey, msg, &sig).is_ok(), "tcId 2 failed");
+        assert!(pk.verify(msg, &sig).is_ok(), "tcId 2 failed");
 
         // tcId 3: message = "123400" (hex: 313233343030)
         let msg = &hex::decode("313233343030").unwrap();
@@ -891,7 +967,7 @@ mod tests {
             "a8ea150cb80125d7381c4c1f1da8e9de2711f9917060406a73d7904519e51388\
              f3ab9fa68bd47973a73b2d40480c2ba50c22c9d76ec217257288293285449b86",
         );
-        assert!(ecdsa_verify(&pubkey, msg, &sig).is_ok(), "tcId 3 failed");
+        assert!(pk.verify(msg, &sig).is_ok(), "tcId 3 failed");
 
         // tcId 4: message = 20 zero bytes (hex: 0000000000000000000000000000000000000000)
         let msg = &hex::decode("0000000000000000000000000000000000000000").unwrap();
@@ -899,7 +975,7 @@ mod tests {
             "986e65933ef2ed4ee5aada139f52b70539aaf63f00a91f29c69178490d57fb71\
              3dafedfb8da6189d372308cbf1489bbbdabf0c0217d1c0ff0f701aaa7a694b9c",
         );
-        assert!(ecdsa_verify(&pubkey, msg, &sig).is_ok(), "tcId 4 failed");
+        assert!(pk.verify(msg, &sig).is_ok(), "tcId 4 failed");
     }
 
     #[test]
@@ -909,6 +985,7 @@ mod tests {
             "042927b10512bae3eddcfe467828128bad2903269919f7086069c8c4df6c732838\
              c7787964eaac00e5921fb1498a60f4606766b3d9685001558d1a974e7341513e",
         );
+        let pk = PublicKey::from_bytes(&pubkey).unwrap();
 
         // tcId 5: signature malleability - valid low-s signature
         let msg = &hex::decode("313233343030").unwrap();
@@ -916,14 +993,14 @@ mod tests {
             "2ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18\
              4cd60b855d442f5b3c7b11eb6c4e0ae7525fe710fab9aa7c77a67f79e6fadd76",
         );
-        assert!(ecdsa_verify(&pubkey, msg, &sig).is_ok(), "tcId 5 failed");
+        assert!(pk.verify(msg, &sig).is_ok(), "tcId 5 failed");
 
         // tcId 7: same r, different s (high-s variant, still valid per spec)
         let sig = decode_hex::<64>(
             "2ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18\
              b329f479a2bbd0a5c384ee1493b1f5186a87139cac5df4087c134b49156847db",
         );
-        assert!(ecdsa_verify(&pubkey, msg, &sig).is_ok(), "tcId 7 failed");
+        assert!(pk.verify(msg, &sig).is_ok(), "tcId 7 failed");
     }
 
     #[test]
@@ -933,6 +1010,7 @@ mod tests {
             "042927b10512bae3eddcfe467828128bad2903269919f7086069c8c4df6c732838\
              c7787964eaac00e5921fb1498a60f4606766b3d9685001558d1a974e7341513e",
         );
+        let pk = PublicKey::from_bytes(&pubkey).unwrap();
         let msg = &hex::decode("313233343030").unwrap();
 
         // r = 0 (invalid)
@@ -940,41 +1018,42 @@ mod tests {
             "0000000000000000000000000000000000000000000000000000000000000000\
              4cd60b855d442f5b3c7b11eb6c4e0ae7525fe710fab9aa7c77a67f79e6fadd76",
         );
-        assert!(ecdsa_verify(&pubkey, msg, &sig).is_err(), "r=0 should fail");
+        assert!(pk.verify(msg, &sig).is_err(), "r=0 should fail");
 
         // s = 0 (invalid)
         let sig = decode_hex::<64>(
             "2ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18\
              0000000000000000000000000000000000000000000000000000000000000000",
         );
-        assert!(ecdsa_verify(&pubkey, msg, &sig).is_err(), "s=0 should fail");
+        assert!(pk.verify(msg, &sig).is_err(), "s=0 should fail");
 
         // r = n (order of the curve, invalid: must be < n)
         let sig = decode_hex::<64>(
             "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551\
              4cd60b855d442f5b3c7b11eb6c4e0ae7525fe710fab9aa7c77a67f79e6fadd76",
         );
-        assert!(ecdsa_verify(&pubkey, msg, &sig).is_err(), "r=n should fail");
+        assert!(pk.verify(msg, &sig).is_err(), "r=n should fail");
 
         // s = n (order of the curve, invalid: must be < n)
         let sig = decode_hex::<64>(
             "2ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18\
              ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551",
         );
-        assert!(ecdsa_verify(&pubkey, msg, &sig).is_err(), "s=n should fail");
+        assert!(pk.verify(msg, &sig).is_err(), "s=n should fail");
 
         // r and s both = 1 (mathematically invalid for this message)
         let sig = decode_hex::<64>(
             "0000000000000000000000000000000000000000000000000000000000000001\
              0000000000000000000000000000000000000000000000000000000000000001",
         );
-        assert!(ecdsa_verify(&pubkey, msg, &sig).is_err(), "r=s=1 should fail");
+        assert!(pk.verify(msg, &sig).is_err(), "r=s=1 should fail");
     }
 
     #[test]
     fn ecdsa_sign_verify_round_trip_multiple_messages() {
         let private_key = decode_hex::<32>("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721");
-        let public_key = derive_public_key_uncompressed(&private_key).unwrap();
+        let key = PrivateKey::from_bytes(&private_key).unwrap();
+        let pub_key = key.public_key();
 
         let messages: &[&[u8]] = &[
             b"",
@@ -986,16 +1065,12 @@ mod tests {
         ];
 
         for msg in messages {
-            let sig = ecdsa_sign(&private_key, msg).unwrap();
-            assert!(
-                ecdsa_verify(&public_key, msg, &sig).is_ok(),
-                "round-trip failed for message {:?}",
-                msg
-            );
+            let sig = key.sign(msg).unwrap();
+            assert!(pub_key.verify(msg, &sig).is_ok(), "round-trip failed for message {:?}", msg);
             // Verify with different message fails
             let mut wrong_msg = msg.to_vec();
             wrong_msg.push(0x42);
-            assert!(ecdsa_verify(&public_key, &wrong_msg, &sig).is_err());
+            assert!(pub_key.verify(&wrong_msg, &sig).is_err());
         }
     }
 
@@ -1011,10 +1086,10 @@ mod tests {
 
         for key_hex in keys {
             let private_key = decode_hex::<32>(key_hex);
-            let public_key = derive_public_key_uncompressed(&private_key).unwrap();
-            let sig = ecdsa_sign(&private_key, b"test message").unwrap();
+            let key = PrivateKey::from_bytes(&private_key).unwrap();
+            let sig = key.sign(b"test message").unwrap();
             assert!(
-                ecdsa_verify(&public_key, b"test message", &sig).is_ok(),
+                key.public_key().verify(b"test message", &sig).is_ok(),
                 "sign/verify failed for key {}",
                 key_hex
             );
@@ -1025,10 +1100,11 @@ mod tests {
     fn ecdsa_verify_wrong_public_key_rejects() {
         let private_key1 = decode_hex::<32>("c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721");
         let private_key2 = decode_hex::<32>("0000000000000000000000000000000000000000000000000000000000000001");
-        let public_key2 = derive_public_key_uncompressed(&private_key2).unwrap();
+        let key1 = PrivateKey::from_bytes(&private_key1).unwrap();
+        let key2 = PrivateKey::from_bytes(&private_key2).unwrap();
 
-        let sig = ecdsa_sign(&private_key1, b"message").unwrap();
-        assert!(ecdsa_verify(&public_key2, b"message", &sig).is_err());
+        let sig = key1.sign(b"message").unwrap();
+        assert!(key2.public_key().verify(b"message", &sig).is_err());
     }
 
     #[test]
@@ -1077,17 +1153,19 @@ mod tests {
 
         for key_hex in keys {
             let private_key = decode_hex::<32>(key_hex);
-            let uncompressed = derive_public_key_uncompressed(&private_key).unwrap();
+            let key = PrivateKey::from_bytes(&private_key).unwrap();
+            let uncompressed = key.public_key();
             let compressed = derive_public_key_compressed(&private_key).unwrap();
 
             // Both formats should verify the same signature
-            let sig = ecdsa_sign(&private_key, b"round-trip").unwrap();
-            assert!(ecdsa_verify(&uncompressed, b"round-trip", &sig).is_ok());
-            assert!(ecdsa_verify(&compressed, b"round-trip", &sig).is_ok());
+            let sig = key.sign(b"round-trip").unwrap();
+            assert!(uncompressed.verify(b"round-trip", &sig).is_ok());
+            let point = AffinePoint::from_sec1_bytes(&compressed).unwrap();
+            assert!(ecdsa_verify_inner(&point, b"round-trip", &sig).is_ok());
 
             // Decompress the compressed key and verify it matches the uncompressed key
             let point = AffinePoint::from_sec1_bytes(&compressed).unwrap();
-            assert_eq!(point.to_uncompressed_bytes(), uncompressed);
+            assert_eq!(point.to_uncompressed_bytes(), uncompressed.to_bytes());
         }
     }
 
@@ -1163,7 +1241,8 @@ mod tests {
             sig[..32].copy_from_slice(&hex::decode(v.r).unwrap());
             sig[32..].copy_from_slice(&hex::decode(v.s).unwrap());
 
-            let result = ecdsa_verify(&pubkey, v.msg, &sig);
+            let pk = PublicKey::from_bytes(&pubkey).unwrap();
+            let result = pk.verify(v.msg, &sig);
             if v.valid {
                 assert!(result.is_ok(), "NIST vector {} should be valid", i);
             } else {
@@ -1214,6 +1293,8 @@ mod tests {
         let x_inv = x.invert().unwrap();
         let product = x.mul(x_inv);
         assert_eq!(product, FieldElement::ONE);
+        let product = x.mul(x_inv);
+        assert_eq!(product, FieldElement::ONE);
     }
 
     #[test]
@@ -1236,5 +1317,389 @@ mod tests {
         // y should be -Gy mod p
         let neg_gy = GENERATOR_Y.negate();
         assert_eq!(result.y, neg_gy);
+    }
+
+    // --- ECDH tests ---
+
+    #[test]
+    fn ecdh_rfc5903_section_8_1() {
+        // RFC 5903 Section 8.1 — 256-bit Random ECP Group test vector
+        let i_priv = decode_hex::<32>("c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433");
+        let i_pub = decode_hex::<65>(
+            "04dad0b65394221cf9b051e1feca5787d098dfe637fc90b9ef945d0c3772581180\
+              5271a0461cdb8252d61f1c456fa3e59ab1f45b33accf5f58389e0577b8990bb3",
+        );
+        let r_priv = decode_hex::<32>("c6ef9c5d78ae012a011164acb397ce2088685d8f06bf9be0b283ab46476bee53");
+        let r_pub = decode_hex::<65>(
+            "04d12dfb5289c8d4f81208b70270398c342296970a0bccb74c736fc7554494bf63\
+              56fbf3ca366cc23e8157854c13c58d6aac23f046ada30f8353e74f33039872ab",
+        );
+        let expected_shared = decode_hex::<32>("d6840f6b42f6edafd13116e0e12565202fef8e9ece7dce03812464d04b9442de");
+
+        let alice = PrivateKey::from_bytes(&i_priv).unwrap();
+        let bob = PrivateKey::from_bytes(&r_priv).unwrap();
+        let bob_pub = PublicKey::from_bytes(&r_pub).unwrap();
+        let alice_pub = PublicKey::from_bytes(&i_pub).unwrap();
+
+        assert_eq!(alice.public_key().to_bytes(), i_pub);
+        assert_eq!(bob.public_key().to_bytes(), r_pub);
+
+        let alice_shared = alice.ecdh(&bob_pub).unwrap();
+        let bob_shared = bob.ecdh(&alice_pub).unwrap();
+
+        assert_eq!(alice_shared, expected_shared);
+        assert_eq!(bob_shared, expected_shared);
+    }
+
+    #[test]
+    fn ecdh_nist_cavp_vector_from_go() {
+        // Go stdlib crypto/ecdh NIST CAVS 14.1 ECC CDH Primitive (SP800-56A) vector
+        let priv_key = decode_hex::<32>("7d7dc5f71eb29ddaf80d6214632eeae03d9058af1fb6d22ed80badb62bc1a534");
+        let pub_key = decode_hex::<65>(
+            "04ead218590119e8876b29146ff89ca61770c4edbbf97d38ce385ed281d8a6b230\
+              28af61281fd35e2fa7002523acc85a429cb06ee6648325389f59edfce1405141",
+        );
+        let peer_pub = decode_hex::<65>(
+            "04700c48f77f56584c5cc632ca65640db91b6bacce3a4df6b42ce7cc838833d287\
+              db71e509e3fd9b060ddb20ba5c51dcc5948d46fbf640dfe0441782cab85fa4ac",
+        );
+        let expected_shared = decode_hex::<32>("46fc62106420ff012e54a434fbdd2d25ccc5852060561e68040dd7778997bd7b");
+
+        let key = PrivateKey::from_bytes(&priv_key).unwrap();
+        assert_eq!(key.public_key().to_bytes(), pub_key);
+
+        let peer = PublicKey::from_bytes(&peer_pub).unwrap();
+        let shared = key.ecdh(&peer).unwrap();
+        assert_eq!(shared, expected_shared);
+    }
+
+    #[test]
+    fn ecdh_with_compressed_public_key() {
+        // ECDH should accept compressed public keys as peer input
+        let priv_alice = decode_hex::<32>("c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433");
+        let bob_pub_compressed = decode_hex::<33>("03d12dfb5289c8d4f81208b70270398c342296970a0bccb74c736fc7554494bf63");
+
+        assert!(is_valid_public_key(&bob_pub_compressed));
+
+        let expected_shared = decode_hex::<32>("d6840f6b42f6edafd13116e0e12565202fef8e9ece7dce03812464d04b9442de");
+
+        let shared = ecdh(&priv_alice, &bob_pub_compressed).unwrap();
+        assert_eq!(shared, expected_shared);
+    }
+
+    #[test]
+    fn ecdh_round_trip_alice_bob() {
+        // Full round-trip ECDH key exchange with randomly generated keys
+        let alice = PrivateKey::generate().unwrap();
+        let bob = PrivateKey::generate().unwrap();
+
+        let alice_shared = alice.ecdh(&bob.public_key()).unwrap();
+        let bob_shared = bob.ecdh(&alice.public_key()).unwrap();
+
+        assert_eq!(alice_shared, bob_shared);
+        assert_eq!(alice_shared.len(), 32);
+    }
+
+    #[test]
+    fn ecdh_rejects_off_curve_peer_public_key() {
+        let alice = PrivateKey::generate().unwrap();
+        let mut bad_pub = alice.public_key().to_bytes().to_vec();
+        // Flip a bit in y to take it off the curve
+        bad_pub[64] ^= 0x01;
+        assert!(!is_valid_public_key(&bad_pub));
+        assert!(ecdh(&alice.to_bytes(), &bad_pub).is_err());
+    }
+
+    #[test]
+    fn ecdh_rejects_infinity_peer_public_key() {
+        let alice = PrivateKey::generate().unwrap();
+        // Infinity encoding (0x00) should be rejected
+        let infinity = [0x00u8];
+        assert!(ecdh(&alice.to_bytes(), &infinity).is_err());
+    }
+
+    #[test]
+    fn ecdh_rejects_bad_length_peer_public_key() {
+        let alice = PrivateKey::generate().unwrap();
+        // Empty key
+        assert!(ecdh(&alice.to_bytes(), &[]).is_err());
+        // Truncated key
+        assert!(ecdh(&alice.to_bytes(), &[0x04, 0x00]).is_err());
+        // Too long
+        let mut long = [0x04u8; 200];
+        long[0] = 0x04;
+        assert!(ecdh(&alice.to_bytes(), &long).is_err());
+    }
+
+    #[test]
+    fn ecdh_rejects_invalid_private_key_zero() {
+        let zero_key = [0u8; 32];
+        assert!(PrivateKey::from_bytes(&zero_key).is_err());
+        let bob = PrivateKey::generate().unwrap();
+        assert!(ecdh(&zero_key, &bob.public_key().to_bytes()).is_err());
+    }
+
+    #[test]
+    fn ecdh_rejects_invalid_private_key_order() {
+        // n (the curve order) is rejected
+        let n_bytes = decode_hex::<32>("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551");
+        assert!(PrivateKey::from_bytes(&n_bytes).is_err());
+
+        // n+1 is rejected
+        let n_plus_1 = decode_hex::<32>("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632552");
+        assert!(PrivateKey::from_bytes(&n_plus_1).is_err());
+
+        // all-ones is rejected
+        let all_ones = [0xffu8; 32];
+        assert!(PrivateKey::from_bytes(&all_ones).is_err());
+    }
+
+    #[test]
+    fn ecdh_rejects_peer_public_key_x_equal_to_p() {
+        // x = p (the field modulus) should be rejected as out of range
+        let alice = PrivateKey::generate().unwrap();
+        let mut bad_pub = [0u8; 65];
+        bad_pub[0] = 0x04;
+        bad_pub[1..33].copy_from_slice(&decode_hex::<32>(
+            "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff",
+        ));
+        bad_pub[33..65].fill(0x01);
+        assert!(!is_valid_public_key(&bad_pub));
+        assert!(ecdh(&alice.to_bytes(), &bad_pub).is_err());
+    }
+
+    #[test]
+    fn ecdh_different_messages_same_shared_secret() {
+        // ECDH shared secret depends only on the two key pairs, not any message
+        let alice = PrivateKey::generate().unwrap();
+        let bob = PrivateKey::generate().unwrap();
+
+        let shared1 = alice.ecdh(&bob.public_key()).unwrap();
+        let shared2 = alice.ecdh(&bob.public_key()).unwrap();
+        assert_eq!(shared1, shared2);
+    }
+
+    #[test]
+    fn ecdh_self_exchange_is_deterministic() {
+        // ECDH with own public key produces a deterministic result
+        let alice = PrivateKey::generate().unwrap();
+        let shared = alice.ecdh(&alice.public_key()).unwrap();
+        let shared2 = alice.ecdh(&alice.public_key()).unwrap();
+        assert_eq!(shared, shared2);
+    }
+
+    #[test]
+    fn ecdh_different_keys_produce_different_secrets() {
+        let alice = PrivateKey::generate().unwrap();
+        let bob1 = PrivateKey::generate().unwrap();
+        let bob2 = PrivateKey::generate().unwrap();
+
+        let shared1 = alice.ecdh(&bob1.public_key()).unwrap();
+        let shared2 = alice.ecdh(&bob2.public_key()).unwrap();
+        // Extremely unlikely that two different Bob keys produce the same secret
+        assert_ne!(shared1, shared2);
+    }
+
+    #[test]
+    fn ecdh_generator_multiplication_matches_go_p256_mult_test1() {
+        // Go's crypto/elliptic p256_test.go: ScalarMult test 1
+        let k = decode_hex::<32>("2a265f8bcbdcaf94d58519141e578124cb40d64a501fba9c11847b28965bc737");
+        let x_in = decode_hex::<32>("023819813ac969847059028ea88a1f30dfbcde03fc791d3a252c6b41211882ea");
+        let y_in = decode_hex::<32>("f93e4ae433cc12cf2a43fc0ef26400c0e125508224cdb649380f25479148a4ad");
+        let x_out = decode_hex::<32>("4d4de80f1534850d261075997e3049321a0864082d24a917863366c0724f5ae3");
+        let y_out = decode_hex::<32>("a22d2b7f7818a3563e0f7a76c9bf0921ac55e06e2e4d11795b233824b1db8cc0");
+
+        let mut pubkey = [0u8; 65];
+        pubkey[0] = 0x04;
+        pubkey[1..33].copy_from_slice(&x_in);
+        pubkey[33..65].copy_from_slice(&y_in);
+
+        let point = parse_public_key(&pubkey).unwrap();
+        let scalar = Scalar::from_bytes(&k).unwrap();
+        let result = scalar_mul_affine(&point, &scalar).to_affine().unwrap();
+
+        assert_eq!(result.x.to_bytes(), x_out, "x coordinate mismatch in Go test 1");
+        assert_eq!(result.y.to_bytes(), y_out, "y coordinate mismatch in Go test 1");
+    }
+
+    #[test]
+    fn ecdh_generator_multiplication_matches_go_p256_mult_test2() {
+        // Go's crypto/elliptic p256_test.go: ScalarMult test 2
+        let k = decode_hex::<32>("313f72ff9fe811bf573176231b286a3bdb6f1b14e05c40146590727a71c3bccd");
+        let x_in = decode_hex::<32>("cc11887b2d66cbae8f4d306627192522932146b42f01d3c6f92bd5c8ba739b06");
+        let y_in = decode_hex::<32>("a2f08a029cd06b46183085bae9248b0ed15b70280c7ef13a457f5af382426031");
+        let x_out = decode_hex::<32>("831c3f6b5f762d2f461901577af41354ac5f228c2591f84f8a6e51e2e3f17991");
+        let y_out = decode_hex::<32>("93f90934cd0ef2c698cc471c60a93524e87ab31ca2412252337f364513e43684");
+
+        let mut pubkey = [0u8; 65];
+        pubkey[0] = 0x04;
+        pubkey[1..33].copy_from_slice(&x_in);
+        pubkey[33..65].copy_from_slice(&y_in);
+
+        let point = parse_public_key(&pubkey).unwrap();
+        let scalar = Scalar::from_bytes(&k).unwrap();
+        let result = scalar_mul_affine(&point, &scalar).to_affine().unwrap();
+
+        assert_eq!(result.x.to_bytes(), x_out, "x coordinate mismatch in Go test 2");
+        assert_eq!(result.y.to_bytes(), y_out, "y coordinate mismatch in Go test 2");
+    }
+
+    #[test]
+    fn ecdh_rejects_invalid_curve_attack() {
+        // Invalid curve attack: a point not on P-256 should always be rejected.
+        // Point (1, 1) is not on the P-256 curve.
+        let alice = PrivateKey::generate().unwrap();
+        let mut off_curve = [0u8; 65];
+        off_curve[0] = 0x04;
+        off_curve[33] = 0x01;
+        off_curve[64] = 0x01;
+        off_curve[1] = 0x01;
+
+        assert!(!is_valid_public_key(&off_curve));
+        assert!(ecdh(&alice.to_bytes(), &off_curve).is_err());
+    }
+
+    #[test]
+    fn ecdh_edge_case_shared_secret_x_equals_zero() {
+        // Wycheproof-style edge case: shared secret x-coordinate is 0.
+        // This is a valid test case from Wycheproof ecdh_secp256r1_test.json tcId 3.
+        let priv_hex = "0a0d622a47e48f6bc1038ace438c6f528aa00ad2bd1da5f13ee46bf5f633d71a";
+        let pub_hex = "0458fd4168a87795603e2b04390285bdca6e57de6027fe211dd9d25e2212d29e6\
+                        2080d36bd224d7405509295eed02a17150e03b314f96da37445b0d1d29377d12c";
+        let expected_shared = [0u8; 32];
+
+        let priv_key = decode_hex::<32>(priv_hex);
+        let pub_key = decode_hex::<65>(pub_hex);
+
+        assert!(is_valid_public_key(&pub_key));
+        let shared = ecdh(&priv_key, &pub_key).unwrap();
+        assert_eq!(shared, expected_shared);
+    }
+
+    #[test]
+    fn ecdh_edge_case_shared_secret_x_equals_p_minus_3() {
+        // Wycheproof-style edge case: shared secret x-coordinate is p-3.
+        // From Wycheproof ecdh_secp256r1_test.json tcId 4.
+        let priv_hex = "0a0d622a47e48f6bc1038ace438c6f528aa00ad2bd1da5f13ee46bf5f633d71a";
+        let pub_hex = "04a1ecc24bf0d0053d23f5fd80ddf1735a1925039dc1176c581a7e795163c8b9ba\
+                        2cb5a4e4d5109f4527575e3137b83d79a9bcb3faeff90d2aca2bed71bb523e7e";
+        let expected_shared = decode_hex::<32>("ffffffff00000001000000000000000000000000fffffffffffffffffffffffc");
+
+        let priv_key = decode_hex::<32>(priv_hex);
+        let pub_key = decode_hex::<65>(pub_hex);
+
+        assert!(is_valid_public_key(&pub_key));
+        let shared = ecdh(&priv_key, &pub_key).unwrap();
+        assert_eq!(shared, expected_shared);
+    }
+
+    #[test]
+    fn ecdh_edge_case_shared_secret_power_of_two() {
+        // Shared secret x-coordinate = 2^16
+        // From Wycheproof ecdh_secp256r1_test.json tcId 5.
+        let priv_hex = "0a0d622a47e48f6bc1038ace438c6f528aa00ad2bd1da5f13ee46bf5f633d71a";
+        let pub_hex = "041b0e7437c33d379929430d3ec10df59bed7fe2a1d950c5791e1e9ddeef1f4d70\
+                        fbdb0e3bbce63a27f27838c685207f2ccaf689d25eb622744db1168ac92619e8";
+        let expected_shared = decode_hex::<32>("0000000000000000000000000000000000000000000000000000000000010000");
+
+        let priv_key = decode_hex::<32>(priv_hex);
+        let pub_key = decode_hex::<65>(pub_hex);
+
+        assert!(is_valid_public_key(&pub_key));
+        let shared = ecdh(&priv_key, &pub_key).unwrap();
+        assert_eq!(shared, expected_shared);
+    }
+
+    #[test]
+    fn ecdh_wrong_curve_rejected() {
+        // A point on P-224 (a different curve) should be rejected for P-256 ECDH.
+        // P-224 generator point is not on P-256.
+        // P-224 generator x = b70e0cbd6bb4bf7f321390b94a03c1d356c21122343280d6115c1d21
+        // (this is longer than 32 bytes, so we just test a random point that's not on P-256)
+        let alice = PrivateKey::generate().unwrap();
+        let p224_gen_x = [
+            0x00, 0x00, 0x00, 0x00, 0xb7, 0x0e, 0x0c, 0xbd, 0x6b, 0xb4, 0xbf, 0x7f, 0x32, 0x13, 0x90, 0xb9, 0x4a, 0x03,
+            0xc1, 0xd3, 0x56, 0xc2, 0x11, 0x22, 0x34, 0x32, 0x80, 0xd6, 0x11, 0x5c, 0x1d, 0x21,
+        ];
+        let p224_gen_y = [
+            0x00, 0x00, 0x00, 0x00, 0xbd, 0x37, 0x68, 0x08, 0xb3, 0x2c, 0x81, 0x2e, 0xd7, 0xd2, 0x86, 0x72, 0x37, 0x46,
+            0xa5, 0xdc, 0x63, 0x63, 0x9c, 0x5d, 0x99, 0xd6, 0x9c, 0xb4, 0xd4, 0xfc, 0xb5, 0x9e,
+        ];
+        let mut bad_pub = [0u8; 65];
+        bad_pub[0] = 0x04;
+        bad_pub[1..33].copy_from_slice(&p224_gen_x);
+        bad_pub[33..65].copy_from_slice(&p224_gen_y);
+
+        assert!(!is_valid_public_key(&bad_pub));
+        assert!(ecdh(&alice.to_bytes(), &bad_pub).is_err());
+    }
+
+    #[test]
+    fn ecdh_private_key_rejects_zero_and_order() {
+        // PrivateKey::from_bytes must reject zero and n (curve order)
+        let zero = [0u8; 32];
+        assert!(PrivateKey::from_bytes(&zero).is_err());
+
+        let n = decode_hex::<32>("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551");
+        assert!(PrivateKey::from_bytes(&n).is_err());
+
+        let n_minus_1 = decode_hex::<32>("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632550");
+        assert!(PrivateKey::from_bytes(&n_minus_1).is_ok());
+    }
+
+    #[test]
+    fn ecdh_public_key_rejects_invalid_encodings() {
+        // Infinity
+        assert!(!is_valid_public_key(&[0x00]));
+
+        // Wrong prefix
+        let mut bad_prefix = [0u8; 65];
+        bad_prefix[0] = 0x05;
+        bad_prefix[1] = 0x01;
+        assert!(!is_valid_public_key(&bad_prefix));
+
+        // Truncated
+        assert!(!is_valid_public_key(&[0x04, 0x00]));
+
+        // Too long
+        let mut too_long = [0u8; 66];
+        too_long[0] = 0x04;
+        assert!(!is_valid_public_key(&too_long));
+    }
+
+    #[test]
+    fn ecdh_multiple_exchanges_consistency() {
+        // Verify ECDH commutativity across multiple key pairs
+        let alice = PrivateKey::generate().unwrap();
+        let bob = PrivateKey::generate().unwrap();
+        let charlie = PrivateKey::generate().unwrap();
+
+        let alice_bob = alice.ecdh(&bob.public_key()).unwrap();
+        let bob_alice = bob.ecdh(&alice.public_key()).unwrap();
+        assert_eq!(alice_bob, bob_alice);
+
+        let alice_charlie = alice.ecdh(&charlie.public_key()).unwrap();
+        let charlie_alice = charlie.ecdh(&alice.public_key()).unwrap();
+        assert_eq!(alice_charlie, charlie_alice);
+
+        let bob_charlie = bob.ecdh(&charlie.public_key()).unwrap();
+        let charlie_bob = charlie.ecdh(&bob.public_key()).unwrap();
+        assert_eq!(bob_charlie, charlie_bob);
+
+        // All three should be different
+        assert_ne!(alice_bob, alice_charlie);
+        assert_ne!(alice_bob, bob_charlie);
+        assert_ne!(alice_charlie, bob_charlie);
+    }
+
+    #[test]
+    fn ecdh_standalone_function_matches_method() {
+        let alice = PrivateKey::generate().unwrap();
+        let bob = PrivateKey::generate().unwrap();
+
+        let method_result = alice.ecdh(&bob.public_key()).unwrap();
+        let standalone_result = ecdh(&alice.to_bytes(), &bob.public_key().to_bytes()).unwrap();
+
+        assert_eq!(method_result, standalone_result);
     }
 }

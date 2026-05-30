@@ -235,8 +235,8 @@ mod tests {
     #[test]
     fn hkdf_zero_length_output() {
         let prk = [0u8; 32];
-        assert_eq!(expand::<Sha256, 0>(&prk, b"").unwrap(), []);
-        assert_eq!(derive_key::<Sha256, 0>(b"ikm", b"info", None).unwrap(), []);
+        assert_eq!(expand::<Sha256, 0>(&prk, b"").unwrap(), [] as [u8; 0]);
+        assert_eq!(derive_key::<Sha256, 0>(b"ikm", b"info", None).unwrap(), [] as [u8; 0]);
     }
 
     #[test]

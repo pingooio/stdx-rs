@@ -25,6 +25,8 @@ rand = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 hex = { path = "../hex" }
+serde_json = { workspace = true }
+serde = { workspace = true }
 
 [[bench]]
 name = "hash"
