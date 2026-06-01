@@ -37,7 +37,7 @@ pub struct SecretKey {
     bytes: [u8; SECRET_KEY_SIZE],
     x25519_secret_key: x25519::SecretKey,
     x25519_public_key_bytes: [u8; x25519::KEY_SIZE],
-    mlkem_secret_key: [u8; mlkem::SECRET_KEY_SIZE_768],
+    mlkem_secret_key: mlkem::SecretKey768,
 }
 
 impl SecretKey {
@@ -49,7 +49,7 @@ impl SecretKey {
         let ct_m = &ct[..mlkem::CIPHERTEXT_SIZE_768].try_into().unwrap();
         let ct_x = x25519::PublicKey::from_bytes(&ct[mlkem::CIPHERTEXT_SIZE_768..].try_into().unwrap());
 
-        let ss_m = mlkem::ml_kem_768_decapsulate(&self.mlkem_secret_key, &ct_m)?;
+        let ss_m = self.mlkem_secret_key.decapsulate(&ct_m)?;
         let ss_x = self.x25519_secret_key.ecdh(&ct_x);
 
         Ok(combiner(&ss_m, &ss_x, &ct_x.to_bytes(), &self.x25519_public_key_bytes))
@@ -59,14 +59,14 @@ impl SecretKey {
 /// The X-Wing encapsulation (public) key
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PublicKey {
-    mlkem_public_key: [u8; mlkem::PUBLIC_KEY_SIZE_768],
+    mlkem_public_key: mlkem::PublicKey768,
     x25519_public_key: x25519::PublicKey,
 }
 
 impl PublicKey {
     pub fn to_bytes(&self) -> [u8; PUBLIC_KEY_SIZE] {
         let mut bytes = [0u8; PUBLIC_KEY_SIZE];
-        bytes[..mlkem::PUBLIC_KEY_SIZE_768].copy_from_slice(&self.mlkem_public_key);
+        bytes[..mlkem::PUBLIC_KEY_SIZE_768].copy_from_slice(&self.mlkem_public_key.to_bytes());
         bytes[mlkem::PUBLIC_KEY_SIZE_768..].copy_from_slice(&self.x25519_public_key.to_bytes());
         bytes
     }
@@ -82,7 +82,7 @@ impl PublicKey {
         let ss_x = ek_x.ecdh(&self.x25519_public_key);
 
         let m = &eseed[..32].try_into().unwrap();
-        let (ct_m, ss_m) = mlkem::ml_kem_768_enc_derand(&self.mlkem_public_key, &m);
+        let (ct_m, ss_m) = self.mlkem_public_key.encapsulate_derand(&m);
 
         let ss = combiner(&ss_m, &ss_x, &ct_x.to_bytes(), &self.x25519_public_key.to_bytes());
 
@@ -121,12 +121,7 @@ fn generate_keypair_derand(secret_key: &[u8; SECRET_KEY_SIZE]) -> (SecretKey, Pu
 
 fn expand_decapsulation_key(
     secret_key: &[u8; 32],
-) -> (
-    [u8; mlkem::SECRET_KEY_SIZE_768],
-    x25519::SecretKey,
-    [u8; mlkem::PUBLIC_KEY_SIZE_768],
-    x25519::PublicKey,
-) {
+) -> (mlkem::SecretKey768, x25519::SecretKey, mlkem::PublicKey768, x25519::PublicKey) {
     let mut expanded_secret_key = [0u8; 96];
     Shake256::hash(secret_key, &mut expanded_secret_key);
 
@@ -138,10 +133,8 @@ fn expand_decapsulation_key(
     (sk_m, sk_x, pk_m, pk_x)
 }
 
-fn derive_mlkeem_keys(
-    expnded_secret_key: &[u8; 96],
-) -> ([u8; mlkem::SECRET_KEY_SIZE_768], [u8; mlkem::PUBLIC_KEY_SIZE_768]) {
-    return mlkem::ml_kem_768_keypair_derand(&expnded_secret_key[..64].try_into().unwrap());
+fn derive_mlkeem_keys(expnded_secret_key: &[u8; 96]) -> (mlkem::SecretKey768, mlkem::PublicKey768) {
+    mlkem::ml_kem_768_keypair_derand(&expnded_secret_key[..64].try_into().unwrap())
 }
 
 fn combiner(

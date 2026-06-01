@@ -45,7 +45,7 @@ const BASEPOINT_COMPRESSED: [u8; 32] = [
     0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
 ];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SecretKey {
     seed: [u8; SECRET_KEY_SIZE],
     scalar: Scalar,

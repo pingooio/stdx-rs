@@ -57,6 +57,32 @@ impl core::fmt::Display for MlKemError {
     }
 }
 
+/// ML-KEM-768 decapsulation key (secret key).
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
+pub struct SecretKey768 {
+    bytes: [u8; SECRET_KEY_SIZE_768],
+}
+
+/// ML-KEM-768 encapsulation key (public key).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicKey768 {
+    bytes: [u8; PUBLIC_KEY_SIZE_768],
+}
+
+/// ML-KEM-1024 decapsulation key (secret key).
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
+pub struct SecretKey1024 {
+    bytes: [u8; SECRET_KEY_SIZE_1024],
+}
+
+/// ML-KEM-1024 encapsulation key (public key).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicKey1024 {
+    bytes: [u8; PUBLIC_KEY_SIZE_1024],
+}
+
 #[derive(Clone, Copy)]
 struct MlKemParams<const K: usize> {
     eta1: usize,
@@ -95,47 +121,38 @@ impl<const K: usize> Default for PolyVec<K> {
 }
 
 #[inline]
-pub fn ml_kem_768_generate_keypair() -> ([u8; SECRET_KEY_SIZE_768], [u8; PUBLIC_KEY_SIZE_768]) {
-    let coins: [u8; 64] = rand::random();
-    crypto_kem_keypair_derand::<3, SECRET_KEY_SIZE_768, PUBLIC_KEY_SIZE_768>(&ML_KEM_768, &coins)
+pub fn ml_kem_768_generate_keypair() -> (SecretKey768, PublicKey768) {
+    SecretKey768::generate()
 }
 
 #[inline]
-pub fn ml_kem_768_encapsulate(
-    public_key: &[u8; PUBLIC_KEY_SIZE_768],
-) -> ([u8; CIPHERTEXT_SIZE_768], [u8; SHARED_SECRET_SIZE]) {
-    let coins: [u8; 32] = rand::random();
-    crypto_kem_enc_derand::<3, PUBLIC_KEY_SIZE_768, CIPHERTEXT_SIZE_768>(&ML_KEM_768, public_key, &coins)
+pub fn ml_kem_768_encapsulate(public_key: &PublicKey768) -> ([u8; CIPHERTEXT_SIZE_768], [u8; SHARED_SECRET_SIZE]) {
+    public_key.encapsulate()
 }
 
 #[inline]
 pub fn ml_kem_768_decapsulate(
-    private_key: &[u8; SECRET_KEY_SIZE_768],
+    private_key: &SecretKey768,
     ciphertext: &[u8; CIPHERTEXT_SIZE_768],
 ) -> Result<[u8; SHARED_SECRET_SIZE], MlKemError> {
-    crypto_kem_dec::<3, SECRET_KEY_SIZE_768, CIPHERTEXT_SIZE_768>(&ML_KEM_768, private_key, ciphertext)
+    private_key.decapsulate(ciphertext)
+}
+
+pub fn ml_kem_1024_generate_keypair() -> (SecretKey1024, PublicKey1024) {
+    SecretKey1024::generate()
 }
 
 #[inline]
-pub fn ml_kem_1024_generate_keypair() -> ([u8; SECRET_KEY_SIZE_1024], [u8; PUBLIC_KEY_SIZE_1024]) {
-    let coins: [u8; 64] = rand::random();
-    crypto_kem_keypair_derand::<4, SECRET_KEY_SIZE_1024, PUBLIC_KEY_SIZE_1024>(&ML_KEM_1024, &coins)
-}
-
-#[inline]
-pub fn ml_kem_1024_encapsulate(
-    public_key: &[u8; PUBLIC_KEY_SIZE_1024],
-) -> ([u8; CIPHERTEXT_SIZE_1024], [u8; SHARED_SECRET_SIZE]) {
-    let coins: [u8; 32] = rand::random();
-    crypto_kem_enc_derand::<4, PUBLIC_KEY_SIZE_1024, CIPHERTEXT_SIZE_1024>(&ML_KEM_1024, public_key, &coins)
+pub fn ml_kem_1024_encapsulate(public_key: &PublicKey1024) -> ([u8; CIPHERTEXT_SIZE_1024], [u8; SHARED_SECRET_SIZE]) {
+    public_key.encapsulate()
 }
 
 #[inline]
 pub fn ml_kem_1024_decapsulate(
-    private_key: &[u8; SECRET_KEY_SIZE_1024],
+    private_key: &SecretKey1024,
     ciphertext: &[u8; CIPHERTEXT_SIZE_1024],
 ) -> Result<[u8; SHARED_SECRET_SIZE], MlKemError> {
-    crypto_kem_dec::<4, SECRET_KEY_SIZE_1024, CIPHERTEXT_SIZE_1024>(&ML_KEM_1024, private_key, ciphertext)
+    private_key.decapsulate(ciphertext)
 }
 
 #[inline]
@@ -951,16 +968,208 @@ fn array_ref_32(input: &[u8]) -> &[u8; 32] {
 }
 
 #[inline]
-pub(crate) fn ml_kem_768_keypair_derand(coins: &[u8; 64]) -> ([u8; SECRET_KEY_SIZE_768], [u8; PUBLIC_KEY_SIZE_768]) {
-    crypto_kem_keypair_derand::<3, SECRET_KEY_SIZE_768, PUBLIC_KEY_SIZE_768>(&ML_KEM_768, coins)
+pub(crate) fn ml_kem_768_keypair_derand(coins: &[u8; 64]) -> (SecretKey768, PublicKey768) {
+    SecretKey768::generate_derand(coins)
 }
 
-#[inline]
-pub(crate) fn ml_kem_768_enc_derand(
-    public_key: &[u8; PUBLIC_KEY_SIZE_768],
-    coins: &[u8; 32],
-) -> ([u8; CIPHERTEXT_SIZE_768], [u8; SHARED_SECRET_SIZE]) {
-    crypto_kem_enc_derand::<3, PUBLIC_KEY_SIZE_768, CIPHERTEXT_SIZE_768>(&ML_KEM_768, public_key, coins)
+// ---------------------------------------------------------------------------
+// SecretKey768
+// ---------------------------------------------------------------------------
+
+impl SecretKey768 {
+    pub fn from_bytes(bytes: &[u8; SECRET_KEY_SIZE_768]) -> Self {
+        Self {
+            bytes: *bytes,
+        }
+    }
+
+    pub fn to_bytes(&self) -> [u8; SECRET_KEY_SIZE_768] {
+        self.bytes
+    }
+
+    pub fn generate() -> (Self, PublicKey768) {
+        let coins: [u8; 64] = rand::random();
+        Self::generate_derand(&coins)
+    }
+
+    pub(crate) fn generate_derand(coins: &[u8; 64]) -> (Self, PublicKey768) {
+        let (sk_bytes, pk_bytes) =
+            crypto_kem_keypair_derand::<3, SECRET_KEY_SIZE_768, PUBLIC_KEY_SIZE_768>(&ML_KEM_768, coins);
+        (
+            Self {
+                bytes: sk_bytes,
+            },
+            PublicKey768 {
+                bytes: pk_bytes,
+            },
+        )
+    }
+
+    pub fn decapsulate(&self, ciphertext: &[u8; CIPHERTEXT_SIZE_768]) -> Result<[u8; SHARED_SECRET_SIZE], MlKemError> {
+        crypto_kem_dec::<3, SECRET_KEY_SIZE_768, CIPHERTEXT_SIZE_768>(&ML_KEM_768, &self.bytes, ciphertext)
+    }
+
+    pub fn public_key(&self) -> PublicKey768 {
+        let offset = indcpa_secret_key_bytes::<3>();
+        let mut pk_bytes = [0u8; PUBLIC_KEY_SIZE_768];
+        pk_bytes.copy_from_slice(&self.bytes[offset..offset + PUBLIC_KEY_SIZE_768]);
+        PublicKey768 {
+            bytes: pk_bytes,
+        }
+    }
+}
+
+impl From<&[u8; SECRET_KEY_SIZE_768]> for SecretKey768 {
+    fn from(bytes: &[u8; SECRET_KEY_SIZE_768]) -> Self {
+        Self::from_bytes(bytes)
+    }
+}
+
+impl TryFrom<&[u8]> for SecretKey768 {
+    type Error = MlKemError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        Ok(Self::from_bytes(bytes.try_into().map_err(|_| MlKemError::InvalidKey)?))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PublicKey768
+// ---------------------------------------------------------------------------
+
+impl PublicKey768 {
+    pub fn from_bytes(bytes: &[u8; PUBLIC_KEY_SIZE_768]) -> Self {
+        Self {
+            bytes: *bytes,
+        }
+    }
+
+    pub fn to_bytes(&self) -> [u8; PUBLIC_KEY_SIZE_768] {
+        self.bytes
+    }
+
+    pub fn encapsulate(&self) -> ([u8; CIPHERTEXT_SIZE_768], [u8; SHARED_SECRET_SIZE]) {
+        let coins: [u8; 32] = rand::random();
+        self.encapsulate_derand(&coins)
+    }
+
+    pub(crate) fn encapsulate_derand(&self, coins: &[u8; 32]) -> ([u8; CIPHERTEXT_SIZE_768], [u8; SHARED_SECRET_SIZE]) {
+        crypto_kem_enc_derand::<3, PUBLIC_KEY_SIZE_768, CIPHERTEXT_SIZE_768>(&ML_KEM_768, &self.bytes, coins)
+    }
+}
+
+impl From<&[u8; PUBLIC_KEY_SIZE_768]> for PublicKey768 {
+    fn from(bytes: &[u8; PUBLIC_KEY_SIZE_768]) -> Self {
+        Self::from_bytes(bytes)
+    }
+}
+
+impl TryFrom<&[u8]> for PublicKey768 {
+    type Error = MlKemError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        Ok(Self::from_bytes(bytes.try_into().map_err(|_| MlKemError::InvalidKey)?))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SecretKey1024
+// ---------------------------------------------------------------------------
+
+impl SecretKey1024 {
+    pub fn from_bytes(bytes: &[u8; SECRET_KEY_SIZE_1024]) -> Self {
+        Self {
+            bytes: *bytes,
+        }
+    }
+
+    pub fn to_bytes(&self) -> [u8; SECRET_KEY_SIZE_1024] {
+        self.bytes
+    }
+
+    pub fn generate() -> (Self, PublicKey1024) {
+        let coins: [u8; 64] = rand::random();
+        Self::generate_derand(&coins)
+    }
+
+    fn generate_derand(coins: &[u8; 64]) -> (Self, PublicKey1024) {
+        let (sk_bytes, pk_bytes) =
+            crypto_kem_keypair_derand::<4, SECRET_KEY_SIZE_1024, PUBLIC_KEY_SIZE_1024>(&ML_KEM_1024, coins);
+        (
+            Self {
+                bytes: sk_bytes,
+            },
+            PublicKey1024 {
+                bytes: pk_bytes,
+            },
+        )
+    }
+
+    pub fn decapsulate(&self, ciphertext: &[u8; CIPHERTEXT_SIZE_1024]) -> Result<[u8; SHARED_SECRET_SIZE], MlKemError> {
+        crypto_kem_dec::<4, SECRET_KEY_SIZE_1024, CIPHERTEXT_SIZE_1024>(&ML_KEM_1024, &self.bytes, ciphertext)
+    }
+
+    pub fn public_key(&self) -> PublicKey1024 {
+        let offset = indcpa_secret_key_bytes::<4>();
+        let mut pk_bytes = [0u8; PUBLIC_KEY_SIZE_1024];
+        pk_bytes.copy_from_slice(&self.bytes[offset..offset + PUBLIC_KEY_SIZE_1024]);
+        PublicKey1024 {
+            bytes: pk_bytes,
+        }
+    }
+}
+
+impl From<&[u8; SECRET_KEY_SIZE_1024]> for SecretKey1024 {
+    fn from(bytes: &[u8; SECRET_KEY_SIZE_1024]) -> Self {
+        Self::from_bytes(bytes)
+    }
+}
+
+impl TryFrom<&[u8]> for SecretKey1024 {
+    type Error = MlKemError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        Ok(Self::from_bytes(bytes.try_into().map_err(|_| MlKemError::InvalidKey)?))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PublicKey1024
+// ---------------------------------------------------------------------------
+
+impl PublicKey1024 {
+    pub fn from_bytes(bytes: &[u8; PUBLIC_KEY_SIZE_1024]) -> Self {
+        Self {
+            bytes: *bytes,
+        }
+    }
+
+    pub fn to_bytes(&self) -> [u8; PUBLIC_KEY_SIZE_1024] {
+        self.bytes
+    }
+
+    pub fn encapsulate(&self) -> ([u8; CIPHERTEXT_SIZE_1024], [u8; SHARED_SECRET_SIZE]) {
+        let coins: [u8; 32] = rand::random();
+        self.encapsulate_derand(&coins)
+    }
+
+    fn encapsulate_derand(&self, coins: &[u8; 32]) -> ([u8; CIPHERTEXT_SIZE_1024], [u8; SHARED_SECRET_SIZE]) {
+        crypto_kem_enc_derand::<4, PUBLIC_KEY_SIZE_1024, CIPHERTEXT_SIZE_1024>(&ML_KEM_1024, &self.bytes, coins)
+    }
+}
+
+impl From<&[u8; PUBLIC_KEY_SIZE_1024]> for PublicKey1024 {
+    fn from(bytes: &[u8; PUBLIC_KEY_SIZE_1024]) -> Self {
+        Self::from_bytes(bytes)
+    }
+}
+
+impl TryFrom<&[u8]> for PublicKey1024 {
+    type Error = MlKemError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        Ok(Self::from_bytes(bytes.try_into().map_err(|_| MlKemError::InvalidKey)?))
+    }
 }
 
 #[cfg(test)]
@@ -1354,8 +1563,10 @@ mod tests {
     #[test]
     fn ml_kem_768_key_sizes_are_correct() {
         let (sk, pk) = ml_kem_768_generate_keypair();
-        assert_eq!(sk.len(), SECRET_KEY_SIZE_768);
-        assert_eq!(pk.len(), PUBLIC_KEY_SIZE_768);
+        let sk_bytes = sk.to_bytes();
+        let pk_bytes = pk.to_bytes();
+        assert_eq!(sk_bytes.len(), SECRET_KEY_SIZE_768);
+        assert_eq!(pk_bytes.len(), PUBLIC_KEY_SIZE_768);
         let (ct, _) = ml_kem_768_encapsulate(&pk);
         assert_eq!(ct.len(), CIPHERTEXT_SIZE_768);
     }
@@ -1363,8 +1574,10 @@ mod tests {
     #[test]
     fn ml_kem_1024_key_sizes_are_correct() {
         let (sk, pk) = ml_kem_1024_generate_keypair();
-        assert_eq!(sk.len(), SECRET_KEY_SIZE_1024);
-        assert_eq!(pk.len(), PUBLIC_KEY_SIZE_1024);
+        let sk_bytes = sk.to_bytes();
+        let pk_bytes = pk.to_bytes();
+        assert_eq!(sk_bytes.len(), SECRET_KEY_SIZE_1024);
+        assert_eq!(pk_bytes.len(), PUBLIC_KEY_SIZE_1024);
         let (ct, _) = ml_kem_1024_encapsulate(&pk);
         assert_eq!(ct.len(), CIPHERTEXT_SIZE_1024);
     }
