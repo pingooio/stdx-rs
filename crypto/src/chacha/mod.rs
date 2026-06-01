@@ -39,12 +39,12 @@ const CONSTANT: [u32; 4] = [
     0x6b206574, // "te k"
 ];
 
-pub type ChaCha8 = ChaCha<8>;
-pub type ChaCha12 = ChaCha<12>;
-pub type ChaCha20 = ChaCha<20>;
+pub type ChaCha8Djb = ChaChaDjb<8>;
+pub type ChaCha12Djb = ChaChaDjb<12>;
+pub type ChaCha20Djb = ChaChaDjb<20>;
 
 #[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
-pub struct ChaCha<const ROUNDS: usize> {
+pub struct ChaChaDjb<const ROUNDS: usize> {
     state: [u32; STATE_WORDS],
     /// ChaCha is a stream cipher that works with 64-byte blocks.
     /// It means that consumers of this packages should be able to call `xor_keystream` multiple
@@ -64,8 +64,8 @@ pub struct ChaCha<const ROUNDS: usize> {
     last_keystream_block_index: usize,
 }
 
-impl<const ROUNDS: usize> ChaCha<ROUNDS> {
-    pub fn new(key: &[u8; 32], nonce: &[u8; 8]) -> ChaCha<ROUNDS> {
+impl<const ROUNDS: usize> ChaChaDjb<ROUNDS> {
+    pub fn new(key: &[u8; 32], nonce: &[u8; 8]) -> ChaChaDjb<ROUNDS> {
         let mut state = [0u32; STATE_WORDS];
 
         // copy constant into the first 4 32-bit words
@@ -84,7 +84,7 @@ impl<const ROUNDS: usize> ChaCha<ROUNDS> {
         state[14] = u32::from_le_bytes(nonce[0..4].try_into().unwrap());
         state[15] = u32::from_le_bytes(nonce[4..8].try_into().unwrap());
 
-        return ChaCha {
+        return ChaChaDjb {
             state,
             last_keystream_block: [0u8; BLOCK_SIZE],
             last_keystream_block_index: 0,
@@ -100,7 +100,7 @@ impl<const ROUNDS: usize> ChaCha<ROUNDS> {
     }
 }
 
-impl<const ROUNDS: usize> StreamCipher for ChaCha<ROUNDS> {
+impl<const ROUNDS: usize> StreamCipher for ChaChaDjb<ROUNDS> {
     /// XOR `plaintext` with the ChaCha keystream.
     fn xor_keystream(&mut self, mut in_out: &mut [u8]) {
         if in_out.len() == 0 {
@@ -288,7 +288,7 @@ fn inject_counter_into_state(state: &mut [u32; STATE_WORDS], counter: u64) {
 
 #[cfg(test)]
 mod test {
-    use super::{ChaCha8, ChaCha12, ChaCha20};
+    use super::{ChaCha8Djb, ChaCha12Djb, ChaCha20Djb};
     use crate::StreamCipher;
 
     struct Test {
@@ -444,7 +444,7 @@ f39c6402c42234e32a356b3e764312a6\
         ];
 
         for (i, test) in tests.into_iter().enumerate() {
-            let mut cipher = ChaCha20::new(&test.key, &test.nonce);
+            let mut cipher = ChaCha20Djb::new(&test.key, &test.nonce);
             cipher.set_counter(test.initial_counter);
 
             let mut plaintext = test.plaintext.clone();
@@ -460,7 +460,7 @@ Expected ciphertext: {}",
                 hex::encode(&test.expected_ciphertext),
             );
 
-            let mut cipher = ChaCha20::new(&test.key, &test.nonce);
+            let mut cipher = ChaCha20Djb::new(&test.key, &test.nonce);
             cipher.set_counter(test.initial_counter);
             cipher.xor_keystream(&mut plaintext);
 
@@ -482,12 +482,12 @@ Expected: {}",
             // should be equal to:
             // cipher.xor_keystream(plaintext[0..35])
 
-            let mut cipher = ChaCha20::new(&test.key, &test.nonce);
+            let mut cipher = ChaCha20Djb::new(&test.key, &test.nonce);
             cipher.xor_keystream(&mut plaintext);
             for n in 0..10 {
                 let mut partial_plaintext: Vec<u8> = test.plaintext.clone();
 
-                let mut cipher = ChaCha20::new(&test.key, &test.nonce);
+                let mut cipher = ChaCha20Djb::new(&test.key, &test.nonce);
                 cipher.xor_keystream(&mut partial_plaintext[..n]);
                 cipher.xor_keystream(&mut partial_plaintext[n..]);
 
@@ -513,7 +513,7 @@ Expected: {}",
         ];
 
         let mut buffer = [0u8; 100];
-        ChaCha12::new(key, nonce).xor_keystream(&mut buffer);
+        ChaCha12Djb::new(key, nonce).xor_keystream(&mut buffer);
 
         assert_eq!(
             buffer,
@@ -537,7 +537,7 @@ Expected: {}",
         let nonce = &[0xa1, 0x4a, 0x11, 0x68, 0x27, 0x1d, 0x45, 0x9b];
 
         let mut buffer = [0u8; 100];
-        ChaCha8::new(key, nonce).xor_keystream(&mut buffer);
+        ChaCha8Djb::new(key, nonce).xor_keystream(&mut buffer);
 
         assert_eq!(
             buffer,

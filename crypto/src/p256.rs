@@ -1053,120 +1053,54 @@ mod tests {
         )));
     }
 
-    // --- Wycheproof test vectors (extracted from ecdsa_secp256r1_sha256_test.json) ---
-    // These test signature verification using known-good public keys, messages, and signatures.
+    // --- Wycheproof test vectors ---
 
     #[test]
-    fn wycheproof_valid_signatures_group1() {
-        // Public key from Wycheproof test group 1
-        let pubkey = decode_hex::<65>(
-            "0404aaec73635726f213fb8a9e64da3b8632e41495a944d0045b522eba7240fad5\
-             87d9315798aaa3a5ba01775787ced05eaaf7b4e09fc81d6d1aa546e8365d525d",
-        );
-        let pk = PublicKey::from_bytes(&pubkey).unwrap();
+    fn wycheproof_ecdsa_p256_sha256_p1363() {
+        let data: serde_json::Value = serde_json::from_str(include_str!(
+            "../testdata/wycheproof/testvectors_v1/ecdsa_secp256r1_sha256_p1363_test.json"
+        ))
+        .unwrap();
+        let mut valid_tested = 0u64;
+        let mut invalid_tested = 0u64;
+        for group in data["testGroups"].as_array().unwrap() {
+            let uncompressed_hex = group["publicKey"]["uncompressed"].as_str().unwrap();
+            let pubkey_bytes = hex::decode(uncompressed_hex).unwrap();
+            let pk = PublicKey::from_bytes(&pubkey_bytes).unwrap();
 
-        // tcId 1: empty message
-        let msg = b"";
-        let sig = decode_hex::<64>(
-            "b292a619339f6e567a305c951c0dcbcc42d16e47f219f9e98e76e09d8770b34a\
-             0177e60492c5a8242f76f07bfe3661bde59ec2a17ce5bd2dab2abebdf89a62e2",
-        );
-        assert!(pk.verify(msg, &sig).is_ok(), "tcId 1 failed");
+            for test in group["tests"].as_array().unwrap() {
+                let msg_hex = test["msg"].as_str().unwrap();
+                let sig_hex = test["sig"].as_str().unwrap();
+                let result = test["result"].as_str().unwrap();
 
-        // tcId 2: message = "Msg" (hex: 4d7367)
-        let msg = b"Msg";
-        let sig = decode_hex::<64>(
-            "530bd6b0c9af2d69ba897f6b5fb59695cfbf33afe66dbadcf5b8d2a2a6538e23\
-             d85e489cb7a161fd55ededcedbf4cc0c0987e3e3f0f242cae934c72caa3f43e9",
-        );
-        assert!(pk.verify(msg, &sig).is_ok(), "tcId 2 failed");
+                let msg = hex::decode(msg_hex).unwrap();
 
-        // tcId 3: message = "123400" (hex: 313233343030)
-        let msg = &hex::decode("313233343030").unwrap();
-        let sig = decode_hex::<64>(
-            "a8ea150cb80125d7381c4c1f1da8e9de2711f9917060406a73d7904519e51388\
-             f3ab9fa68bd47973a73b2d40480c2ba50c22c9d76ec217257288293285449b86",
-        );
-        assert!(pk.verify(msg, &sig).is_ok(), "tcId 3 failed");
+                if sig_hex.len() != SIGNATURE_SIZE * 2 {
+                    continue;
+                }
+                let sig = decode_hex::<SIGNATURE_SIZE>(sig_hex);
 
-        // tcId 4: message = 20 zero bytes (hex: 0000000000000000000000000000000000000000)
-        let msg = &hex::decode("0000000000000000000000000000000000000000").unwrap();
-        let sig = decode_hex::<64>(
-            "986e65933ef2ed4ee5aada139f52b70539aaf63f00a91f29c69178490d57fb71\
-             3dafedfb8da6189d372308cbf1489bbbdabf0c0217d1c0ff0f701aaa7a694b9c",
-        );
-        assert!(pk.verify(msg, &sig).is_ok(), "tcId 4 failed");
-    }
+                let verify_result = pk.verify(&msg, &sig);
 
-    #[test]
-    fn wycheproof_valid_signatures_group2() {
-        // Public key from Wycheproof test group 2
-        let pubkey = decode_hex::<65>(
-            "042927b10512bae3eddcfe467828128bad2903269919f7086069c8c4df6c732838\
-             c7787964eaac00e5921fb1498a60f4606766b3d9685001558d1a974e7341513e",
-        );
-        let pk = PublicKey::from_bytes(&pubkey).unwrap();
-
-        // tcId 5: signature malleability - valid low-s signature
-        let msg = &hex::decode("313233343030").unwrap();
-        let sig = decode_hex::<64>(
-            "2ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18\
-             4cd60b855d442f5b3c7b11eb6c4e0ae7525fe710fab9aa7c77a67f79e6fadd76",
-        );
-        assert!(pk.verify(msg, &sig).is_ok(), "tcId 5 failed");
-
-        // tcId 7: same r, different s (high-s variant, still valid per spec)
-        let sig = decode_hex::<64>(
-            "2ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18\
-             b329f479a2bbd0a5c384ee1493b1f5186a87139cac5df4087c134b49156847db",
-        );
-        assert!(pk.verify(msg, &sig).is_ok(), "tcId 7 failed");
-    }
-
-    #[test]
-    fn wycheproof_invalid_signatures() {
-        // Public key from Wycheproof test group 2
-        let pubkey = decode_hex::<65>(
-            "042927b10512bae3eddcfe467828128bad2903269919f7086069c8c4df6c732838\
-             c7787964eaac00e5921fb1498a60f4606766b3d9685001558d1a974e7341513e",
-        );
-        let pk = PublicKey::from_bytes(&pubkey).unwrap();
-        let msg = &hex::decode("313233343030").unwrap();
-
-        // r = 0 (invalid)
-        let sig = decode_hex::<64>(
-            "0000000000000000000000000000000000000000000000000000000000000000\
-             4cd60b855d442f5b3c7b11eb6c4e0ae7525fe710fab9aa7c77a67f79e6fadd76",
-        );
-        assert!(pk.verify(msg, &sig).is_err(), "r=0 should fail");
-
-        // s = 0 (invalid)
-        let sig = decode_hex::<64>(
-            "2ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18\
-             0000000000000000000000000000000000000000000000000000000000000000",
-        );
-        assert!(pk.verify(msg, &sig).is_err(), "s=0 should fail");
-
-        // r = n (order of the curve, invalid: must be < n)
-        let sig = decode_hex::<64>(
-            "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551\
-             4cd60b855d442f5b3c7b11eb6c4e0ae7525fe710fab9aa7c77a67f79e6fadd76",
-        );
-        assert!(pk.verify(msg, &sig).is_err(), "r=n should fail");
-
-        // s = n (order of the curve, invalid: must be < n)
-        let sig = decode_hex::<64>(
-            "2ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e18\
-             ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551",
-        );
-        assert!(pk.verify(msg, &sig).is_err(), "s=n should fail");
-
-        // r and s both = 1 (mathematically invalid for this message)
-        let sig = decode_hex::<64>(
-            "0000000000000000000000000000000000000000000000000000000000000001\
-             0000000000000000000000000000000000000000000000000000000000000001",
-        );
-        assert!(pk.verify(msg, &sig).is_err(), "r=s=1 should fail");
+                if result == "valid" {
+                    assert!(
+                        verify_result.is_ok(),
+                        "wycheproof ECDSA P1363 tcId={} expected valid but failed",
+                        test["tcId"]
+                    );
+                    valid_tested += 1;
+                } else {
+                    assert!(
+                        verify_result.is_err(),
+                        "wycheproof ECDSA P1363 tcId={} expected invalid but passed",
+                        test["tcId"]
+                    );
+                    invalid_tested += 1;
+                }
+            }
+        }
+        assert!(valid_tested > 0, "no valid ECDSA P1363 wycheproof tests were run");
+        assert!(invalid_tested > 0, "no invalid ECDSA P1363 wycheproof tests were run");
     }
 
     #[test]
@@ -2097,18 +2031,61 @@ mod tests {
     }
 
     #[test]
-    fn wycheproof_ecdh_shared_secret_zero_validation() {
-        // Shared secret with x=0 is valid (this is already tested above,
-        // but verify the shared secret is exactly 32 zero bytes)
-        let priv_hex = "0a0d622a47e48f6bc1038ace438c6f528aa00ad2bd1da5f13ee46bf5f633d71a";
-        let pub_hex = "0458fd4168a87795603e2b04390285bdca6e57de6027fe211dd9d25e2212d29e62080d36bd224d7405509295eed02a17150e03b314f96da37445b0d1d29377d12c";
+    fn wycheproof_ecdh_p256_ecpoint() {
+        let data: serde_json::Value = serde_json::from_str(include_str!(
+            "../testdata/wycheproof/testvectors_v1/ecdh_secp256r1_ecpoint_test.json"
+        ))
+        .unwrap();
+        let mut valid_tested = 0u64;
+        let mut invalid_tested = 0u64;
+        let mut acceptable_tested = 0u64;
+        for group in data["testGroups"].as_array().unwrap() {
+            if group["curve"].as_str() != Some("secp256r1") {
+                continue;
+            }
+            for test in group["tests"].as_array().unwrap() {
+                let public_hex = test["public"].as_str().unwrap();
+                let private_hex = test["private"].as_str().unwrap();
+                let expected_shared_hex = test["shared"].as_str().unwrap();
+                let result = test["result"].as_str().unwrap();
 
-        let priv_key = decode_hex::<32>(priv_hex);
-        let pub_key = decode_hex::<65>(pub_hex);
+                let public_key = hex::decode(public_hex).unwrap();
 
-        let shared = ecdh(&priv_key, &pub_key).unwrap();
-        assert_eq!(shared, [0u8; 32]);
-        assert_eq!(shared.len(), ECDH_SHARED_SECRET_SIZE);
+                // Private key hex is a bigint, may have leading zeros or be
+                // shorter than 32 bytes. Pad or strip to exactly 32 bytes.
+                let private_bytes = hex::decode(private_hex).unwrap();
+                let mut private_key = [0u8; PRIVATE_KEY_SIZE];
+                let effective_len = private_bytes.len().min(PRIVATE_KEY_SIZE);
+                let skip = if private_bytes.len() > PRIVATE_KEY_SIZE {
+                    private_bytes.len() - PRIVATE_KEY_SIZE
+                } else {
+                    0
+                };
+                private_key[PRIVATE_KEY_SIZE - effective_len..]
+                    .copy_from_slice(&private_bytes[skip..skip + effective_len]);
+
+                let shared = ecdh(&private_key, &public_key);
+
+                if result == "valid" {
+                    let shared = shared.unwrap();
+                    let shared_hex = hex::encode(shared);
+                    assert_eq!(shared_hex, expected_shared_hex, "wycheproof ECDH ecpoint tcId={}", test["tcId"]);
+                    valid_tested += 1;
+                } else if result == "invalid" {
+                    assert!(
+                        shared.is_err(),
+                        "wycheproof ECDH ecpoint tcId={} expected invalid but passed",
+                        test["tcId"]
+                    );
+                    invalid_tested += 1;
+                } else {
+                    acceptable_tested += 1;
+                }
+            }
+        }
+        assert!(valid_tested > 0, "no valid ECDH ecpoint wycheproof tests were run");
+        assert!(invalid_tested > 0, "no invalid ECDH ecpoint wycheproof tests were run");
+        assert!(acceptable_tested > 0, "no acceptable ECDH ecpoint wycheproof tests were run");
     }
 
     #[test]

@@ -1,10 +1,9 @@
 use super::curve25519::{FieldElement, U256};
 use crate::{EllipticCurveError, Hasher, sha2::Sha512};
 
-pub const PRIVATE_KEY_SIZE: usize = 32;
+pub const SECRET_KEY_SIZE: usize = 32;
 pub const PUBLIC_KEY_SIZE: usize = 32;
 pub const SIGNATURE_SIZE: usize = 64;
-pub const EDDSA_SHARED_SECRET_SIZE: usize = 32;
 
 const MODULUS_L: U256 = U256::from_limbs([
     0x5812_631a_5cf5_d3ed,
@@ -47,27 +46,27 @@ const BASEPOINT_COMPRESSED: [u8; 32] = [
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Ed25519PrivateKey {
-    seed: [u8; PRIVATE_KEY_SIZE],
+pub struct SecretKey {
+    seed: [u8; SECRET_KEY_SIZE],
     scalar: Scalar,
     prefix: [u8; 32],
     public_point: EdwardsPoint,
     public_bytes: [u8; PUBLIC_KEY_SIZE],
 }
 
-impl Ed25519PrivateKey {
-    pub fn generate() -> Ed25519PrivateKey {
-        let seed: [u8; PRIVATE_KEY_SIZE] = rand::random();
-        Ed25519PrivateKey::from_bytes(&seed)
+impl SecretKey {
+    pub fn generate() -> SecretKey {
+        let seed: [u8; SECRET_KEY_SIZE] = rand::random();
+        SecretKey::from_bytes(&seed)
     }
 
-    pub fn from_bytes(seed: &[u8; PRIVATE_KEY_SIZE]) -> Ed25519PrivateKey {
+    pub fn from_bytes(seed: &[u8; SECRET_KEY_SIZE]) -> SecretKey {
         let (scalar, prefix) = expand_secret(seed);
         let public_point = scalar_mul_base(&scalar);
         let public_bytes = public_point
             .to_bytes()
             .expect("basepoint multiplication must produce a valid point");
-        Ed25519PrivateKey {
+        SecretKey {
             seed: *seed,
             scalar,
             prefix,
@@ -76,9 +75,9 @@ impl Ed25519PrivateKey {
         }
     }
 
-    pub fn from_seed_unchecked(seed: &[u8; PRIVATE_KEY_SIZE]) -> Ed25519PrivateKey {
-        Ed25519PrivateKey::from_bytes(seed)
-    }
+    // pub fn from_seed_unchecked(seed: &[u8; PRIVATE_KEY_SIZE]) -> SecretKey {
+    //     SecretKey::from_bytes(seed)
+    // }
 
     pub fn sign(&self, message: &[u8]) -> [u8; SIGNATURE_SIZE] {
         let r = hash_to_scalar(&[&self.prefix, message]);
@@ -95,31 +94,46 @@ impl Ed25519PrivateKey {
         signature
     }
 
-    pub fn to_bytes(&self) -> [u8; PRIVATE_KEY_SIZE] {
+    #[inline]
+    pub fn to_bytes(&self) -> [u8; SECRET_KEY_SIZE] {
         self.seed
     }
 
-    pub fn public_key(&self) -> Ed25519PublicKey {
-        Ed25519PublicKey {
+    #[inline]
+    pub fn public_key(&self) -> PublicKey {
+        PublicKey {
             point: self.public_point,
+            bytes: self.public_bytes,
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Ed25519PublicKey {
-    point: EdwardsPoint,
+impl From<&[u8; SECRET_KEY_SIZE]> for SecretKey {
+    fn from(bytes: &[u8; SECRET_KEY_SIZE]) -> Self {
+        Self::from_bytes(bytes)
+    }
 }
 
-impl Ed25519PublicKey {
-    pub fn from_bytes(key: &[u8]) -> Result<Ed25519PublicKey, EllipticCurveError> {
-        if key.len() != PUBLIC_KEY_SIZE {
-            return Err(EllipticCurveError::InvalidKey);
-        }
-        let arr: &[u8; PUBLIC_KEY_SIZE] = key.try_into().unwrap();
-        let point = EdwardsPoint::from_bytes(arr).ok_or(EllipticCurveError::InvalidKey)?;
-        Ok(Ed25519PublicKey {
+impl TryFrom<&[u8]> for SecretKey {
+    type Error = EllipticCurveError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        Ok(Self::from_bytes(bytes.try_into().map_err(|_| EllipticCurveError::InvalidKey)?))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicKey {
+    point: EdwardsPoint,
+    bytes: [u8; PUBLIC_KEY_SIZE],
+}
+
+impl PublicKey {
+    pub fn from_bytes(key: &[u8; PUBLIC_KEY_SIZE]) -> Result<PublicKey, EllipticCurveError> {
+        let point = EdwardsPoint::from_bytes(key.try_into().unwrap()).ok_or(EllipticCurveError::InvalidKey)?;
+        Ok(PublicKey {
             point,
+            bytes: *key,
         })
     }
 
@@ -127,8 +141,9 @@ impl Ed25519PublicKey {
         ed25519_verify(&self.point, message, signature)
     }
 
+    #[inline]
     pub fn to_bytes(&self) -> [u8; PUBLIC_KEY_SIZE] {
-        self.point.to_bytes().expect("public point must be valid")
+        self.bytes
     }
 
     pub fn to_montgomery_u(&self) -> Option<FieldElement> {
@@ -137,6 +152,14 @@ impl Ed25519PublicKey {
         let one = FieldElement::ONE;
         let u = (one.add(y)).mul((one.sub(y)).invert()?);
         Some(u)
+    }
+}
+
+impl TryFrom<&[u8]> for PublicKey {
+    type Error = EllipticCurveError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        Self::from_bytes(bytes.try_into().map_err(|_| EllipticCurveError::InvalidKey)?)
     }
 }
 
@@ -336,7 +359,7 @@ fn hash_to_scalar(parts: &[&[u8]]) -> Scalar {
     Scalar::reduce_bytes_mod_l(digest.as_ref())
 }
 
-fn expand_secret(private_key: &[u8; PRIVATE_KEY_SIZE]) -> (Scalar, [u8; 32]) {
+fn expand_secret(private_key: &[u8; SECRET_KEY_SIZE]) -> (Scalar, [u8; 32]) {
     let digest = Sha512::hash(private_key);
     let mut expanded = [0u8; 64];
     expanded.copy_from_slice(digest.as_ref());
@@ -351,15 +374,15 @@ fn expand_secret(private_key: &[u8; PRIVATE_KEY_SIZE]) -> (Scalar, [u8; 32]) {
     (scalar, prefix)
 }
 
-pub fn derive_public_key(private_key: &[u8; PRIVATE_KEY_SIZE]) -> [u8; PUBLIC_KEY_SIZE] {
+pub fn derive_public_key(private_key: &[u8; SECRET_KEY_SIZE]) -> [u8; PUBLIC_KEY_SIZE] {
     let (scalar, _) = expand_secret(private_key);
     scalar_mul_base(&scalar)
         .to_bytes()
         .expect("basepoint multiplication must produce a valid point")
 }
 
-pub fn ed25519_sign(private_key: &[u8; PRIVATE_KEY_SIZE], message: &[u8]) -> [u8; SIGNATURE_SIZE] {
-    let key = Ed25519PrivateKey::from_bytes(private_key);
+pub fn ed25519_sign(private_key: &[u8; SECRET_KEY_SIZE], message: &[u8]) -> [u8; SIGNATURE_SIZE] {
+    let key = SecretKey::from_bytes(private_key);
     key.sign(message)
 }
 
@@ -406,7 +429,7 @@ pub fn is_valid_public_key(public_key: &[u8; PUBLIC_KEY_SIZE]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::curve25519::x25519::{X25519PrivateKey, X25519PublicKey};
+    use crate::curve25519::x25519;
 
     fn decode_hex<const N: usize>(hex_bytes: &str) -> [u8; N] {
         let bytes = hex::decode(hex_bytes).unwrap();
@@ -423,7 +446,7 @@ mod tests {
     #[test]
     fn new_api_sign_verify_roundtrip() {
         let seed = decode_hex::<32>("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
-        let priv_key = Ed25519PrivateKey::from_bytes(&seed);
+        let priv_key = SecretKey::from_bytes(&seed);
         let pub_key = priv_key.public_key();
 
         let messages: [&[u8]; 4] = [b"", b"hello", b"test message", &[0xffu8; 256]];
@@ -437,23 +460,23 @@ mod tests {
     #[test]
     fn new_api_public_key_bytes_roundtrip() {
         let seed = decode_hex::<32>("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
-        let priv_key = Ed25519PrivateKey::from_bytes(&seed);
+        let priv_key = SecretKey::from_bytes(&seed);
         let pub_key = priv_key.public_key();
         let pub_bytes = pub_key.to_bytes();
-        let restored = Ed25519PublicKey::from_bytes(&pub_bytes).unwrap();
+        let restored = PublicKey::from_bytes(&pub_bytes).unwrap();
         assert_eq!(pub_bytes, restored.to_bytes());
     }
 
     #[test]
     fn new_api_private_key_bytes_roundtrip() {
         let seed = decode_hex::<32>("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
-        let priv_key = Ed25519PrivateKey::from_bytes(&seed);
+        let priv_key = SecretKey::from_bytes(&seed);
         assert_eq!(priv_key.to_bytes(), seed);
     }
 
     #[test]
     fn new_api_generate_produces_valid_keys() {
-        let priv_key = Ed25519PrivateKey::generate();
+        let priv_key = SecretKey::generate();
         let pub_key = priv_key.public_key();
         let sig = priv_key.sign(b"hello");
         assert!(pub_key.verify(b"hello", &sig).is_ok());
@@ -461,11 +484,9 @@ mod tests {
 
     #[test]
     fn new_api_rejects_invalid_public_key() {
-        assert!(Ed25519PublicKey::from_bytes(&[0xffu8; 32]).is_err());
+        assert!(PublicKey::from_bytes(&[0xffu8; 32]).is_err());
         let p_enc = decode_hex::<32>("edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f");
-        assert!(Ed25519PublicKey::from_bytes(&p_enc).is_err());
-        assert!(Ed25519PublicKey::from_bytes(&[0u8; 0]).is_err());
-        assert!(Ed25519PublicKey::from_bytes(&[0u8; 31]).is_err());
+        assert!(PublicKey::from_bytes(&p_enc).is_err());
     }
 
     fn check_vector(
@@ -479,7 +500,7 @@ mod tests {
         let sig_expected = decode_hex::<64>(signature_hex);
         let msg = decode_hex_vec(message_hex);
 
-        let priv_key = Ed25519PrivateKey::from_bytes(&seed);
+        let priv_key = SecretKey::from_bytes(&seed);
         assert_eq!(priv_key.public_key().to_bytes(), pk_expected);
         assert_eq!(priv_key.sign(&msg), sig_expected);
         assert!(priv_key.public_key().verify(&msg, &sig_expected).is_ok());
@@ -527,8 +548,8 @@ mod tests {
     #[test]
     fn verify_rejects_tampering_and_non_canonical_s() {
         let seed = decode_hex::<32>("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
-        let pub_key = Ed25519PrivateKey::from_bytes(&seed).public_key();
-        let signature = Ed25519PrivateKey::from_bytes(&seed).sign(b"message");
+        let pub_key = SecretKey::from_bytes(&seed).public_key();
+        let signature = SecretKey::from_bytes(&seed).sign(b"message");
 
         assert!(pub_key.verify(b"message", &signature).is_ok());
         assert!(pub_key.verify(b"tampered", &signature).is_err());
@@ -548,15 +569,15 @@ mod tests {
     #[test]
     fn public_key_validation_rejects_invalid_encodings() {
         let valid = decode_hex::<32>("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a");
-        assert!(Ed25519PublicKey::from_bytes(&valid).is_ok());
+        assert!(PublicKey::from_bytes(&valid).is_ok());
 
         let mut invalid = [0xffu8; 32];
-        assert!(Ed25519PublicKey::from_bytes(&invalid).is_err());
+        assert!(PublicKey::from_bytes(&invalid).is_err());
 
         invalid = valid;
         invalid[31] |= 0x80;
         invalid[..31].fill(0);
-        assert!(Ed25519PublicKey::from_bytes(&invalid).is_err());
+        assert!(PublicKey::from_bytes(&invalid).is_err());
     }
 
     #[test]
@@ -586,7 +607,7 @@ mod tests {
             let signature = decode_hex::<64>(sig_hex);
             let message = decode_hex_vec(msg_hex);
 
-            let pub_key = Ed25519PublicKey::from_bytes(&public_key);
+            let pub_key = PublicKey::from_bytes(&public_key);
             let result = pub_key.and_then(|pk| pk.verify(&message, &signature));
 
             if should_reject {
@@ -617,7 +638,7 @@ mod tests {
     fn verify_rejects_all_zero_signature() {
         let public_key = decode_hex::<32>("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a");
         let signature = [0u8; 64];
-        let pk = Ed25519PublicKey::from_bytes(&public_key).unwrap();
+        let pk = PublicKey::from_bytes(&public_key).unwrap();
         let result = pk.verify(b"test", &signature);
         assert!(result.is_err());
     }
@@ -625,8 +646,8 @@ mod tests {
     #[test]
     fn verify_rejects_s_equals_l() {
         let seed = decode_hex::<32>("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
-        let pub_key = Ed25519PrivateKey::from_bytes(&seed).public_key();
-        let signature = Ed25519PrivateKey::from_bytes(&seed).sign(b"test");
+        let pub_key = SecretKey::from_bytes(&seed).public_key();
+        let signature = SecretKey::from_bytes(&seed).sign(b"test");
 
         let mut bad_sig = signature;
         bad_sig[32..].copy_from_slice(&[
@@ -639,11 +660,11 @@ mod tests {
     #[test]
     fn verify_rejects_non_canonical_point_encodings() {
         let non_canonical_key = decode_hex::<32>("edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f");
-        assert!(Ed25519PublicKey::from_bytes(&non_canonical_key).is_err());
+        assert!(PublicKey::from_bytes(&non_canonical_key).is_err());
 
         let seed = decode_hex::<32>("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
-        let pub_key = Ed25519PrivateKey::from_bytes(&seed).public_key();
-        let mut bad_sig = Ed25519PrivateKey::from_bytes(&seed).sign(b"test");
+        let pub_key = SecretKey::from_bytes(&seed).public_key();
+        let mut bad_sig = SecretKey::from_bytes(&seed).sign(b"test");
         bad_sig[..32].copy_from_slice(&[
             0xed, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
             0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f,
@@ -665,7 +686,7 @@ mod tests {
     #[test]
     fn ed25519_to_montgomery_u_conversion() {
         let seed = decode_hex::<32>("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
-        let priv_key = Ed25519PrivateKey::from_bytes(&seed);
+        let priv_key = SecretKey::from_bytes(&seed);
         let ed_pub = priv_key.public_key();
 
         let u = ed_pub
@@ -673,8 +694,7 @@ mod tests {
             .expect("valid ed point must convert to montgomery u");
         let u_bytes = u.to_bytes();
 
-        let ed_pub_bytes = ed_pub.to_bytes();
-        let x_pub_from_ed = X25519PublicKey::from_ed25519_bytes(&ed_pub_bytes).unwrap();
+        let x_pub_from_ed = x25519::PublicKey::try_from(&ed_pub).unwrap();
         assert_eq!(u_bytes, x_pub_from_ed.to_bytes());
 
         assert_ne!(u_bytes, [0u8; 32], "montgomery u must be non-zero for non-identity point");
@@ -694,12 +714,14 @@ mod tests {
     fn wycheproof_ed25519_vectors() {
         #[derive(serde::Deserialize)]
         struct TestJson {
-            testGroups: Vec<TestGroup>,
+            #[serde(rename = "testGroups")]
+            test_groups: Vec<TestGroup>,
         }
 
         #[derive(serde::Deserialize)]
         struct TestGroup {
-            publicKey: PublicKeyJson,
+            #[serde(rename = "publicKey")]
+            public_key: PublicKeyJson,
             tests: Vec<TestCase>,
         }
 
@@ -710,25 +732,25 @@ mod tests {
 
         #[derive(serde::Deserialize)]
         struct TestCase {
-            #[allow(dead_code)]
-            tcId: u32,
-            #[allow(dead_code)]
-            comment: String,
+            #[serde(rename = "tcId")]
+            tc_id: u32,
+            // #[allow(dead_code)]
+            // comment: String,
             msg: String,
             sig: String,
             result: String,
         }
 
-        let data = include_str!("../../testdata/ed25519/wycheproof_ed25519_test.json");
+        let data = include_str!("../../testdata/wycheproof/testvectors_v1/ed25519_test.json");
         let parsed: TestJson = serde_json::from_str(data).unwrap();
 
         let mut valid_tested = 0usize;
         let mut invalid_tested = 0usize;
         let mut skipped = 0usize;
 
-        for group in &parsed.testGroups {
-            let public_key = decode_hex::<32>(&group.publicKey.pk);
-            let pk = Ed25519PublicKey::from_bytes(&public_key).unwrap();
+        for group in &parsed.test_groups {
+            let public_key = decode_hex::<32>(&group.public_key.pk);
+            let pk = PublicKey::from_bytes(&public_key).unwrap();
 
             for test in &group.tests {
                 let msg = decode_hex_vec(&test.msg);
@@ -745,12 +767,12 @@ mod tests {
                     assert!(
                         result.is_ok(),
                         "Wycheproof test #{}: expected valid but got {:?}",
-                        test.tcId,
+                        test.tc_id,
                         result,
                     );
                     valid_tested += 1;
                 } else {
-                    assert!(result.is_err(), "Wycheproof test #{}: expected invalid but got ok", test.tcId,);
+                    assert!(result.is_err(), "Wycheproof test #{}: expected invalid but got ok", test.tc_id,);
                     invalid_tested += 1;
                 }
             }
@@ -766,7 +788,7 @@ mod tests {
     #[test]
     fn sign_verify_roundtrip_various_lengths() {
         let seed = decode_hex::<32>("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
-        let priv_key = Ed25519PrivateKey::from_bytes(&seed);
+        let priv_key = SecretKey::from_bytes(&seed);
         let pub_key = priv_key.public_key();
 
         for len in [0, 1, 2, 16, 32, 64, 128, 255, 256, 1024] {

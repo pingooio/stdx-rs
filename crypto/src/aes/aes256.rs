@@ -717,13 +717,6 @@ mod tests {
         tag: &'static str,
     }
 
-    include!("aes256_gcm_vectors.rs");
-
-    /// NIST SP 800-38D Appendix B – test cases for AES-256-GCM.
-    ///
-    /// These are the canonical NIST test vectors.  Each vector specifies:
-    ///   key, IV (nonce), plaintext, additional authenticated data (AAD),
-    ///   expected ciphertext, and expected authentication tag.
     const NIST_GCM_VECTORS: &[GcmVector] = &[
         // Test Case 13 – empty plaintext, empty AAD, 256-bit key
         GcmVector {
@@ -761,42 +754,9 @@ mod tests {
             ct: "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662",
             tag: "76fc6ece0f4e1768cddf8853bb2d551b",
         },
-        // Additional: Google Tink / BoringSSL reference vector (AES-256-GCM)
-        GcmVector {
-            key: "0e3c08a8f06c6e3ad95a70557b23f75483ce33021a9c72b7025666204c69c0cc",
-            nonce: "12153524c0895e81b2c28465",
-            pt: "08000f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a0002",
-            aad: "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b391aafd255522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662898015ad",
-            ct: "d017a35445d3b3d2a9faf8699b12114551c325744fd174cb53950ab4e33d4cfe90b3c39f9ff0f681b5339437476603bc",
-            tag: "4122cd6a136671d8fe83937439623596",
-        },
-        // Additional: Google Wycheproof AES-GCM vectors (valid, keySize=256).
-        GcmVector {
-            key: "92ace3e348cd821092cd921aa3546374299ab46209691bc28b8752d17f123c20",
-            nonce: "00112233445566778899aabb",
-            pt: "00010203040506070809",
-            aad: "00000000ffffffff",
-            ct: "e27abdd2d2a53d2f136b",
-            tag: "9a4a2579529301bcfb71c78d4060f52c",
-        },
-        GcmVector {
-            key: "cc56b680552eb75008f5484b4cb803fa5063ebd6eab91f6ab6aef4916a766273",
-            nonce: "99e23ec48985bccdeeab60f1",
-            pt: "2a",
-            aad: "",
-            ct: "06",
-            tag: "633c1e9703ef744ffffb40edf9d14355",
-        },
-        // Additional: pyca/cryptography CAVS AES-GCM vectors (gcmEncryptExtIV256.rsp).
-        GcmVector {
-            key: "78dc4e0aaf52d935c3c01eea57428f00ca1fd475f5da86a49c8dd73d68c8e223",
-            nonce: "d79cf22d504cc793c3fb6c8a",
-            pt: "",
-            aad: "b96baa8c1c75a671bfb2d08d06be5f36",
-            ct: "",
-            tag: "3e5d486aa2e30b22e040b85723a06e76",
-        },
     ];
+
+    include!("aes256_gcm_vectors.rs");
 
     fn run_gcm_vector_soft(v: &GcmVector) {
         let key: [u8; 32] = hb(v.key);
@@ -901,5 +861,69 @@ mod tests {
                 .expect("dispatch decrypt failed");
             assert_eq!(buf2, pt);
         }
+    }
+
+    // --- Wycheproof test vectors ---
+
+    #[test]
+    fn wycheproof_gcm_vectors() {
+        let data: serde_json::Value =
+            serde_json::from_str(include_str!("../../testdata/wycheproof/testvectors_v1/aes_gcm_test.json")).unwrap();
+        let mut valid_tested = 0u64;
+        let mut invalid_tested = 0u64;
+        for group in data["testGroups"].as_array().unwrap() {
+            if group["keySize"].as_u64() != Some(256) {
+                continue;
+            }
+            if group["ivSize"].as_u64() != Some(96) {
+                continue;
+            }
+            if group["tagSize"].as_u64() != Some(128) {
+                continue;
+            }
+            for test in group["tests"].as_array().unwrap() {
+                let key_hex = test["key"].as_str().unwrap();
+                let iv_hex = test["iv"].as_str().unwrap();
+                let msg_hex = test["msg"].as_str().unwrap();
+                let aad_hex = test["aad"].as_str().unwrap();
+                let ct_hex = test["ct"].as_str().unwrap();
+                let tag_hex = test["tag"].as_str().unwrap();
+                let result = test["result"].as_str().unwrap();
+
+                let key = hb::<32>(key_hex);
+                let nonce = hb::<12>(iv_hex);
+                let expected_ct = hex::decode(ct_hex).unwrap();
+                let expected_tag = hb::<16>(tag_hex);
+                let pt = hex::decode(msg_hex).unwrap();
+                let aad = hex::decode(aad_hex).unwrap();
+
+                let cipher = Aes256Gcm::new(&key);
+
+                if result == "valid" {
+                    let mut buf = pt.clone();
+                    let tag = cipher.encrypt_in_place_detached(&mut buf, &nonce, &aad);
+                    assert_eq!(buf, expected_ct, "wycheproof GCM tcId={} ct mismatch", test["tcId"]);
+                    assert_eq!(tag, expected_tag, "wycheproof GCM tcId={} tag mismatch", test["tcId"]);
+
+                    let mut buf2 = expected_ct.clone();
+                    cipher
+                        .decrypt_in_place_detached(&mut buf2, &expected_tag, &nonce, &aad)
+                        .expect("wycheproof GCM decrypt failed");
+                    assert_eq!(buf2, pt, "wycheproof GCM tcId={} pt mismatch", test["tcId"]);
+                    valid_tested += 1;
+                } else {
+                    let mut buf = expected_ct.clone();
+                    let result = cipher.decrypt_in_place_detached(&mut buf, &expected_tag, &nonce, &aad);
+                    assert!(
+                        result.is_err(),
+                        "wycheproof GCM tcId={} expected invalid but passed",
+                        test["tcId"]
+                    );
+                    invalid_tested += 1;
+                }
+            }
+        }
+        assert!(valid_tested > 0, "no valid AES-GCM wycheproof tests were run");
+        assert!(invalid_tested > 0, "no invalid AES-GCM wycheproof tests were run");
     }
 }

@@ -1,6 +1,9 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
+
 pub mod aes;
 #[cfg(feature = "alloc")]
 pub mod argon2;
@@ -9,14 +12,11 @@ pub mod chacha;
 pub mod curve25519;
 pub mod hkdf;
 pub mod hmac;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod mldsa;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod mlkem;
 pub mod poly1305;
 pub mod sha2;
 pub mod sha3;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod xwing;
 
 mod bytes;
@@ -34,32 +34,56 @@ const MAX_HASH_BLOCK_SIZE: usize = 128;
 pub type Hash = Bytes<64>;
 pub type Tag = Bytes<32>;
 
-#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
-    #[error("{0}")]
     Hkdf(HkdfError),
-    #[error("{0}")]
     Aead(AeadError),
-    #[error("{0}")]
     EllipticCurve(EllipticCurveError),
 }
 
-#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "alloc")]
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Error::Hkdf(err) => write!(f, "{err}"),
+            Error::Aead(err) => write!(f, "{err}"),
+            Error::EllipticCurve(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AeadError {
-    #[error("key is not valid")]
     InvalidKey,
-    #[error("nonce is not valid")]
     InvalidNonce,
-    #[error("ciphertext is not valid")]
     InvalidCiphertext,
 }
 
-#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "alloc")]
+impl core::fmt::Display for AeadError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            AeadError::InvalidKey => write!(f, "key is not valid"),
+            AeadError::InvalidNonce => write!(f, "nonce is not valid"),
+            AeadError::InvalidCiphertext => write!(f, "ciphertext is not valid"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EllipticCurveError {
-    #[error("key is not valid")]
     InvalidKey,
-    #[error("unknown")]
     Unspecified,
+}
+
+#[cfg(feature = "alloc")]
+impl core::fmt::Display for EllipticCurveError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            EllipticCurveError::InvalidKey => write!(f, "key is not valid"),
+            EllipticCurveError::Unspecified => write!(f, "unknown error"),
+        }
+    }
 }
 
 pub trait StreamCipher: Sized {
@@ -71,6 +95,7 @@ pub trait Aead: Sized {
     const NONCE_SIZE: usize;
 
     fn encrypt_in_place_detached(&self, in_out: &mut [u8], nonce: &[u8], aad: &[u8]) -> Tag;
+
     fn decrypt_in_place_detached(
         &self,
         in_out: &mut [u8],
@@ -81,7 +106,7 @@ pub trait Aead: Sized {
 
     #[cfg(feature = "alloc")]
     fn encrypt(&self, plaintext: &[u8], nonce: &[u8], aad: &[u8]) -> Vec<u8> {
-        let mut ciphertext = alloc::vec::Vec::with_capacity(plaintext.len() + Self::TAG_SIZE);
+        let mut ciphertext = Vec::with_capacity(plaintext.len() + Self::TAG_SIZE);
         ciphertext.extend_from_slice(plaintext);
 
         let tag = self.encrypt_in_place_detached(&mut ciphertext, nonce, aad);
@@ -97,7 +122,7 @@ pub trait Aead: Sized {
         }
 
         let plaintext_length = ciphertext.len() - Self::TAG_SIZE;
-        let mut plaintext = alloc::vec::Vec::with_capacity(plaintext_length);
+        let mut plaintext = Vec::with_capacity(plaintext_length);
         plaintext.extend_from_slice(&ciphertext[..plaintext_length]);
 
         self.decrypt_in_place_detached(&mut plaintext, &nonce, aad, &ciphertext[plaintext_length..])?;

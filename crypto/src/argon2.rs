@@ -26,54 +26,6 @@ const ARGON2D: u32 = 0;
 const ARGON2I: u32 = 1;
 const ARGON2ID: u32 = 2;
 
-/// A 1024-byte block used in Argon2's memory matrix.
-#[derive(Clone)]
-struct Block {
-    v: [u64; 128],
-}
-
-impl Block {
-    fn zero() -> Self {
-        Block {
-            v: [0u64; 128],
-        }
-    }
-
-    fn xor_with(&mut self, other: &Block) {
-        for i in 0..128 {
-            self.v[i] ^= other.v[i];
-        }
-    }
-
-    fn from_bytes(bytes: &[u8]) -> Self {
-        let mut block = Block::zero();
-        for i in 0..128 {
-            let offset = i * 8;
-            block.v[i] = u64::from_le_bytes([
-                bytes[offset],
-                bytes[offset + 1],
-                bytes[offset + 2],
-                bytes[offset + 3],
-                bytes[offset + 4],
-                bytes[offset + 5],
-                bytes[offset + 6],
-                bytes[offset + 7],
-            ]);
-        }
-        block
-    }
-
-    fn to_bytes(&self) -> [u8; BLOCK_SIZE] {
-        let mut out = [0u8; BLOCK_SIZE];
-        for i in 0..128 {
-            let bytes = self.v[i].to_le_bytes();
-            let offset = i * 8;
-            out[offset..offset + 8].copy_from_slice(&bytes);
-        }
-        out
-    }
-}
-
 /// Parameters for Argon2id.
 #[derive(Debug, Clone)]
 pub struct Params {
@@ -131,6 +83,54 @@ impl core::fmt::Display for Argon2Error {
             Argon2Error::InvalidEncoding(msg) => write!(f, "argon2: invalid encoding: {}", msg),
             Argon2Error::VerifyMismatch => write!(f, "argon2: verification failed"),
         }
+    }
+}
+
+/// A 1024-byte block used in Argon2's memory matrix.
+#[derive(Clone)]
+struct Block {
+    v: [u64; 128],
+}
+
+impl Block {
+    fn zero() -> Self {
+        Block {
+            v: [0u64; 128],
+        }
+    }
+
+    fn xor_with(&mut self, other: &Block) {
+        for i in 0..128 {
+            self.v[i] ^= other.v[i];
+        }
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Self {
+        let mut block = Block::zero();
+        for i in 0..128 {
+            let offset = i * 8;
+            block.v[i] = u64::from_le_bytes([
+                bytes[offset],
+                bytes[offset + 1],
+                bytes[offset + 2],
+                bytes[offset + 3],
+                bytes[offset + 4],
+                bytes[offset + 5],
+                bytes[offset + 6],
+                bytes[offset + 7],
+            ]);
+        }
+        block
+    }
+
+    fn to_bytes(&self) -> [u8; BLOCK_SIZE] {
+        let mut out = [0u8; BLOCK_SIZE];
+        for i in 0..128 {
+            let bytes = self.v[i].to_le_bytes();
+            let offset = i * 8;
+            out[offset..offset + 8].copy_from_slice(&bytes);
+        }
+        out
     }
 }
 

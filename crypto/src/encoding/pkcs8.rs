@@ -5,32 +5,40 @@ const PKCS8_DER_LEN: usize = 138;
 const EC_PUBLIC_KEY_OID: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
 const SECP256R1_OID: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
 
-#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pkcs8Error {
-    #[error("invalid DER length")]
     InvalidLength,
-    #[error("invalid outer SEQUENCE")]
     InvalidSequence,
-    #[error("invalid version")]
     InvalidVersion,
-    #[error("invalid AlgorithmIdentifier")]
     InvalidAlgorithmIdentifier,
-    #[error("invalid OCTET STRING wrapping")]
     InvalidOctetString,
-    #[error("invalid ECPrivateKey SEQUENCE")]
     InvalidEcPrivateKey,
-    #[error("invalid EC version")]
     InvalidEcVersion,
-    #[error("invalid private key OCTET STRING")]
     InvalidPrivateKeyOctet,
-    #[error("invalid public key [1] EXPLICIT")]
     InvalidPublicKeyExplicit,
-    #[error("invalid public key BIT STRING")]
     InvalidPublicKeyBitString,
-    #[error("invalid public key prefix")]
     InvalidPublicKeyPrefix,
-    #[error("key derivation failed")]
     KeyDerivationFailed,
+}
+
+#[cfg(feature = "alloc")]
+impl core::fmt::Display for Pkcs8Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Pkcs8Error::InvalidLength => write!(f, "invalid DER length"),
+            Pkcs8Error::InvalidSequence => write!(f, "invalid outer SEQUENCE"),
+            Pkcs8Error::InvalidVersion => write!(f, "invalid version"),
+            Pkcs8Error::InvalidAlgorithmIdentifier => write!(f, "invalid AlgorithmIdentifier"),
+            Pkcs8Error::InvalidOctetString => write!(f, "invalid OCTET STRING wrapping"),
+            Pkcs8Error::InvalidEcPrivateKey => write!(f, "invalid ECPrivateKey SEQUENCE"),
+            Pkcs8Error::InvalidEcVersion => write!(f, "invalid EC version"),
+            Pkcs8Error::InvalidPrivateKeyOctet => write!(f, "invalid private key OCTET STRING"),
+            Pkcs8Error::InvalidPublicKeyExplicit => write!(f, "invalid public key [1] EXPLICIT"),
+            Pkcs8Error::InvalidPublicKeyBitString => write!(f, "invalid public key BIT STRING"),
+            Pkcs8Error::InvalidPublicKeyPrefix => write!(f, "invalid public key prefix"),
+            Pkcs8Error::KeyDerivationFailed => write!(f, "key derivation failed"),
+        }
+    }
 }
 
 fn validate_fixed_prefix(der: &[u8]) -> Result<(), Pkcs8Error> {

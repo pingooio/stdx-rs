@@ -23,14 +23,31 @@ impl fmt::Debug for Block {
     }
 }
 
-#[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
-pub enum Error {
-    #[error("{0}")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PemError {
     InvalidEncoding(&'static str),
-    #[error("base64 decode error: {0}")]
-    Base64(#[from] base64::DecodeError),
-    #[error("label mismatch: expected '{expected}', got '{actual}'")]
+    Base64(base64::DecodeError),
     LabelMismatch { expected: String, actual: String },
+}
+
+impl From<base64::DecodeError> for PemError {
+    fn from(err: base64::DecodeError) -> Self {
+        PemError::Base64(err)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl core::fmt::Display for PemError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            PemError::InvalidEncoding(str) => write!(f, "{str}"),
+            PemError::Base64(err) => write!(f, "base64 decode error: {err}"),
+            PemError::LabelMismatch {
+                expected,
+                actual,
+            } => write!(f, "label mismatch: expected '{expected}', got '{actual}'"),
+        }
+    }
 }
 
 pub fn encode(blocks: &[Block]) -> Vec<u8> {
@@ -77,7 +94,7 @@ pub struct Decoder<'a> {
 }
 
 impl<'a> Iterator for Decoder<'a> {
-    type Item = Result<Block, Error>;
+    type Item = Result<Block, PemError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.pos >= self.input.len() {
@@ -96,26 +113,26 @@ impl<'a> Iterator for Decoder<'a> {
     }
 }
 
-fn parse_one_block<'a>(input: &'a [u8], pos: &mut usize) -> Result<Block, Error> {
+fn parse_one_block<'a>(input: &'a [u8], pos: &mut usize) -> Result<Block, PemError> {
     let remaining = &input[*pos..];
-    let begin_offset = find_pattern(remaining, BEGIN_MARKER).ok_or(Error::InvalidEncoding("no BEGIN line found"))?;
+    let begin_offset = find_pattern(remaining, BEGIN_MARKER).ok_or(PemError::InvalidEncoding("no BEGIN line found"))?;
 
     let label_start = *pos + begin_offset + BEGIN_MARKER.len();
     let (r#type, advance) = {
         let remaining = &input[label_start..];
-        let line_end = find_line_end(remaining).ok_or(Error::InvalidEncoding("unexpected end of PEM data"))?;
+        let line_end = find_line_end(remaining).ok_or(PemError::InvalidEncoding("unexpected end of PEM data"))?;
         let label_bytes = &remaining[..line_end];
 
         if label_bytes.len() < MARKER_END.len()
             || label_bytes[label_bytes.len() - MARKER_END.len()..] != *MARKER_END
             || (label_bytes.len() > MARKER_END.len() && label_bytes[label_bytes.len() - MARKER_END.len() - 1] == b'-')
         {
-            return Err(Error::InvalidEncoding("malformed BEGIN line"));
+            return Err(PemError::InvalidEncoding("malformed BEGIN line"));
         }
 
         let label = &label_bytes[..label_bytes.len() - MARKER_END.len()];
         let r#type = core::str::from_utf8(label)
-            .map_err(|_| Error::InvalidEncoding("non-UTF-8 label"))?
+            .map_err(|_| PemError::InvalidEncoding("non-UTF-8 label"))?
             .to_string();
         (r#type, line_advance(remaining))
     };
@@ -126,10 +143,10 @@ fn parse_one_block<'a>(input: &'a [u8], pos: &mut usize) -> Result<Block, Error>
 
     loop {
         if cursor >= input.len() {
-            return Err(Error::InvalidEncoding("unexpected end of PEM data"));
+            return Err(PemError::InvalidEncoding("unexpected end of PEM data"));
         }
         let remaining = &input[cursor..];
-        let line_end = find_line_end(remaining).ok_or(Error::InvalidEncoding("unexpected end of PEM data"))?;
+        let line_end = find_line_end(remaining).ok_or(PemError::InvalidEncoding("unexpected end of PEM data"))?;
         let line = &remaining[..line_end];
 
         if line.starts_with(END_MARKER) {
@@ -148,8 +165,8 @@ fn parse_one_block<'a>(input: &'a [u8], pos: &mut usize) -> Result<Block, Error>
         }
 
         if let Some(colon_pos) = line.iter().position(|&b| b == b':') {
-            let key =
-                core::str::from_utf8(&line[..colon_pos]).map_err(|_| Error::InvalidEncoding("non-UTF-8 header key"))?;
+            let key = core::str::from_utf8(&line[..colon_pos])
+                .map_err(|_| PemError::InvalidEncoding("non-UTF-8 header key"))?;
             let value_start = colon_pos + 1;
             let value = if value_start < line.len() && line[value_start] == b' ' {
                 &line[value_start + 1..]
@@ -157,7 +174,7 @@ fn parse_one_block<'a>(input: &'a [u8], pos: &mut usize) -> Result<Block, Error>
                 &line[value_start..]
             };
             let value_str =
-                core::str::from_utf8(value).map_err(|_| Error::InvalidEncoding("non-UTF-8 header value"))?;
+                core::str::from_utf8(value).map_err(|_| PemError::InvalidEncoding("non-UTF-8 header value"))?;
 
             let mut full_value = String::from(value_str);
             cursor += line_advance(remaining);
@@ -167,7 +184,8 @@ fn parse_one_block<'a>(input: &'a [u8], pos: &mut usize) -> Result<Block, Error>
                     break;
                 }
                 let rest = &input[cursor..];
-                let cont_line_end = find_line_end(rest).ok_or(Error::InvalidEncoding("unexpected end of PEM data"))?;
+                let cont_line_end =
+                    find_line_end(rest).ok_or(PemError::InvalidEncoding("unexpected end of PEM data"))?;
                 let cont_line = &rest[..cont_line_end];
                 if cont_line.is_empty() {
                     break;
@@ -200,7 +218,7 @@ fn parse_one_block<'a>(input: &'a [u8], pos: &mut usize) -> Result<Block, Error>
 
     loop {
         if search_pos >= input.len() {
-            return Err(Error::InvalidEncoding("missing END line"));
+            return Err(PemError::InvalidEncoding("missing END line"));
         }
         let remaining = &input[search_pos..];
         let end_offset = find_pattern(remaining, END_MARKER);
@@ -208,7 +226,8 @@ fn parse_one_block<'a>(input: &'a [u8], pos: &mut usize) -> Result<Block, Error>
             Some(eo) => {
                 let candidate = search_pos + eo;
                 let end_rest = &input[candidate..];
-                let end_line_end = find_line_end(end_rest).ok_or(Error::InvalidEncoding("unexpected end of data"))?;
+                let end_line_end =
+                    find_line_end(end_rest).ok_or(PemError::InvalidEncoding("unexpected end of data"))?;
                 let end_line = &end_rest[..end_line_end];
 
                 let end_label_bytes = &end_line[END_MARKER.len()..];
@@ -223,7 +242,7 @@ fn parse_one_block<'a>(input: &'a [u8], pos: &mut usize) -> Result<Block, Error>
                         break;
                     }
                     let actual = core::str::from_utf8(end_label).unwrap_or("(invalid UTF-8)").to_string();
-                    return Err(Error::LabelMismatch {
+                    return Err(PemError::LabelMismatch {
                         expected: r#type.clone(),
                         actual,
                     });
@@ -231,7 +250,7 @@ fn parse_one_block<'a>(input: &'a [u8], pos: &mut usize) -> Result<Block, Error>
                 search_pos = candidate + 1;
             }
             None => {
-                return Err(Error::InvalidEncoding("missing END line"));
+                return Err(PemError::InvalidEncoding("missing END line"));
             }
         }
     }
@@ -299,7 +318,7 @@ mod tests {
 
     fn roundtrip(blocks: &[Block]) {
         let pem = encode(blocks);
-        let decoded: Vec<Result<Block, Error>> = decode(&pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(&pem).collect();
         for (i, result) in decoded.iter().enumerate() {
             let decoded_block = result.as_ref().unwrap();
             assert_eq!(decoded_block.r#type, blocks[i].r#type, "block {} type mismatch", i);
@@ -413,7 +432,7 @@ Originator-Certificate:\n MIIBlTCCAScCAWUw\n\
 SGVsbG8gV29ybGQ=\n\
 -----END PRIVACY-ENHANCED MESSAGE-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "PRIVACY-ENHANCED MESSAGE");
@@ -456,7 +475,7 @@ SGVsbG8gV29ybGQ=\n\
                      l4wOuDwKQa+upc8GftXE2C//4mKANBC6It01gUaTIpo=\n\
                      -----END CERTIFICATE-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "CERTIFICATE");
@@ -472,7 +491,7 @@ SGVsbG8gV29ybGQ=\n\
                      H0M6xpM2q+53wmsN/eYLdgtjgBd3DBmHtPilCkiFICXyaA8z9LkJ\n\
                      -----END PRIVATE KEY-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "PRIVATE KEY");
@@ -485,7 +504,7 @@ SGVsbG8gV29ybGQ=\n\
                      SGVsbG8gV29ybGQ=\r\n\
                      -----END CERTIFICATE-----\r\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "CERTIFICATE");
@@ -498,7 +517,7 @@ SGVsbG8gV29ybGQ=\n\
                      SGVsbG8gV29ybGQ=\r\
                      -----END CERTIFICATE-----\r";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.contents, b"Hello World");
@@ -513,7 +532,7 @@ SGVsbG8gV29ybGQ=\n\
                      U2Vjb25k\n\
                      -----END CERTIFICATE-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 2);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"First");
         assert_eq!(decoded[1].as_ref().unwrap().contents, b"Second");
@@ -528,7 +547,7 @@ SGVsbG8gV29ybGQ=\n\
                      SGVsbG8=\n\
                      -----END CERTIFICATE-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"Hello");
     }
@@ -536,7 +555,7 @@ SGVsbG8gV29ybGQ=\n\
     #[test]
     fn decode_empty_pem() {
         let pem = b"";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert!(decoded.is_empty());
     }
 
@@ -546,11 +565,11 @@ SGVsbG8gV29ybGQ=\n\
                      SGVsbG8=\n\
                      -----END PRIVATE KEY-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert!(decoded[0].is_err());
         match &decoded[0] {
-            Err(Error::LabelMismatch {
+            Err(PemError::LabelMismatch {
                 expected,
                 actual,
             }) => {
@@ -566,7 +585,7 @@ SGVsbG8gV29ybGQ=\n\
         let pem = b"-----BEGIN CERTIFICATE-----\n\
                      SGVsbG8=\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert!(decoded[0].is_err());
     }
@@ -577,7 +596,7 @@ SGVsbG8gV29ybGQ=\n\
                      !!!invalid!!!\n\
                      -----END CERTIFICATE-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert!(decoded[0].is_err());
     }
@@ -591,7 +610,7 @@ SGVsbG8gV29ybGQ=\n\
             contents: contents.to_vec(),
         }];
         let pem = encode(&blocks);
-        let decoded: Vec<Result<Block, Error>> = decode(&pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(&pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, contents);
     }
@@ -636,7 +655,7 @@ SGVsbG8gV29ybGQ=\n\
         let pem = b"-----BEGIN CERTIFICATE-----\n\
                      SGVsbG8=\n\
                      -----END CERTIFICATE-----";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"Hello");
     }
@@ -648,7 +667,7 @@ SGVsbG8gV29ybGQ=\n\
                      V29y bGQ=\n\
                      -----END CERTIFICATE-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"Hello World");
     }
@@ -661,7 +680,7 @@ SGVsbG8gV29ybGQ=\n\
                      SGVsbG8=\n\
                      -----END CERTIFICATE-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.contents, b"Hello");
@@ -676,7 +695,7 @@ SGVsbG8gV29ybGQ=\n\
                      SGVsbG8=\n\
                      -----END PRIVACY-ENHANCED MESSAGE-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.contents, b"Hello");
@@ -700,7 +719,7 @@ SGVsbG8gV29ybGQ=\n\
         }
         pem.push_str("-----END CERTIFICATE-----\n");
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem.as_bytes()).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem.as_bytes()).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, der);
     }
@@ -713,7 +732,7 @@ SGVsbG8gV29ybGQ=\n\
                      AaE=\n\
                      -----END EC PRIVATE KEY-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "EC PRIVATE KEY");
@@ -726,7 +745,7 @@ SGVsbG8gV29ybGQ=\n\
         let b64 = base64::encode(data);
         let pem = alloc::format!("-----BEGIN PYTHON DATA-----\n{}\n-----END PYTHON DATA-----\n", b64);
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem.as_bytes()).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem.as_bytes()).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, data);
     }
@@ -742,7 +761,7 @@ SGVsbG8gV29ybGQ=\n\
         pem.push('\n');
         pem.push_str("-----END PYTHON DATA-----\n");
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem.as_bytes()).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem.as_bytes()).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "PYTHON DATA");
@@ -786,7 +805,7 @@ SGVsbG8gV29ybGQ=\n\
         let pem = b"-----BEGIN EMPTY-----\n\
                      -----END EMPTY-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "EMPTY");
@@ -852,7 +871,7 @@ SGVsbG8gV29ybGQ=\n\
                      ZGF0YQ==\n\
                      -----END DATA-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"data");
     }
@@ -866,7 +885,7 @@ SGVsbG8gV29ybGQ=\n\
                      ZGF0YQ==\n\
                      -----END MESSAGE-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.headers.len(), 2);
@@ -883,7 +902,7 @@ SGVsbG8gV29ybGQ=\n\
                      !!!invalid!!!\n\
                      -----END BAD-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 2);
         assert!(decoded[0].is_ok());
         assert!(decoded[1].is_err());
@@ -919,14 +938,14 @@ SGVsbG8gV29ybGQ=\n\
             assert!(output.status.success());
             let pem_bytes = output.stdout;
 
-            let decoded: Vec<Result<Block, Error>> = decode(&pem_bytes).collect();
+            let decoded: Vec<Result<Block, PemError>> = decode(&pem_bytes).collect();
             assert_eq!(decoded.len(), 1);
             let block = decoded[0].as_ref().unwrap();
             assert_eq!(block.r#type, "CERTIFICATE");
             assert!(!block.contents.is_empty());
 
             let reencoded = encode(&[block.clone()]);
-            let re_decoded: Vec<Result<Block, Error>> = decode(&reencoded).collect();
+            let re_decoded: Vec<Result<Block, PemError>> = decode(&reencoded).collect();
             assert_eq!(re_decoded.len(), 1);
             assert_eq!(re_decoded[0].as_ref().unwrap().contents, block.contents);
         }
@@ -956,7 +975,7 @@ print(pem, end='')
             assert!(output.status.success());
             let pem_bytes = output.stdout;
 
-            let decoded: Vec<Result<Block, Error>> = decode(&pem_bytes).collect();
+            let decoded: Vec<Result<Block, PemError>> = decode(&pem_bytes).collect();
             assert_eq!(decoded.len(), 1);
             let block = decoded[0].as_ref().unwrap();
             assert_eq!(block.r#type, "PYTHON DATA");
@@ -980,13 +999,13 @@ print(pem, end='')
             assert!(output.status.success());
             let pem_bytes = output.stdout;
 
-            let decoded: Vec<Result<Block, Error>> = decode(&pem_bytes).collect();
+            let decoded: Vec<Result<Block, PemError>> = decode(&pem_bytes).collect();
             assert!(decoded.len() >= 1);
             let first_block = decoded[0].as_ref().unwrap();
             assert!(!first_block.contents.is_empty());
 
             let reencoded = encode(&[first_block.clone()]);
-            let re_decoded: Vec<Result<Block, Error>> = decode(&reencoded).collect();
+            let re_decoded: Vec<Result<Block, PemError>> = decode(&reencoded).collect();
             assert_eq!(re_decoded.len(), 1);
             assert_eq!(re_decoded[0].as_ref().unwrap().contents, first_block.contents);
         }
@@ -1002,7 +1021,7 @@ print(pem, end='')
         };
         let pem = encode(&[block.clone()]);
         assert!(pem.starts_with(b"-----BEGIN X.509 CERTIFICATE-----\n"));
-        let decoded: Vec<Result<Block, Error>> = decode(&pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(&pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().r#type, label);
     }
@@ -1015,7 +1034,7 @@ print(pem, end='')
         pem.extend_from_slice(b"SGVsbG8=\n");
         pem.extend_from_slice(b"-----END CERTIFICATE-----\n");
 
-        let decoded: Vec<Result<Block, Error>> = decode(&pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(&pem).collect();
         assert_eq!(decoded.len(), 1);
         assert!(decoded[0].is_ok());
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"Hello");
@@ -1039,7 +1058,7 @@ print(pem, end='')
                      c3DGMNR+oUmSjKZ0jIhAYmeLxaPHfQwR\n\
                      -----END X509 CRL-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "X509 CRL");
@@ -1060,7 +1079,7 @@ print(pem, end='')
                      dEQc8B8jAcnuOrfU\n\
                      -----END CERTIFICATE REQUEST-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "CERTIFICATE REQUEST");
@@ -1077,7 +1096,7 @@ print(pem, end='')
                      OsYGYUFdAH0RNc1p4VbKEAQUM2Xo8PMHBoYdqEcsbTodlCFAZH4=\n\
                      -----END PKCS7-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "PKCS7");
@@ -1092,7 +1111,7 @@ print(pem, end='')
                      dvb05OXi5XLPLEtViMwvLVLwSE0sKlFIVHAqSk3MBkkBAJv0Fx0=\n\
                      -----END CMS-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "CMS");
@@ -1109,7 +1128,7 @@ print(pem, end='')
                      QC7k0NNzUHTV9yGDwfqMbw==\n\
                      -----END ENCRYPTED PRIVATE KEY-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "ENCRYPTED PRIVATE KEY");
@@ -1133,7 +1152,7 @@ print(pem, end='')
                      Smluak1aZIttePeTAHeJJs8izNJ5aR3Wcd3A5gLztQ==\n\
                      -----END ATTRIBUTE CERTIFICATE-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "ATTRIBUTE CERTIFICATE");
@@ -1148,7 +1167,7 @@ print(pem, end='')
                      Nkn3Eos8EiZByi9DVsyfy9eejh+8AXgp\n\
                      -----END PUBLIC KEY-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "PUBLIC KEY");
@@ -1168,7 +1187,7 @@ print(pem, end='')
                      NnY/OKgBex6MIEAv2AIhAI2GdvfL+mGvhyPZE+JxRxWChmggb5/9eHdUcmW/jkOH\n\
                      -----END X509 CERTIFICATE-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "X509 CERTIFICATE");
@@ -1186,7 +1205,7 @@ print(pem, end='')
                      NnY/OKgBex6MIEAv2AIhAI2GdvfL+mGvhyPZE+JxRxWChmggb5/9eHdUcmW/jkOH\n\
                      -----END X.509 CERTIFICATE-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "X.509 CERTIFICATE");
@@ -1206,7 +1225,7 @@ print(pem, end='')
                      dEQc8B8jAcnuOrfU\n\
                      -----END NEW CERTIFICATE REQUEST-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "NEW CERTIFICATE REQUEST");
@@ -1223,7 +1242,7 @@ print(pem, end='')
                      OsYGYUFdAH0RNc1p4VbKEAQUM2Xo8PMHBoYdqEcsbTodlCFAZH4=\n\
                      -----END CERTIFICATE CHAIN-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "CERTIFICATE CHAIN");
@@ -1235,7 +1254,7 @@ print(pem, end='')
     #[test]
     fn reject_too_few_trailing_dashes_begin() {
         let pem = b"-----BEGIN FOO----\ndGVzdA==\n-----END FOO-----\n";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert!(
             decoded.is_empty() || decoded[0].is_err(),
             "expected error for BEGIN with 4 trailing dashes"
@@ -1245,7 +1264,7 @@ print(pem, end='')
     #[test]
     fn reject_too_many_trailing_dashes_begin() {
         let pem = b"-----BEGIN FOO-------\ndGVzdA==\n-----END FOO-------\n";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert!(
             decoded.is_empty() || decoded[0].is_err(),
             "expected error for BEGIN with 7 trailing dashes"
@@ -1255,7 +1274,7 @@ print(pem, end='')
     #[test]
     fn reject_too_few_trailing_dashes_end() {
         let pem = b"-----BEGIN FOO-----\ndGVzdA==\n-----END FOO----\n";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert!(
             decoded.is_empty() || decoded[0].is_err(),
             "expected error for END with 4 trailing dashes"
@@ -1265,7 +1284,7 @@ print(pem, end='')
     #[test]
     fn reject_too_many_trailing_dashes_end() {
         let pem = b"-----BEGIN FOO-----\ndGVzdA==\n-----END FOO------\n";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert!(
             decoded.is_empty() || decoded[0].is_err(),
             "expected error for END with 6 trailing dashes"
@@ -1275,7 +1294,7 @@ print(pem, end='')
     #[test]
     fn reject_missing_ending_space() {
         let pem = b"-----BEGIN FOO-----\ndGVzdA==\n-----ENDBAR-----\n";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert!(
             decoded.is_empty() || decoded[0].is_err(),
             "expected error for missing space between END and label"
@@ -1285,7 +1304,7 @@ print(pem, end='')
     #[test]
     fn reject_trailing_non_whitespace_on_end() {
         let pem = b"-----BEGIN FOO-----\ndGVzdA==\n-----END FOO----- .\n";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert!(decoded[0].is_err(), "expected error for trailing '. ' on END line");
     }
@@ -1293,7 +1312,7 @@ print(pem, end='')
     #[test]
     fn reject_repeating_begin_no_end() {
         let input = b"-----BEGIN \n".repeat(100);
-        let decoded: Vec<Result<Block, Error>> = decode(&input).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(&input).collect();
         assert_eq!(decoded.len(), 1);
         assert!(decoded[0].is_err(), "expected error for 100 repeated BEGIN lines with no END");
     }
@@ -1301,7 +1320,7 @@ print(pem, end='')
     #[test]
     fn reject_only_end_marker() {
         let pem = b"-----END PUBLIC KEY-----\n";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert!(
             decoded.is_empty() || decoded[0].is_err(),
             "expected no valid block from input containing only END marker"
@@ -1317,7 +1336,7 @@ print(pem, end='')
                      \n\
                      \n\
                      -----END DATA-----\n";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"data");
     }
@@ -1329,7 +1348,7 @@ print(pem, end='')
                      \n\
                      \n\
                      -----END EMPTY-----\n";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert!(decoded[0].as_ref().unwrap().contents.is_empty());
     }
@@ -1341,7 +1360,7 @@ print(pem, end='')
                      \n\
                      ZGF0YQ==\n\
                      -----END DATA-----\n";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.contents, b"data");
@@ -1359,7 +1378,7 @@ print(pem, end='')
                      \n\
                      ZGF0YQ==\n\
                      -----END DATA-----\n";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"data");
     }
@@ -1371,7 +1390,7 @@ print(pem, end='')
                      \n\
                      ZGF0YQ==\n\
                      -----END DATA-----\n";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.contents, b"data");
@@ -1385,7 +1404,7 @@ print(pem, end='')
                      \n\
                      ZGF0YQ==\n\
                      -----END DATA-----\n";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.contents, b"data");
@@ -1396,7 +1415,7 @@ print(pem, end='')
         let pem = b"-----BEGIN FOO-----\n\
                      Header: 1\n\
                      -----END FOO-----\n";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "FOO");
@@ -1612,7 +1631,7 @@ print(pem, end='')
         let pem = b"\n\n\n-----BEGIN DATA-----\n\
                      ZGF0YQ==\n\
                      -----END DATA-----\n";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"data");
     }
@@ -1622,7 +1641,7 @@ print(pem, end='')
         let pem = b"-----BEGIN DATA-----\n\
                      ZGF0\tYQ==\n\
                      -----END DATA-----\n";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"data");
     }
@@ -1633,7 +1652,7 @@ print(pem, end='')
                      ZGF0\n\
                      YQ==\n\
                      -----END DATA-----\n";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"data");
     }
@@ -1652,7 +1671,7 @@ print(pem, end='')
             contents: b"multi header".to_vec(),
         };
         let pem = encode(&[block.clone()]);
-        let decoded: Vec<Result<Block, Error>> = decode(&pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(&pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().headers, block.headers);
         assert_eq!(decoded[0].as_ref().unwrap().contents, block.contents);
@@ -1666,7 +1685,7 @@ print(pem, end='')
             contents: b"empty value".to_vec(),
         };
         let pem = encode(&[block.clone()]);
-        let decoded: Vec<Result<Block, Error>> = decode(&pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(&pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().headers[0].1, "");
     }
@@ -1693,7 +1712,7 @@ print(pem, end='')
                      -----BEGIN CERTIFICATE-----\n\
                      SGVsbG8=\n\
                      -----END CERTIFICATE-----\n";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"Hello");
     }
@@ -1744,7 +1763,7 @@ print(pem, end='')
                      SGVsbG8=\n\
                      -----END PRIVACY-ENHANCED MESSAGE-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "PRIVACY-ENHANCED MESSAGE");
@@ -1757,7 +1776,7 @@ print(pem, end='')
     #[test]
     fn decode_body_only_padding() {
         let pem = b"-----BEGIN DATA-----\n=\n-----END DATA-----\n";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert!(decoded[0].is_err(), "a single = is invalid base64");
     }
@@ -1765,7 +1784,7 @@ print(pem, end='')
     #[test]
     fn decode_body_only_padding_pair() {
         let pem = b"-----BEGIN DATA-----\n==\n-----END DATA-----\n";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert!(decoded[0].is_err(), "just == is invalid base64");
     }
@@ -1775,7 +1794,7 @@ print(pem, end='')
     #[test]
     fn decode_end_no_newline_matching() {
         let pem = b"-----BEGIN FOO-----\nZGF0YQ==\n-----END FOO-----";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"data");
     }
@@ -1799,7 +1818,7 @@ print(pem, end='')
                      ILwpnZ1izL4MlI9eCSHhVQBHEp2uQdXJB+d5Byg=\n\
                      -----END CERTIFICATE-----\n";
 
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "CERTIFICATE");
@@ -1813,7 +1832,7 @@ print(pem, end='')
         let pem = b"-----BEGIN DATA-----\n\
                      ZGF0YQ==   \n\
                      -----END DATA-----\n";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"data");
     }
@@ -1825,7 +1844,7 @@ print(pem, end='')
         let pem = b"-----BEGIN DATA-----\n\
                         ZGF0YQ==\n\
                      -----END DATA-----\n";
-        let decoded: Vec<Result<Block, Error>> = decode(pem).collect();
+        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"data");
     }

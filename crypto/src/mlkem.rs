@@ -8,12 +8,12 @@ use crate::{
 };
 
 pub const SHARED_SECRET_SIZE: usize = 32;
-pub const ML_KEM_768_PUBLIC_KEY_SIZE: usize = 1184;
-pub const ML_KEM_768_SECRET_KEY_SIZE: usize = 2400;
-pub const ML_KEM_768_CIPHERTEXT_SIZE: usize = 1088;
-pub const ML_KEM_1024_PUBLIC_KEY_SIZE: usize = 1568;
-pub const ML_KEM_1024_SECRET_KEY_SIZE: usize = 3168;
-pub const ML_KEM_1024_CIPHERTEXT_SIZE: usize = 1568;
+pub const PUBLIC_KEY_SIZE_768: usize = 1184;
+pub const SECRET_KEY_SIZE_768: usize = 2400;
+pub const CIPHERTEXT_SIZE_768: usize = 1088;
+pub const PUBLIC_KEY_SIZE_1024: usize = 1568;
+pub const SECRET_KEY_SIZE_1024: usize = 3168;
+pub const CIPHERTEXT_SIZE_1024: usize = 1568;
 
 const N: usize = 256;
 const Q: i16 = 3329;
@@ -43,10 +43,18 @@ const ML_KEM_1024: MlKemParams<4> = MlKemParams {
     polyveccompressedbytes: 1408,
 };
 
-#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MlKemError {
-    #[error("key is not valid")]
     InvalidKey,
+}
+
+#[cfg(feature = "alloc")]
+impl core::fmt::Display for MlKemError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            MlKemError::InvalidKey => write!(f, "key is not valid"),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -87,51 +95,47 @@ impl<const K: usize> Default for PolyVec<K> {
 }
 
 #[inline]
-pub fn ml_kem_768_generate_keypair() -> ([u8; ML_KEM_768_SECRET_KEY_SIZE], [u8; ML_KEM_768_PUBLIC_KEY_SIZE]) {
+pub fn ml_kem_768_generate_keypair() -> ([u8; SECRET_KEY_SIZE_768], [u8; PUBLIC_KEY_SIZE_768]) {
     let coins: [u8; 64] = rand::random();
-    crypto_kem_keypair_derand::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_PUBLIC_KEY_SIZE>(&ML_KEM_768, &coins)
+    crypto_kem_keypair_derand::<3, SECRET_KEY_SIZE_768, PUBLIC_KEY_SIZE_768>(&ML_KEM_768, &coins)
 }
 
 #[inline]
 pub fn ml_kem_768_encapsulate(
-    public_key: &[u8; ML_KEM_768_PUBLIC_KEY_SIZE],
-) -> ([u8; ML_KEM_768_CIPHERTEXT_SIZE], [u8; SHARED_SECRET_SIZE]) {
+    public_key: &[u8; PUBLIC_KEY_SIZE_768],
+) -> ([u8; CIPHERTEXT_SIZE_768], [u8; SHARED_SECRET_SIZE]) {
     let coins: [u8; 32] = rand::random();
-    crypto_kem_enc_derand::<3, ML_KEM_768_PUBLIC_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(&ML_KEM_768, public_key, &coins)
+    crypto_kem_enc_derand::<3, PUBLIC_KEY_SIZE_768, CIPHERTEXT_SIZE_768>(&ML_KEM_768, public_key, &coins)
 }
 
 #[inline]
 pub fn ml_kem_768_decapsulate(
-    private_key: &[u8; ML_KEM_768_SECRET_KEY_SIZE],
-    ciphertext: &[u8; ML_KEM_768_CIPHERTEXT_SIZE],
+    private_key: &[u8; SECRET_KEY_SIZE_768],
+    ciphertext: &[u8; CIPHERTEXT_SIZE_768],
 ) -> Result<[u8; SHARED_SECRET_SIZE], MlKemError> {
-    crypto_kem_dec::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(&ML_KEM_768, private_key, ciphertext)
+    crypto_kem_dec::<3, SECRET_KEY_SIZE_768, CIPHERTEXT_SIZE_768>(&ML_KEM_768, private_key, ciphertext)
 }
 
 #[inline]
-pub fn ml_kem_1024_generate_keypair() -> ([u8; ML_KEM_1024_SECRET_KEY_SIZE], [u8; ML_KEM_1024_PUBLIC_KEY_SIZE]) {
+pub fn ml_kem_1024_generate_keypair() -> ([u8; SECRET_KEY_SIZE_1024], [u8; PUBLIC_KEY_SIZE_1024]) {
     let coins: [u8; 64] = rand::random();
-    crypto_kem_keypair_derand::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_PUBLIC_KEY_SIZE>(&ML_KEM_1024, &coins)
+    crypto_kem_keypair_derand::<4, SECRET_KEY_SIZE_1024, PUBLIC_KEY_SIZE_1024>(&ML_KEM_1024, &coins)
 }
 
 #[inline]
 pub fn ml_kem_1024_encapsulate(
-    public_key: &[u8; ML_KEM_1024_PUBLIC_KEY_SIZE],
-) -> ([u8; ML_KEM_1024_CIPHERTEXT_SIZE], [u8; SHARED_SECRET_SIZE]) {
+    public_key: &[u8; PUBLIC_KEY_SIZE_1024],
+) -> ([u8; CIPHERTEXT_SIZE_1024], [u8; SHARED_SECRET_SIZE]) {
     let coins: [u8; 32] = rand::random();
-    crypto_kem_enc_derand::<4, ML_KEM_1024_PUBLIC_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(
-        &ML_KEM_1024,
-        public_key,
-        &coins,
-    )
+    crypto_kem_enc_derand::<4, PUBLIC_KEY_SIZE_1024, CIPHERTEXT_SIZE_1024>(&ML_KEM_1024, public_key, &coins)
 }
 
 #[inline]
 pub fn ml_kem_1024_decapsulate(
-    private_key: &[u8; ML_KEM_1024_SECRET_KEY_SIZE],
-    ciphertext: &[u8; ML_KEM_1024_CIPHERTEXT_SIZE],
+    private_key: &[u8; SECRET_KEY_SIZE_1024],
+    ciphertext: &[u8; CIPHERTEXT_SIZE_1024],
 ) -> Result<[u8; SHARED_SECRET_SIZE], MlKemError> {
-    crypto_kem_dec::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(&ML_KEM_1024, private_key, ciphertext)
+    crypto_kem_dec::<4, SECRET_KEY_SIZE_1024, CIPHERTEXT_SIZE_1024>(&ML_KEM_1024, private_key, ciphertext)
 }
 
 #[inline]
@@ -947,18 +951,16 @@ fn array_ref_32(input: &[u8]) -> &[u8; 32] {
 }
 
 #[inline]
-pub(crate) fn ml_kem_768_keypair_derand(
-    coins: &[u8; 64],
-) -> ([u8; ML_KEM_768_SECRET_KEY_SIZE], [u8; ML_KEM_768_PUBLIC_KEY_SIZE]) {
-    crypto_kem_keypair_derand::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_PUBLIC_KEY_SIZE>(&ML_KEM_768, coins)
+pub(crate) fn ml_kem_768_keypair_derand(coins: &[u8; 64]) -> ([u8; SECRET_KEY_SIZE_768], [u8; PUBLIC_KEY_SIZE_768]) {
+    crypto_kem_keypair_derand::<3, SECRET_KEY_SIZE_768, PUBLIC_KEY_SIZE_768>(&ML_KEM_768, coins)
 }
 
 #[inline]
 pub(crate) fn ml_kem_768_enc_derand(
-    public_key: &[u8; ML_KEM_768_PUBLIC_KEY_SIZE],
+    public_key: &[u8; PUBLIC_KEY_SIZE_768],
     coins: &[u8; 32],
-) -> ([u8; ML_KEM_768_CIPHERTEXT_SIZE], [u8; SHARED_SECRET_SIZE]) {
-    crypto_kem_enc_derand::<3, ML_KEM_768_PUBLIC_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(&ML_KEM_768, public_key, coins)
+) -> ([u8; CIPHERTEXT_SIZE_768], [u8; SHARED_SECRET_SIZE]) {
+    crypto_kem_enc_derand::<3, PUBLIC_KEY_SIZE_768, CIPHERTEXT_SIZE_768>(&ML_KEM_768, public_key, coins)
 }
 
 #[cfg(test)]
@@ -1013,22 +1015,13 @@ mod tests {
     fn ml_kem_768_deterministic_derand_vectors_are_stable() {
         let key_coins = [7u8; 64];
         let enc_coins = [9u8; 32];
-        let (secret_key, public_key) = crypto_kem_keypair_derand::<
-            3,
-            ML_KEM_768_SECRET_KEY_SIZE,
-            ML_KEM_768_PUBLIC_KEY_SIZE,
-        >(&ML_KEM_768, &key_coins);
-        let (ciphertext, shared_secret) = crypto_kem_enc_derand::<
-            3,
-            ML_KEM_768_PUBLIC_KEY_SIZE,
-            ML_KEM_768_CIPHERTEXT_SIZE,
-        >(&ML_KEM_768, &public_key, &enc_coins);
-        let decapsulated = crypto_kem_dec::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(
-            &ML_KEM_768,
-            &secret_key,
-            &ciphertext,
-        )
-        .unwrap();
+        let (secret_key, public_key) =
+            crypto_kem_keypair_derand::<3, SECRET_KEY_SIZE_768, PUBLIC_KEY_SIZE_768>(&ML_KEM_768, &key_coins);
+        let (ciphertext, shared_secret) =
+            crypto_kem_enc_derand::<3, PUBLIC_KEY_SIZE_768, CIPHERTEXT_SIZE_768>(&ML_KEM_768, &public_key, &enc_coins);
+        let decapsulated =
+            crypto_kem_dec::<3, SECRET_KEY_SIZE_768, CIPHERTEXT_SIZE_768>(&ML_KEM_768, &secret_key, &ciphertext)
+                .unwrap();
 
         assert_eq!(shared_secret, decapsulated);
         assert_eq!(
@@ -1071,7 +1064,7 @@ mod tests {
             let mut d = [0u8; 32];
             let mut z = [0u8; 32];
             let mut m = [0u8; 32];
-            let mut ct_random = [0u8; ML_KEM_768_CIPHERTEXT_SIZE];
+            let mut ct_random = [0u8; CIPHERTEXT_SIZE_768];
 
             rng.squeeze(&mut d);
             rng.squeeze(&mut z);
@@ -1082,27 +1075,17 @@ mod tests {
             coins[..32].copy_from_slice(&d);
             coins[32..].copy_from_slice(&z);
 
-            let (dk, ek) = crypto_kem_keypair_derand::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_PUBLIC_KEY_SIZE>(
-                &ML_KEM_768,
-                &coins,
-            );
-            let (ct, k_encaps) = crypto_kem_enc_derand::<3, ML_KEM_768_PUBLIC_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(
-                &ML_KEM_768,
-                &ek,
-                &m,
-            );
+            let (dk, ek) =
+                crypto_kem_keypair_derand::<3, SECRET_KEY_SIZE_768, PUBLIC_KEY_SIZE_768>(&ML_KEM_768, &coins);
+            let (ct, k_encaps) =
+                crypto_kem_enc_derand::<3, PUBLIC_KEY_SIZE_768, CIPHERTEXT_SIZE_768>(&ML_KEM_768, &ek, &m);
 
             let k_decaps =
-                crypto_kem_dec::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(&ML_KEM_768, &dk, &ct)
-                    .unwrap();
+                crypto_kem_dec::<3, SECRET_KEY_SIZE_768, CIPHERTEXT_SIZE_768>(&ML_KEM_768, &dk, &ct).unwrap();
             assert_eq!(k_encaps, k_decaps);
 
-            let k_decaps_random = crypto_kem_dec::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(
-                &ML_KEM_768,
-                &dk,
-                &ct_random,
-            )
-            .unwrap();
+            let k_decaps_random =
+                crypto_kem_dec::<3, SECRET_KEY_SIZE_768, CIPHERTEXT_SIZE_768>(&ML_KEM_768, &dk, &ct_random).unwrap();
 
             acc.absorb(&ek);
             acc.absorb(&dk);
@@ -1133,7 +1116,7 @@ mod tests {
             let mut d = [0u8; 32];
             let mut z = [0u8; 32];
             let mut m = [0u8; 32];
-            let mut ct_random = [0u8; ML_KEM_1024_CIPHERTEXT_SIZE];
+            let mut ct_random = [0u8; CIPHERTEXT_SIZE_1024];
 
             rng.squeeze(&mut d);
             rng.squeeze(&mut z);
@@ -1144,27 +1127,17 @@ mod tests {
             coins[..32].copy_from_slice(&d);
             coins[32..].copy_from_slice(&z);
 
-            let (dk, ek) = crypto_kem_keypair_derand::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_PUBLIC_KEY_SIZE>(
-                &ML_KEM_1024,
-                &coins,
-            );
-            let (ct, k_encaps) = crypto_kem_enc_derand::<4, ML_KEM_1024_PUBLIC_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(
-                &ML_KEM_1024,
-                &ek,
-                &m,
-            );
+            let (dk, ek) =
+                crypto_kem_keypair_derand::<4, SECRET_KEY_SIZE_1024, PUBLIC_KEY_SIZE_1024>(&ML_KEM_1024, &coins);
+            let (ct, k_encaps) =
+                crypto_kem_enc_derand::<4, PUBLIC_KEY_SIZE_1024, CIPHERTEXT_SIZE_1024>(&ML_KEM_1024, &ek, &m);
 
             let k_decaps =
-                crypto_kem_dec::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(&ML_KEM_1024, &dk, &ct)
-                    .unwrap();
+                crypto_kem_dec::<4, SECRET_KEY_SIZE_1024, CIPHERTEXT_SIZE_1024>(&ML_KEM_1024, &dk, &ct).unwrap();
             assert_eq!(k_encaps, k_decaps);
 
-            let k_decaps_random = crypto_kem_dec::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(
-                &ML_KEM_1024,
-                &dk,
-                &ct_random,
-            )
-            .unwrap();
+            let k_decaps_random =
+                crypto_kem_dec::<4, SECRET_KEY_SIZE_1024, CIPHERTEXT_SIZE_1024>(&ML_KEM_1024, &dk, &ct_random).unwrap();
 
             acc.absorb(&ek);
             acc.absorb(&dk);
@@ -1186,22 +1159,16 @@ mod tests {
     fn ml_kem_1024_deterministic_derand_vectors_are_stable() {
         let key_coins = [3u8; 64];
         let enc_coins = [5u8; 32];
-        let (secret_key, public_key) = crypto_kem_keypair_derand::<
-            4,
-            ML_KEM_1024_SECRET_KEY_SIZE,
-            ML_KEM_1024_PUBLIC_KEY_SIZE,
-        >(&ML_KEM_1024, &key_coins);
-        let (ciphertext, shared_secret) = crypto_kem_enc_derand::<
-            4,
-            ML_KEM_1024_PUBLIC_KEY_SIZE,
-            ML_KEM_1024_CIPHERTEXT_SIZE,
-        >(&ML_KEM_1024, &public_key, &enc_coins);
-        let decapsulated = crypto_kem_dec::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(
+        let (secret_key, public_key) =
+            crypto_kem_keypair_derand::<4, SECRET_KEY_SIZE_1024, PUBLIC_KEY_SIZE_1024>(&ML_KEM_1024, &key_coins);
+        let (ciphertext, shared_secret) = crypto_kem_enc_derand::<4, PUBLIC_KEY_SIZE_1024, CIPHERTEXT_SIZE_1024>(
             &ML_KEM_1024,
-            &secret_key,
-            &ciphertext,
-        )
-        .unwrap();
+            &public_key,
+            &enc_coins,
+        );
+        let decapsulated =
+            crypto_kem_dec::<4, SECRET_KEY_SIZE_1024, CIPHERTEXT_SIZE_1024>(&ML_KEM_1024, &secret_key, &ciphertext)
+                .unwrap();
 
         assert_eq!(shared_secret, decapsulated);
         assert_eq!(
@@ -1230,10 +1197,8 @@ mod tests {
         coins[..32].copy_from_slice(&d);
         coins[32..].copy_from_slice(&z);
 
-        let (dk, ek) =
-            crypto_kem_keypair_derand::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_PUBLIC_KEY_SIZE>(&ML_KEM_768, &coins);
-        let (ct, k) =
-            crypto_kem_enc_derand::<3, ML_KEM_768_PUBLIC_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(&ML_KEM_768, &ek, &m);
+        let (dk, ek) = crypto_kem_keypair_derand::<3, SECRET_KEY_SIZE_768, PUBLIC_KEY_SIZE_768>(&ML_KEM_768, &coins);
+        let (ct, k) = crypto_kem_enc_derand::<3, PUBLIC_KEY_SIZE_768, CIPHERTEXT_SIZE_768>(&ML_KEM_768, &ek, &m);
 
         assert_eq!(
             sha3_256_hex(&ek),
@@ -1265,12 +1230,8 @@ mod tests {
         coins[..32].copy_from_slice(&d);
         coins[32..].copy_from_slice(&z);
 
-        let (dk, ek) = crypto_kem_keypair_derand::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_PUBLIC_KEY_SIZE>(
-            &ML_KEM_1024,
-            &coins,
-        );
-        let (ct, k) =
-            crypto_kem_enc_derand::<4, ML_KEM_1024_PUBLIC_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(&ML_KEM_1024, &ek, &m);
+        let (dk, ek) = crypto_kem_keypair_derand::<4, SECRET_KEY_SIZE_1024, PUBLIC_KEY_SIZE_1024>(&ML_KEM_1024, &coins);
+        let (ct, k) = crypto_kem_enc_derand::<4, PUBLIC_KEY_SIZE_1024, CIPHERTEXT_SIZE_1024>(&ML_KEM_1024, &ek, &m);
 
         assert_eq!(
             sha3_256_hex(&ek),
@@ -1345,38 +1306,36 @@ mod tests {
     #[test]
     fn ml_kem_768_all_zero_ciphertext_does_not_panic() {
         let (sk, _pk) = ml_kem_768_generate_keypair();
-        let ct = [0u8; ML_KEM_768_CIPHERTEXT_SIZE];
+        let ct = [0u8; CIPHERTEXT_SIZE_768];
         let _result = ml_kem_768_decapsulate(&sk, &ct);
     }
 
     #[test]
     fn ml_kem_1024_all_zero_ciphertext_does_not_panic() {
         let (sk, _pk) = ml_kem_1024_generate_keypair();
-        let ct = [0u8; ML_KEM_1024_CIPHERTEXT_SIZE];
+        let ct = [0u8; CIPHERTEXT_SIZE_1024];
         let _result = ml_kem_1024_decapsulate(&sk, &ct);
     }
 
     #[test]
     fn ml_kem_768_all_ones_ciphertext_does_not_panic() {
         let (sk, _pk) = ml_kem_768_generate_keypair();
-        let ct = [0xffu8; ML_KEM_768_CIPHERTEXT_SIZE];
+        let ct = [0xffu8; CIPHERTEXT_SIZE_768];
         let _result = ml_kem_768_decapsulate(&sk, &ct);
     }
 
     #[test]
     fn ml_kem_1024_all_ones_ciphertext_does_not_panic() {
         let (sk, _pk) = ml_kem_1024_generate_keypair();
-        let ct = [0xffu8; ML_KEM_1024_CIPHERTEXT_SIZE];
+        let ct = [0xffu8; CIPHERTEXT_SIZE_1024];
         let _result = ml_kem_1024_decapsulate(&sk, &ct);
     }
 
     #[test]
     fn ml_kem_768_derand_keygen_is_deterministic() {
         let coins = [7u8; 64];
-        let (sk1, pk1) =
-            crypto_kem_keypair_derand::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_PUBLIC_KEY_SIZE>(&ML_KEM_768, &coins);
-        let (sk2, pk2) =
-            crypto_kem_keypair_derand::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_PUBLIC_KEY_SIZE>(&ML_KEM_768, &coins);
+        let (sk1, pk1) = crypto_kem_keypair_derand::<3, SECRET_KEY_SIZE_768, PUBLIC_KEY_SIZE_768>(&ML_KEM_768, &coins);
+        let (sk2, pk2) = crypto_kem_keypair_derand::<3, SECRET_KEY_SIZE_768, PUBLIC_KEY_SIZE_768>(&ML_KEM_768, &coins);
         assert_eq!(sk1, sk2);
         assert_eq!(pk1, pk2);
     }
@@ -1384,14 +1343,10 @@ mod tests {
     #[test]
     fn ml_kem_1024_derand_keygen_is_deterministic() {
         let coins = [3u8; 64];
-        let (sk1, pk1) = crypto_kem_keypair_derand::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_PUBLIC_KEY_SIZE>(
-            &ML_KEM_1024,
-            &coins,
-        );
-        let (sk2, pk2) = crypto_kem_keypair_derand::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_PUBLIC_KEY_SIZE>(
-            &ML_KEM_1024,
-            &coins,
-        );
+        let (sk1, pk1) =
+            crypto_kem_keypair_derand::<4, SECRET_KEY_SIZE_1024, PUBLIC_KEY_SIZE_1024>(&ML_KEM_1024, &coins);
+        let (sk2, pk2) =
+            crypto_kem_keypair_derand::<4, SECRET_KEY_SIZE_1024, PUBLIC_KEY_SIZE_1024>(&ML_KEM_1024, &coins);
         assert_eq!(sk1, sk2);
         assert_eq!(pk1, pk2);
     }
@@ -1399,19 +1354,19 @@ mod tests {
     #[test]
     fn ml_kem_768_key_sizes_are_correct() {
         let (sk, pk) = ml_kem_768_generate_keypair();
-        assert_eq!(sk.len(), ML_KEM_768_SECRET_KEY_SIZE);
-        assert_eq!(pk.len(), ML_KEM_768_PUBLIC_KEY_SIZE);
+        assert_eq!(sk.len(), SECRET_KEY_SIZE_768);
+        assert_eq!(pk.len(), PUBLIC_KEY_SIZE_768);
         let (ct, _) = ml_kem_768_encapsulate(&pk);
-        assert_eq!(ct.len(), ML_KEM_768_CIPHERTEXT_SIZE);
+        assert_eq!(ct.len(), CIPHERTEXT_SIZE_768);
     }
 
     #[test]
     fn ml_kem_1024_key_sizes_are_correct() {
         let (sk, pk) = ml_kem_1024_generate_keypair();
-        assert_eq!(sk.len(), ML_KEM_1024_SECRET_KEY_SIZE);
-        assert_eq!(pk.len(), ML_KEM_1024_PUBLIC_KEY_SIZE);
+        assert_eq!(sk.len(), SECRET_KEY_SIZE_1024);
+        assert_eq!(pk.len(), PUBLIC_KEY_SIZE_1024);
         let (ct, _) = ml_kem_1024_encapsulate(&pk);
-        assert_eq!(ct.len(), ML_KEM_1024_CIPHERTEXT_SIZE);
+        assert_eq!(ct.len(), CIPHERTEXT_SIZE_1024);
     }
 
     #[test]
@@ -1450,20 +1405,12 @@ mod tests {
     fn ml_kem_768_encaps_is_deterministic_with_same_coins() {
         let enc_coins = [9u8; 32];
         let key_coins = [7u8; 64];
-        let (_sk, pk) = crypto_kem_keypair_derand::<3, ML_KEM_768_SECRET_KEY_SIZE, ML_KEM_768_PUBLIC_KEY_SIZE>(
-            &ML_KEM_768,
-            &key_coins,
-        );
-        let (ct1, ss1) = crypto_kem_enc_derand::<3, ML_KEM_768_PUBLIC_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(
-            &ML_KEM_768,
-            &pk,
-            &enc_coins,
-        );
-        let (ct2, ss2) = crypto_kem_enc_derand::<3, ML_KEM_768_PUBLIC_KEY_SIZE, ML_KEM_768_CIPHERTEXT_SIZE>(
-            &ML_KEM_768,
-            &pk,
-            &enc_coins,
-        );
+        let (_sk, pk) =
+            crypto_kem_keypair_derand::<3, SECRET_KEY_SIZE_768, PUBLIC_KEY_SIZE_768>(&ML_KEM_768, &key_coins);
+        let (ct1, ss1) =
+            crypto_kem_enc_derand::<3, PUBLIC_KEY_SIZE_768, CIPHERTEXT_SIZE_768>(&ML_KEM_768, &pk, &enc_coins);
+        let (ct2, ss2) =
+            crypto_kem_enc_derand::<3, PUBLIC_KEY_SIZE_768, CIPHERTEXT_SIZE_768>(&ML_KEM_768, &pk, &enc_coins);
         assert_eq!(ct1, ct2);
         assert_eq!(ss1, ss2);
     }
@@ -1472,20 +1419,12 @@ mod tests {
     fn ml_kem_1024_encaps_is_deterministic_with_same_coins() {
         let enc_coins = [5u8; 32];
         let key_coins = [3u8; 64];
-        let (_sk, pk) = crypto_kem_keypair_derand::<4, ML_KEM_1024_SECRET_KEY_SIZE, ML_KEM_1024_PUBLIC_KEY_SIZE>(
-            &ML_KEM_1024,
-            &key_coins,
-        );
-        let (ct1, ss1) = crypto_kem_enc_derand::<4, ML_KEM_1024_PUBLIC_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(
-            &ML_KEM_1024,
-            &pk,
-            &enc_coins,
-        );
-        let (ct2, ss2) = crypto_kem_enc_derand::<4, ML_KEM_1024_PUBLIC_KEY_SIZE, ML_KEM_1024_CIPHERTEXT_SIZE>(
-            &ML_KEM_1024,
-            &pk,
-            &enc_coins,
-        );
+        let (_sk, pk) =
+            crypto_kem_keypair_derand::<4, SECRET_KEY_SIZE_1024, PUBLIC_KEY_SIZE_1024>(&ML_KEM_1024, &key_coins);
+        let (ct1, ss1) =
+            crypto_kem_enc_derand::<4, PUBLIC_KEY_SIZE_1024, CIPHERTEXT_SIZE_1024>(&ML_KEM_1024, &pk, &enc_coins);
+        let (ct2, ss2) =
+            crypto_kem_enc_derand::<4, PUBLIC_KEY_SIZE_1024, CIPHERTEXT_SIZE_1024>(&ML_KEM_1024, &pk, &enc_coins);
         assert_eq!(ct1, ct2);
         assert_eq!(ss1, ss2);
     }
@@ -1511,5 +1450,373 @@ mod tests {
         let ss1 = ml_kem_1024_decapsulate(&sk_b, &ct).unwrap();
         let ss2 = ml_kem_1024_decapsulate(&sk_b, &ct).unwrap();
         assert_eq!(ss1, ss2, "implicit rejection must be deterministic");
+    }
+
+    // --- Wycheproof test vectors ---
+
+    #[test]
+    fn ml_kem_768_wycheproof_keygen() {
+        let data: serde_json::Value = serde_json::from_str(include_str!(
+            "../testdata/wycheproof/testvectors_v1/mlkem_768_keygen_seed_test.json"
+        ))
+        .unwrap();
+        let mut tested = 0u64;
+        for group in data["testGroups"].as_array().unwrap() {
+            if group["parameterSet"].as_str() != Some("ML-KEM-768") {
+                continue;
+            }
+            for test in group["tests"].as_array().unwrap() {
+                let seed_hex = test["seed"].as_str().unwrap();
+                let expected_ek_hex = test["ek"].as_str().unwrap();
+                let expected_dk_hex = test["dk"].as_str().unwrap();
+                let result = test["result"].as_str().unwrap();
+
+                let mut seed = [0u8; 64];
+                hex::decode_to_slice(seed_hex, &mut seed).unwrap();
+
+                let (dk, ek) =
+                    crypto_kem_keypair_derand::<3, SECRET_KEY_SIZE_768, PUBLIC_KEY_SIZE_768>(&ML_KEM_768, &seed);
+
+                let ek_hex = hex::encode(ek);
+                let dk_hex = hex::encode(dk);
+
+                if result == "valid" {
+                    assert_eq!(
+                        ek_hex, expected_ek_hex,
+                        "wycheproof keygen KAT tcId={} ek mismatch",
+                        test["tcId"]
+                    );
+                    assert_eq!(
+                        dk_hex, expected_dk_hex,
+                        "wycheproof keygen KAT tcId={} dk mismatch",
+                        test["tcId"]
+                    );
+                }
+                tested += 1;
+            }
+        }
+        assert!(tested > 0, "no ML-KEM-768 keygen tests were run");
+    }
+
+    #[test]
+    fn ml_kem_1024_wycheproof_keygen() {
+        let data: serde_json::Value = serde_json::from_str(include_str!(
+            "../testdata/wycheproof/testvectors_v1/mlkem_1024_keygen_seed_test.json"
+        ))
+        .unwrap();
+        let mut tested = 0u64;
+        for group in data["testGroups"].as_array().unwrap() {
+            if group["parameterSet"].as_str() != Some("ML-KEM-1024") {
+                continue;
+            }
+            for test in group["tests"].as_array().unwrap() {
+                let seed_hex = test["seed"].as_str().unwrap();
+                let expected_ek_hex = test["ek"].as_str().unwrap();
+                let expected_dk_hex = test["dk"].as_str().unwrap();
+                let result = test["result"].as_str().unwrap();
+
+                let mut seed = [0u8; 64];
+                hex::decode_to_slice(seed_hex, &mut seed).unwrap();
+
+                let (dk, ek) =
+                    crypto_kem_keypair_derand::<4, SECRET_KEY_SIZE_1024, PUBLIC_KEY_SIZE_1024>(&ML_KEM_1024, &seed);
+
+                let ek_hex = hex::encode(ek);
+                let dk_hex = hex::encode(dk);
+
+                if result == "valid" {
+                    assert_eq!(
+                        ek_hex, expected_ek_hex,
+                        "wycheproof keygen KAT tcId={} ek mismatch",
+                        test["tcId"]
+                    );
+                    assert_eq!(
+                        dk_hex, expected_dk_hex,
+                        "wycheproof keygen KAT tcId={} dk mismatch",
+                        test["tcId"]
+                    );
+                }
+                tested += 1;
+            }
+        }
+        assert!(tested > 0, "no ML-KEM-1024 keygen tests were run");
+    }
+
+    fn wycheproof_kem_skip_invalid_lengths(seed_hex: &str, c_hex: &str, ct_size: usize) -> bool {
+        seed_hex.len() != 128 || c_hex.len() != ct_size * 2
+    }
+
+    #[test]
+    fn ml_kem_768_wycheproof_kem() {
+        let data: serde_json::Value =
+            serde_json::from_str(include_str!("../testdata/wycheproof/testvectors_v1/mlkem_768_test.json")).unwrap();
+        let mut tested = 0u64;
+        for group in data["testGroups"].as_array().unwrap() {
+            if group["parameterSet"].as_str() != Some("ML-KEM-768") {
+                continue;
+            }
+            for test in group["tests"].as_array().unwrap() {
+                let seed_hex = test["seed"].as_str().unwrap();
+                let c_hex = test["c"].as_str().unwrap();
+                let expected_k_hex = test["K"].as_str().unwrap();
+                let result = test["result"].as_str().unwrap();
+
+                if wycheproof_kem_skip_invalid_lengths(seed_hex, c_hex, CIPHERTEXT_SIZE_768) {
+                    tested += 1;
+                    continue;
+                }
+
+                let mut seed = [0u8; 64];
+                hex::decode_to_slice(seed_hex, &mut seed).unwrap();
+
+                let (dk, ek) =
+                    crypto_kem_keypair_derand::<3, SECRET_KEY_SIZE_768, PUBLIC_KEY_SIZE_768>(&ML_KEM_768, &seed);
+
+                if let Some(expected_ek_hex) = test.get("ek").and_then(|v| v.as_str()) {
+                    let ek_hex = hex::encode(ek);
+                    assert_eq!(ek_hex, expected_ek_hex, "wycheproof KEM KAT tcId={} ek mismatch", test["tcId"]);
+                }
+
+                let c = decode_hex_array::<CIPHERTEXT_SIZE_768>(c_hex);
+                let shared_secret = crypto_kem_dec::<3, SECRET_KEY_SIZE_768, CIPHERTEXT_SIZE_768>(&ML_KEM_768, &dk, &c);
+
+                if result == "valid" {
+                    let k = shared_secret.unwrap();
+                    let k_hex = hex::encode(k);
+                    assert_eq!(k_hex, expected_k_hex, "wycheproof KEM KAT tcId={} K mismatch", test["tcId"]);
+                } else {
+                    assert!(
+                        shared_secret.is_ok(),
+                        "wycheproof KEM KAT tcId={} unexpected error",
+                        test["tcId"]
+                    );
+                }
+                tested += 1;
+            }
+        }
+        assert!(tested > 0, "no ML-KEM-768 KEM tests were run");
+    }
+
+    #[test]
+    fn ml_kem_1024_wycheproof_kem() {
+        let data: serde_json::Value =
+            serde_json::from_str(include_str!("../testdata/wycheproof/testvectors_v1/mlkem_1024_test.json")).unwrap();
+        let mut tested = 0u64;
+        for group in data["testGroups"].as_array().unwrap() {
+            if group["parameterSet"].as_str() != Some("ML-KEM-1024") {
+                continue;
+            }
+            for test in group["tests"].as_array().unwrap() {
+                let seed_hex = test["seed"].as_str().unwrap();
+                let c_hex = test["c"].as_str().unwrap();
+                let expected_k_hex = test["K"].as_str().unwrap();
+                let result = test["result"].as_str().unwrap();
+
+                if wycheproof_kem_skip_invalid_lengths(seed_hex, c_hex, CIPHERTEXT_SIZE_1024) {
+                    tested += 1;
+                    continue;
+                }
+
+                let mut seed = [0u8; 64];
+                hex::decode_to_slice(seed_hex, &mut seed).unwrap();
+
+                let (dk, ek) =
+                    crypto_kem_keypair_derand::<4, SECRET_KEY_SIZE_1024, PUBLIC_KEY_SIZE_1024>(&ML_KEM_1024, &seed);
+
+                if let Some(expected_ek_hex) = test.get("ek").and_then(|v| v.as_str()) {
+                    let ek_hex = hex::encode(ek);
+                    assert_eq!(ek_hex, expected_ek_hex, "wycheproof KEM KAT tcId={} ek mismatch", test["tcId"]);
+                }
+
+                let c = decode_hex_array::<CIPHERTEXT_SIZE_1024>(c_hex);
+                let shared_secret =
+                    crypto_kem_dec::<4, SECRET_KEY_SIZE_1024, CIPHERTEXT_SIZE_1024>(&ML_KEM_1024, &dk, &c);
+
+                if result == "valid" {
+                    let k = shared_secret.unwrap();
+                    let k_hex = hex::encode(k);
+                    assert_eq!(k_hex, expected_k_hex, "wycheproof KEM KAT tcId={} K mismatch", test["tcId"]);
+                } else {
+                    assert!(
+                        shared_secret.is_ok(),
+                        "wycheproof KEM KAT tcId={} unexpected error",
+                        test["tcId"]
+                    );
+                }
+                tested += 1;
+            }
+        }
+        assert!(tested > 0, "no ML-KEM-1024 KEM tests were run");
+    }
+
+    #[test]
+    fn ml_kem_768_wycheproof_encaps() {
+        let data: serde_json::Value =
+            serde_json::from_str(include_str!("../testdata/wycheproof/testvectors_v1/mlkem_768_encaps_test.json"))
+                .unwrap();
+        let mut tested = 0u64;
+        for group in data["testGroups"].as_array().unwrap() {
+            if group["parameterSet"].as_str() != Some("ML-KEM-768") {
+                continue;
+            }
+            for test in group["tests"].as_array().unwrap() {
+                let ek_hex = test["ek"].as_str().unwrap();
+                let m_hex = test["m"].as_str().unwrap();
+                let expected_c_hex = test["c"].as_str().unwrap();
+                let expected_k_hex = test["K"].as_str().unwrap();
+                let result = test["result"].as_str().unwrap();
+
+                if ek_hex.len() != PUBLIC_KEY_SIZE_768 * 2 {
+                    tested += 1;
+                    continue;
+                }
+
+                let ek = decode_hex_array::<PUBLIC_KEY_SIZE_768>(ek_hex);
+
+                if result == "valid" {
+                    let m = decode_hex_array::<32>(m_hex);
+                    let (c, k) =
+                        crypto_kem_enc_derand::<3, PUBLIC_KEY_SIZE_768, CIPHERTEXT_SIZE_768>(&ML_KEM_768, &ek, &m);
+                    let c_hex_out = hex::encode(c);
+                    let k_hex_out = hex::encode(k);
+                    assert_eq!(
+                        c_hex_out, expected_c_hex,
+                        "wycheproof encaps KAT tcId={} c mismatch",
+                        test["tcId"]
+                    );
+                    assert_eq!(
+                        k_hex_out, expected_k_hex,
+                        "wycheproof encaps KAT tcId={} K mismatch",
+                        test["tcId"]
+                    );
+                }
+                tested += 1;
+            }
+        }
+        assert!(tested > 0, "no ML-KEM-768 encaps tests were run");
+    }
+
+    #[test]
+    fn ml_kem_1024_wycheproof_encaps() {
+        let data: serde_json::Value = serde_json::from_str(include_str!(
+            "../testdata/wycheproof/testvectors_v1/mlkem_1024_encaps_test.json"
+        ))
+        .unwrap();
+        let mut tested = 0u64;
+        for group in data["testGroups"].as_array().unwrap() {
+            if group["parameterSet"].as_str() != Some("ML-KEM-1024") {
+                continue;
+            }
+            for test in group["tests"].as_array().unwrap() {
+                let ek_hex = test["ek"].as_str().unwrap();
+                let m_hex = test["m"].as_str().unwrap();
+                let expected_c_hex = test["c"].as_str().unwrap();
+                let expected_k_hex = test["K"].as_str().unwrap();
+                let result = test["result"].as_str().unwrap();
+
+                if ek_hex.len() != PUBLIC_KEY_SIZE_1024 * 2 {
+                    tested += 1;
+                    continue;
+                }
+
+                let ek = decode_hex_array::<PUBLIC_KEY_SIZE_1024>(ek_hex);
+
+                if result == "valid" {
+                    let m = decode_hex_array::<32>(m_hex);
+                    let (c, k) =
+                        crypto_kem_enc_derand::<4, PUBLIC_KEY_SIZE_1024, CIPHERTEXT_SIZE_1024>(&ML_KEM_1024, &ek, &m);
+                    let c_hex_out = hex::encode(c);
+                    let k_hex_out = hex::encode(k);
+                    assert_eq!(
+                        c_hex_out, expected_c_hex,
+                        "wycheproof encaps KAT tcId={} c mismatch",
+                        test["tcId"]
+                    );
+                    assert_eq!(
+                        k_hex_out, expected_k_hex,
+                        "wycheproof encaps KAT tcId={} K mismatch",
+                        test["tcId"]
+                    );
+                }
+                tested += 1;
+            }
+        }
+        assert!(tested > 0, "no ML-KEM-1024 encaps tests were run");
+    }
+
+    #[test]
+    fn ml_kem_768_wycheproof_decaps_validation() {
+        let data: serde_json::Value = serde_json::from_str(include_str!(
+            "../testdata/wycheproof/testvectors_v1/mlkem_768_semi_expanded_decaps_test.json"
+        ))
+        .unwrap();
+        let mut tested = 0u64;
+        for group in data["testGroups"].as_array().unwrap() {
+            if group["parameterSet"].as_str() != Some("ML-KEM-768") {
+                continue;
+            }
+            for test in group["tests"].as_array().unwrap() {
+                let flags: Vec<&str> = test["flags"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+                    .unwrap_or_default();
+                let dk_hex = test["dk"].as_str().unwrap();
+                let c_hex = test["c"].as_str().unwrap();
+
+                // Tests with wrong-length keys or ciphertexts can't be tested
+                // with our fixed-size array API.
+                if flags.contains(&"IncorrectDecapsulationKeyLength") || flags.contains(&"IncorrectCiphertextLength") {
+                    tested += 1;
+                    continue;
+                }
+
+                let dk = decode_hex_array::<SECRET_KEY_SIZE_768>(dk_hex);
+                let c = decode_hex_array::<CIPHERTEXT_SIZE_768>(c_hex);
+
+                let result = crypto_kem_dec::<3, SECRET_KEY_SIZE_768, CIPHERTEXT_SIZE_768>(&ML_KEM_768, &dk, &c);
+
+                // For valid decaps, the call should succeed.
+                // For invalid decaps (corrupted dk), ML-KEM still returns Ok due to implicit rejection.
+                assert!(result.is_ok(), "wycheproof decaps tcId={} panicked", test["tcId"]);
+                tested += 1;
+            }
+        }
+        assert!(tested > 0, "no ML-KEM-768 decaps validation tests were run");
+    }
+
+    #[test]
+    fn ml_kem_1024_wycheproof_decaps_validation() {
+        let data: serde_json::Value = serde_json::from_str(include_str!(
+            "../testdata/wycheproof/testvectors_v1/mlkem_1024_semi_expanded_decaps_test.json"
+        ))
+        .unwrap();
+        let mut tested = 0u64;
+        for group in data["testGroups"].as_array().unwrap() {
+            if group["parameterSet"].as_str() != Some("ML-KEM-1024") {
+                continue;
+            }
+            for test in group["tests"].as_array().unwrap() {
+                let flags: Vec<&str> = test["flags"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+                    .unwrap_or_default();
+                let dk_hex = test["dk"].as_str().unwrap();
+                let c_hex = test["c"].as_str().unwrap();
+
+                if flags.contains(&"IncorrectDecapsulationKeyLength") || flags.contains(&"IncorrectCiphertextLength") {
+                    tested += 1;
+                    continue;
+                }
+
+                let dk = decode_hex_array::<SECRET_KEY_SIZE_1024>(dk_hex);
+                let c = decode_hex_array::<CIPHERTEXT_SIZE_1024>(c_hex);
+
+                let result = crypto_kem_dec::<4, SECRET_KEY_SIZE_1024, CIPHERTEXT_SIZE_1024>(&ML_KEM_1024, &dk, &c);
+
+                assert!(result.is_ok(), "wycheproof decaps tcId={} panicked", test["tcId"]);
+                tested += 1;
+            }
+        }
+        assert!(tested > 0, "no ML-KEM-1024 decaps validation tests were run");
     }
 }

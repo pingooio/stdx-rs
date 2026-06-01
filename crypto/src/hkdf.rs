@@ -2,12 +2,22 @@ use crate::{Hash, Hasher, hmac::Hmac};
 
 const DEFAULT_SALT: [u8; 64] = [0u8; 64];
 
-#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HkdfError {
-    #[error("PRK must be at least {0} bytes")]
     PrkIsTooShort(usize),
-    #[error("HKDF output length exceeds RFC 5869 limit (255 * Hash's output size)")]
     OutputIsTooLong,
+}
+
+#[cfg(feature = "alloc")]
+impl core::fmt::Display for HkdfError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            HkdfError::PrkIsTooShort(prk_size) => write!(f, "PRK must be at least {prk_size} bytes"),
+            HkdfError::OutputIsTooLong => {
+                write!(f, "HKDF output length exceeds RFC 5869 limit (255 * Hash's output size)")
+            }
+        }
+    }
 }
 
 /// Extract step: `PRK = HMAC-Hash(salt, IKM)`.
@@ -252,5 +262,111 @@ mod tests {
             expand::<Sha256, 32>(&[0u8; 31], b""),
             Err(HkdfError::PrkIsTooShort(Sha256::OUTPUT_SIZE))
         );
+    }
+
+    // --- Wycheproof test vectors ---
+
+    #[test]
+    fn hkdf_sha256_wycheproof() {
+        // Maximum valid HKDF-SHA-256 output: 255 * 32 = 8160 bytes.
+        const MAX_OKM: usize = 8160;
+        const SIZE_TOO_LARGE: usize = 8161;
+
+        let data: serde_json::Value =
+            serde_json::from_str(include_str!("../testdata/wycheproof/testvectors_v1/hkdf_sha256_test.json")).unwrap();
+        let mut valid_tested = 0u64;
+        let mut invalid_tested = 0u64;
+        for group in data["testGroups"].as_array().unwrap() {
+            for test in group["tests"].as_array().unwrap() {
+                let ikm_hex = test["ikm"].as_str().unwrap();
+                let salt_hex = test["salt"].as_str().unwrap();
+                let info_hex = test["info"].as_str().unwrap();
+                let size = test["size"].as_u64().unwrap() as usize;
+                let expected_okm_hex = test["okm"].as_str().unwrap();
+                let result = test["result"].as_str().unwrap();
+
+                let ikm = hex::decode(ikm_hex).unwrap();
+                let info = hex::decode(info_hex).unwrap();
+                let salt: Option<Vec<u8>> = if salt_hex.is_empty() {
+                    None
+                } else {
+                    Some(hex::decode(salt_hex).unwrap())
+                };
+
+                if result == "valid" {
+                    let okm = derive_key::<Sha256, MAX_OKM>(&ikm, &info, salt.as_deref()).unwrap();
+                    let okm_hex = hex::encode(&okm[..size]);
+                    assert_eq!(
+                        okm_hex, expected_okm_hex,
+                        "wycheproof HKDF-SHA-256 tcId={} size={}",
+                        test["tcId"], size
+                    );
+                    valid_tested += 1;
+                } else {
+                    assert_eq!(
+                        derive_key::<Sha256, SIZE_TOO_LARGE>(&ikm, &info, salt.as_deref()),
+                        Err(HkdfError::OutputIsTooLong),
+                        "wycheproof HKDF-SHA-256 tcId={} size={} should reject",
+                        test["tcId"],
+                        size
+                    );
+                    invalid_tested += 1;
+                }
+            }
+        }
+        assert!(valid_tested > 0, "no valid HKDF-SHA-256 wycheproof tests were run");
+        assert!(invalid_tested > 0, "no invalid HKDF-SHA-256 wycheproof tests were run");
+    }
+
+    #[test]
+    fn hkdf_sha512_wycheproof() {
+        // Maximum valid HKDF-SHA-512 output: 255 * 64 = 16320 bytes.
+        const MAX_OKM: usize = 16320;
+        const SIZE_TOO_LARGE: usize = 16321;
+
+        let data: serde_json::Value =
+            serde_json::from_str(include_str!("../testdata/wycheproof/testvectors_v1/hkdf_sha512_test.json")).unwrap();
+        let mut valid_tested = 0u64;
+        let mut invalid_tested = 0u64;
+        for group in data["testGroups"].as_array().unwrap() {
+            for test in group["tests"].as_array().unwrap() {
+                let ikm_hex = test["ikm"].as_str().unwrap();
+                let salt_hex = test["salt"].as_str().unwrap();
+                let info_hex = test["info"].as_str().unwrap();
+                let size = test["size"].as_u64().unwrap() as usize;
+                let expected_okm_hex = test["okm"].as_str().unwrap();
+                let result = test["result"].as_str().unwrap();
+
+                let ikm = hex::decode(ikm_hex).unwrap();
+                let info = hex::decode(info_hex).unwrap();
+                let salt: Option<Vec<u8>> = if salt_hex.is_empty() {
+                    None
+                } else {
+                    Some(hex::decode(salt_hex).unwrap())
+                };
+
+                if result == "valid" {
+                    let okm = derive_key::<Sha512, MAX_OKM>(&ikm, &info, salt.as_deref()).unwrap();
+                    let okm_hex = hex::encode(&okm[..size]);
+                    assert_eq!(
+                        okm_hex, expected_okm_hex,
+                        "wycheproof HKDF-SHA-512 tcId={} size={}",
+                        test["tcId"], size
+                    );
+                    valid_tested += 1;
+                } else {
+                    assert_eq!(
+                        derive_key::<Sha512, SIZE_TOO_LARGE>(&ikm, &info, salt.as_deref()),
+                        Err(HkdfError::OutputIsTooLong),
+                        "wycheproof HKDF-SHA-512 tcId={} size={} should reject",
+                        test["tcId"],
+                        size
+                    );
+                    invalid_tested += 1;
+                }
+            }
+        }
+        assert!(valid_tested > 0, "no valid HKDF-SHA-512 wycheproof tests were run");
+        assert!(invalid_tested > 0, "no invalid HKDF-SHA-512 wycheproof tests were run");
     }
 }

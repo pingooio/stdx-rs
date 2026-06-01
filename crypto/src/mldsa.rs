@@ -30,16 +30,24 @@ const K: usize = 6;
 const L: usize = 5;
 const OMEGA: usize = 55;
 
-#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MlDsaError {
-    #[error("context length exceeds 255 bytes")]
     ContextTooLong,
-    #[error("signature is not valid")]
     InvalidSignature,
-    #[error("public key is not valid")]
     InvalidPublicKey,
-    #[error("signature length is not valid")]
     InvalidSignatureLength,
+}
+
+#[cfg(feature = "alloc")]
+impl core::fmt::Display for MlDsaError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            MlDsaError::ContextTooLong => write!(f, "context length exceeds 255 bytes"),
+            MlDsaError::InvalidSignature => write!(f, "signature is not valid"),
+            MlDsaError::InvalidPublicKey => write!(f, "public key is not valid"),
+            MlDsaError::InvalidSignatureLength => write!(f, "signature length is not valid"),
+        }
+    }
 }
 
 type FieldElement = u32;
@@ -1112,7 +1120,7 @@ mod tests {
             ML_DSA_65_SIGNATURE_SIZE - 1,
             ML_DSA_65_SIGNATURE_SIZE + 1,
         ] {
-            let mut sig = [0u8; ML_DSA_65_SIGNATURE_SIZE + 1];
+            let sig = [0u8; ML_DSA_65_SIGNATURE_SIZE + 1];
             let buf = &sig[..len];
             assert!(
                 ml_dsa_65_verify(&pk, b"test", buf.try_into().unwrap_or(&[0u8; ML_DSA_65_SIGNATURE_SIZE]), &[])
@@ -1319,7 +1327,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(debug_assertions))]
     fn test_ml_dsa_65_accumulated_10k() {
         let mut shake_src = Shake128::new();
         let mut acc = Shake128::new();
@@ -1541,5 +1548,286 @@ mod tests {
         let msg = b"Hello world";
         let sig = ml_dsa_65_sign_derand(&seed, msg, &[], &zero_rnd).unwrap();
         ml_dsa_65_verify(&pk, msg, &sig, &[]).unwrap();
+    }
+
+    #[test]
+    fn wycheproof_ml_dsa_65_sign_seed() {
+        let json = include_str!("../testdata/wycheproof/testvectors_v1/mldsa_65_sign_seed_test.json");
+        let v: serde_json::Value = serde_json::from_str(json).unwrap();
+        let zero_rnd = [0u8; 32];
+
+        let mut valid_tested = 0u32;
+        let mut invalid_tested = 0u32;
+        let mut skipped = 0u32;
+
+        for group in v["testGroups"].as_array().unwrap() {
+            let seed_hex = group["privateSeed"].as_str().unwrap();
+            let seed = hex::decode(seed_hex);
+            let Ok(seed) = seed else {
+                for test in group["tests"].as_array().unwrap() {
+                    let flags: Vec<String> = test["flags"]
+                        .as_array()
+                        .map(|a| a.iter().filter_map(|f| f.as_str().map(String::from)).collect())
+                        .unwrap_or_default();
+                    let is_incorrect_private_key_len = flags.iter().any(|f| f == "IncorrectPrivateKeyLength");
+                    assert!(
+                        is_incorrect_private_key_len,
+                        "sign_seed group: seed decode failed but not IncorrectPrivateKeyLength"
+                    );
+                    skipped += 1;
+                }
+                continue;
+            };
+            let seed: [u8; 32] = seed.try_into().unwrap_or_else(|s: Vec<u8>| {
+                let mut arr = [0u8; 32];
+                let len = s.len().min(32);
+                arr[..len].copy_from_slice(&s[..len]);
+                arr
+            });
+            let (_seed2, pk) = ml_dsa_65_keypair_derand(&seed);
+
+            for test in group["tests"].as_array().unwrap() {
+                let tc_id = test["tcId"].as_u64().unwrap();
+                let flags: Vec<String> = test["flags"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|f| f.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                let is_invalid_context = flags.iter().any(|f| f == "InvalidContext");
+                let is_incorrect_private_key_len = flags.iter().any(|f| f == "IncorrectPrivateKeyLength");
+                let is_internal = flags.iter().any(|f| f == "Internal");
+                let result = test["result"].as_str().unwrap();
+
+                if is_incorrect_private_key_len || is_internal {
+                    skipped += 1;
+                    continue;
+                }
+
+                let msg = hex::decode(test["msg"].as_str().unwrap()).unwrap();
+                let ctx = test
+                    .get("ctx")
+                    .and_then(|c| c.as_str())
+                    .map(|c| hex::decode(c).unwrap())
+                    .unwrap_or_default();
+
+                if result == "valid" {
+                    let expected_sig_hex = test["sig"].as_str().unwrap();
+
+                    let sig = ml_dsa_65_sign_derand(&seed, &msg, &ctx, &zero_rnd)
+                        .expect(&format!("sign_seed tcId={}: signing failed", tc_id));
+
+                    assert_eq!(
+                        hex::encode(sig),
+                        expected_sig_hex.to_lowercase(),
+                        "sign_seed tcId={}: signature mismatch",
+                        tc_id
+                    );
+
+                    ml_dsa_65_verify(&pk, &msg, &sig, &ctx)
+                        .expect(&format!("sign_seed tcId={}: self-verify failed", tc_id));
+                    valid_tested += 1;
+                } else if result == "invalid" {
+                    assert!(
+                        is_invalid_context,
+                        "sign_seed tcId={}: expected invalid flag, got {:?}",
+                        tc_id, flags
+                    );
+                    assert!(
+                        ml_dsa_65_sign_derand(&seed, &msg, &ctx, &zero_rnd).is_err(),
+                        "sign_seed tcId={}: expected signing error",
+                        tc_id
+                    );
+                    invalid_tested += 1;
+                }
+            }
+        }
+
+        assert!(valid_tested > 0, "no valid sign_seed tests run");
+        assert!(invalid_tested > 0, "no invalid sign_seed tests run");
+        eprintln!(
+            "wycheproof sign_seed: {} valid, {} invalid, {} skipped",
+            valid_tested, invalid_tested, skipped
+        );
+    }
+
+    #[test]
+    fn wycheproof_ml_dsa_65_sign_noseed() {
+        let json = include_str!("../testdata/wycheproof/testvectors_v1/mldsa_65_sign_noseed_test.json");
+        let v: serde_json::Value = serde_json::from_str(json).unwrap();
+
+        let mut valid_tested = 0u32;
+        let mut invalid_tested = 0u32;
+        let mut skipped = 0u32;
+
+        for group in v["testGroups"].as_array().unwrap() {
+            let pk_hex = group.get("publicKey").and_then(|v| v.as_str()).unwrap_or_default();
+            let pk = hex::decode(pk_hex);
+            let Ok(pk) = pk else {
+                for test in group["tests"].as_array().unwrap() {
+                    skipped += 1;
+                }
+                continue;
+            };
+            let pk: [u8; ML_DSA_65_PUBLIC_KEY_SIZE] = pk.try_into().unwrap_or_else(|p: Vec<u8>| {
+                let mut arr = [0u8; ML_DSA_65_PUBLIC_KEY_SIZE];
+                let len = p.len().min(ML_DSA_65_PUBLIC_KEY_SIZE);
+                arr[..len].copy_from_slice(&p[..len]);
+                arr
+            });
+
+            for test in group["tests"].as_array().unwrap() {
+                let tc_id = test["tcId"].as_u64().unwrap();
+                let flags: Vec<String> = test["flags"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|f| f.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                let is_invalid_context = flags.iter().any(|f| f == "InvalidContext");
+                let is_invalid_private_key = flags.iter().any(|f| f == "InvalidPrivateKey");
+                let is_incorrect_private_key_len = flags.iter().any(|f| f == "IncorrectPrivateKeyLength");
+                let is_internal = flags.iter().any(|f| f == "Internal");
+                let result = test["result"].as_str().unwrap();
+
+                if is_invalid_private_key || is_incorrect_private_key_len || is_internal {
+                    skipped += 1;
+                    continue;
+                }
+
+                let msg = hex::decode(test["msg"].as_str().unwrap()).unwrap();
+                let ctx = test
+                    .get("ctx")
+                    .and_then(|c| c.as_str())
+                    .map(|c| hex::decode(c).unwrap())
+                    .unwrap_or_default();
+
+                if result == "valid" {
+                    let sig_hex = test["sig"].as_str().unwrap();
+                    let sig: [u8; ML_DSA_65_SIGNATURE_SIZE] = hex::decode(sig_hex).unwrap().try_into().unwrap();
+                    ml_dsa_65_verify(&pk, &msg, &sig, &ctx)
+                        .expect(&format!("sign_noseed tcId={}: verify failed", tc_id));
+                    valid_tested += 1;
+                } else if result == "invalid" {
+                    assert!(
+                        is_invalid_context,
+                        "sign_noseed tcId={}: expected invalid flag, got {:?}",
+                        tc_id, flags
+                    );
+                    invalid_tested += 1;
+                }
+            }
+        }
+
+        assert!(valid_tested > 0, "no valid sign_noseed tests run");
+        eprintln!(
+            "wycheproof sign_noseed: {} valid, {} invalid, {} skipped",
+            valid_tested, invalid_tested, skipped
+        );
+    }
+
+    #[test]
+    fn wycheproof_ml_dsa_65_verify() {
+        let json = include_str!("../testdata/wycheproof/testvectors_v1/mldsa_65_verify_test.json");
+        let v: serde_json::Value = serde_json::from_str(json).unwrap();
+
+        let mut valid_tested = 0u32;
+        let mut invalid_tested = 0u32;
+        let mut skipped = 0u32;
+
+        for group in v["testGroups"].as_array().unwrap() {
+            let pk_hex = group["publicKey"].as_str().unwrap();
+            let pk = hex::decode(pk_hex);
+            let Ok(pk) = pk else {
+                for test in group["tests"].as_array().unwrap() {
+                    let flags: Vec<String> = test["flags"]
+                        .as_array()
+                        .map(|a| a.iter().filter_map(|f| f.as_str().map(String::from)).collect())
+                        .unwrap_or_default();
+                    let is_incorrect_public_key_len = flags.iter().any(|f| f == "IncorrectPublicKeyLength");
+                    assert!(
+                        is_incorrect_public_key_len,
+                        "verify group: pk decode failed but not IncorrectPublicKeyLength"
+                    );
+                    skipped += 1;
+                }
+                continue;
+            };
+            let pk: [u8; ML_DSA_65_PUBLIC_KEY_SIZE] = pk.try_into().unwrap_or_else(|p: Vec<u8>| {
+                let mut arr = [0u8; ML_DSA_65_PUBLIC_KEY_SIZE];
+                let len = p.len().min(ML_DSA_65_PUBLIC_KEY_SIZE);
+                arr[..len].copy_from_slice(&p[..len]);
+                arr
+            });
+
+            for test in group["tests"].as_array().unwrap() {
+                let tc_id = test["tcId"].as_u64().unwrap();
+                let flags: Vec<String> = test["flags"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|f| f.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                let is_incorrect_public_key_len = flags.iter().any(|f| f == "IncorrectPublicKeyLength");
+                let is_incorrect_signature_len = flags.iter().any(|f| f == "IncorrectSignatureLength");
+                let is_invalid_hints = flags.iter().any(|f| f == "InvalidHintsEncoding");
+                let result = test["result"].as_str().unwrap();
+
+                if is_incorrect_public_key_len || is_invalid_hints {
+                    skipped += 1;
+                    continue;
+                }
+
+                let msg = hex::decode(test["msg"].as_str().unwrap()).unwrap();
+                let ctx = test
+                    .get("ctx")
+                    .and_then(|c| c.as_str())
+                    .map(|c| hex::decode(c).unwrap())
+                    .unwrap_or_default();
+
+                let sig_hex = test["sig"].as_str().unwrap();
+                let sig_bytes = hex::decode(sig_hex).unwrap();
+
+                if is_incorrect_signature_len {
+                    assert!(
+                        sig_bytes.len() != ML_DSA_65_SIGNATURE_SIZE,
+                        "verify tcId={}: IncorrectSignatureLength flagged but sig has correct length",
+                        tc_id
+                    );
+                    assert!(
+                        ml_dsa_65_verify(
+                            &pk,
+                            &msg,
+                            sig_bytes
+                                .as_slice()
+                                .try_into()
+                                .unwrap_or(&[0u8; ML_DSA_65_SIGNATURE_SIZE]),
+                            &ctx
+                        )
+                        .is_err(),
+                        "verify tcId={}: expected verify error for wrong-length sig",
+                        tc_id
+                    );
+                    invalid_tested += 1;
+                    continue;
+                }
+
+                let sig: [u8; ML_DSA_65_SIGNATURE_SIZE] = sig_bytes.try_into().unwrap();
+
+                if result == "valid" {
+                    ml_dsa_65_verify(&pk, &msg, &sig, &ctx).expect(&format!("verify tcId={}: expected valid", tc_id));
+                    valid_tested += 1;
+                } else if result == "invalid" {
+                    assert!(
+                        ml_dsa_65_verify(&pk, &msg, &sig, &ctx).is_err(),
+                        "verify tcId={} (flags={:?}): expected invalid but verification passed",
+                        tc_id,
+                        flags
+                    );
+                    invalid_tested += 1;
+                }
+            }
+        }
+
+        assert!(valid_tested > 0, "no valid verify tests run");
+        assert!(invalid_tested > 0, "no invalid verify tests run");
+        eprintln!(
+            "wycheproof verify: {} valid, {} invalid, {} skipped",
+            valid_tested, invalid_tested, skipped
+        );
     }
 }

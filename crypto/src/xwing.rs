@@ -1,53 +1,155 @@
 use crate::{
-    curve25519, mlkem,
+    curve25519::x25519,
+    mlkem::{self, MlKemError},
     sha3::{Sha3_256, Shake256},
 };
 
-pub const XWING_SECRET_KEY_SIZE: usize = 32;
-pub const XWING_PUBLIC_KEY_SIZE: usize = 1216;
-pub const XWING_CIPHERTEXT_SIZE: usize = 1120;
-pub const XWING_SHARED_SECRET_SIZE: usize = 32;
-pub const XWING_MLKEM_PUBLIC_KEY_SIZE: usize = 1184;
-pub const XWING_MLKEM_CIPHERTEXT_SIZE: usize = 1088;
-pub const XWING_X25519_KEY_SIZE: usize = 32;
+pub const SECRET_KEY_SIZE: usize = 32;
+pub const PUBLIC_KEY_SIZE: usize = mlkem::PUBLIC_KEY_SIZE_768 + x25519::KEY_SIZE; // 1216
+pub const CIPHERTEXT_SIZE: usize = mlkem::CIPHERTEXT_SIZE_768 + x25519::SHARED_SECRET_SIZE; // 1120
+pub const SHARED_SECRET_SIZE: usize = 32;
 
 const XWING_LABEL: &[u8; 6] = b"\\.//^\\";
 
-#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum XWingError {
-    #[error("ML-KEM error")]
-    MlKem,
+    MlKem(MlKemError),
+}
+
+impl From<MlKemError> for XWingError {
+    fn from(err: MlKemError) -> Self {
+        XWingError::MlKem(err)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl core::fmt::Display for XWingError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            XWingError::MlKem(err) => write!(f, "ML-KEM error: {err}"),
+        }
+    }
+}
+
+/// The X-Wing decapsulation (private) key
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SecretKey {
+    bytes: [u8; SECRET_KEY_SIZE],
+    x25519_secret_key: x25519::SecretKey,
+    x25519_public_key_bytes: [u8; x25519::KEY_SIZE],
+    mlkem_secret_key: [u8; mlkem::SECRET_KEY_SIZE_768],
+}
+
+impl SecretKey {
+    pub fn to_bytes(&self) -> [u8; SECRET_KEY_SIZE] {
+        self.bytes
+    }
+
+    pub fn decapsulate(&self, ct: &[u8; CIPHERTEXT_SIZE]) -> Result<[u8; SHARED_SECRET_SIZE], XWingError> {
+        let ct_m = &ct[..mlkem::CIPHERTEXT_SIZE_768].try_into().unwrap();
+        let ct_x = x25519::PublicKey::from_bytes(&ct[mlkem::CIPHERTEXT_SIZE_768..].try_into().unwrap());
+
+        let ss_m = mlkem::ml_kem_768_decapsulate(&self.mlkem_secret_key, &ct_m)?;
+        let ss_x = self.x25519_secret_key.ecdh(&ct_x);
+
+        Ok(combiner(&ss_m, &ss_x, &ct_x.to_bytes(), &self.x25519_public_key_bytes))
+    }
+}
+
+/// The X-Wing encapsulation (public) key
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicKey {
+    mlkem_public_key: [u8; mlkem::PUBLIC_KEY_SIZE_768],
+    x25519_public_key: x25519::PublicKey,
+}
+
+impl PublicKey {
+    pub fn to_bytes(&self) -> [u8; PUBLIC_KEY_SIZE] {
+        let mut bytes = [0u8; PUBLIC_KEY_SIZE];
+        bytes[..mlkem::PUBLIC_KEY_SIZE_768].copy_from_slice(&self.mlkem_public_key);
+        bytes[mlkem::PUBLIC_KEY_SIZE_768..].copy_from_slice(&self.x25519_public_key.to_bytes());
+        bytes
+    }
+
+    pub fn encapsulate(&self) -> ([u8; SHARED_SECRET_SIZE], [u8; CIPHERTEXT_SIZE]) {
+        let eseed: [u8; 64] = rand::random();
+        self.encapsulate_derand(&eseed)
+    }
+
+    fn encapsulate_derand(&self, eseed: &[u8; 64]) -> ([u8; SHARED_SECRET_SIZE], [u8; CIPHERTEXT_SIZE]) {
+        let ek_x = x25519::SecretKey::from_bytes(&eseed[32..64].try_into().unwrap());
+        let ct_x = ek_x.public_key();
+        let ss_x = ek_x.ecdh(&self.x25519_public_key);
+
+        let m = &eseed[..32].try_into().unwrap();
+        let (ct_m, ss_m) = mlkem::ml_kem_768_enc_derand(&self.mlkem_public_key, &m);
+
+        let ss = combiner(&ss_m, &ss_x, &ct_x.to_bytes(), &self.x25519_public_key.to_bytes());
+
+        let mut ct = [0u8; CIPHERTEXT_SIZE];
+        ct[..mlkem::CIPHERTEXT_SIZE_768].copy_from_slice(&ct_m);
+        ct[mlkem::CIPHERTEXT_SIZE_768..].copy_from_slice(&ct_x.to_bytes());
+
+        (ss, ct)
+    }
+}
+
+pub fn generate_keypair() -> (SecretKey, PublicKey) {
+    let seed: [u8; SECRET_KEY_SIZE] = rand::random();
+    generate_keypair_derand(&seed)
+}
+
+/// Generate a deterministic keypair from the given seed. This function is not public because it
+/// should be used exclusively for testing.
+fn generate_keypair_derand(secret_key: &[u8; SECRET_KEY_SIZE]) -> (SecretKey, PublicKey) {
+    let (mlkem_sk, x25519_sk, mlkem_pk, x25519_pk) = expand_decapsulation_key(secret_key);
+
+    let secret_key = SecretKey {
+        bytes: *secret_key,
+        x25519_secret_key: x25519_sk,
+        x25519_public_key_bytes: x25519_pk.to_bytes(),
+        mlkem_secret_key: mlkem_sk,
+    };
+
+    let public_key = PublicKey {
+        mlkem_public_key: mlkem_pk,
+        x25519_public_key: x25519_pk,
+    };
+
+    (secret_key, public_key)
 }
 
 fn expand_decapsulation_key(
-    sk: &[u8; XWING_SECRET_KEY_SIZE],
+    secret_key: &[u8; 32],
 ) -> (
-    [u8; mlkem::ML_KEM_768_SECRET_KEY_SIZE],
-    [u8; XWING_X25519_KEY_SIZE],
-    [u8; mlkem::ML_KEM_768_PUBLIC_KEY_SIZE],
-    [u8; XWING_X25519_KEY_SIZE],
+    [u8; mlkem::SECRET_KEY_SIZE_768],
+    x25519::SecretKey,
+    [u8; mlkem::PUBLIC_KEY_SIZE_768],
+    x25519::PublicKey,
 ) {
-    let mut expanded = [0u8; 96];
-    Shake256::hash(sk, &mut expanded);
+    let mut expanded_secret_key = [0u8; 96];
+    Shake256::hash(secret_key, &mut expanded_secret_key);
 
-    let mut coins = [0u8; 64];
-    coins[..32].copy_from_slice(&expanded[..32]);
-    coins[32..].copy_from_slice(&expanded[32..64]);
-    let (sk_m, pk_m) = mlkem::ml_kem_768_keypair_derand(&coins);
+    let (sk_m, pk_m) = derive_mlkeem_keys(&expanded_secret_key);
 
-    let mut sk_x = [0u8; XWING_X25519_KEY_SIZE];
-    sk_x.copy_from_slice(&expanded[64..96]);
-    let pk_x = curve25519::x25519_derive_public_key(&sk_x);
+    let sk_x = x25519::SecretKey::from_bytes(&expanded_secret_key[64..96].try_into().unwrap());
+    let pk_x = sk_x.public_key();
 
     (sk_m, sk_x, pk_m, pk_x)
 }
 
+fn derive_mlkeem_keys(
+    expnded_secret_key: &[u8; 96],
+) -> ([u8; mlkem::SECRET_KEY_SIZE_768], [u8; mlkem::PUBLIC_KEY_SIZE_768]) {
+    return mlkem::ml_kem_768_keypair_derand(&expnded_secret_key[..64].try_into().unwrap());
+}
+
 fn combiner(
     ss_m: &[u8; mlkem::SHARED_SECRET_SIZE],
-    ss_x: &[u8; XWING_X25519_KEY_SIZE],
-    ct_x: &[u8; XWING_X25519_KEY_SIZE],
-    pk_x: &[u8; XWING_X25519_KEY_SIZE],
-) -> [u8; XWING_SHARED_SECRET_SIZE] {
+    ss_x: &[u8; x25519::KEY_SIZE],
+    ct_x: &[u8; x25519::KEY_SIZE],
+    pk_x: &[u8; x25519::KEY_SIZE],
+) -> [u8; SHARED_SECRET_SIZE] {
     let mut hasher = Sha3_256::new();
     hasher.write(ss_m);
     hasher.write(ss_x);
@@ -57,70 +159,6 @@ fn combiner(
     hasher.sum()
 }
 
-pub fn generate_keypair() -> ([u8; XWING_SECRET_KEY_SIZE], [u8; XWING_PUBLIC_KEY_SIZE]) {
-    let sk: [u8; XWING_SECRET_KEY_SIZE] = rand::random();
-    generate_keypair_derand(&sk)
-}
-
-pub fn generate_keypair_derand(
-    sk: &[u8; XWING_SECRET_KEY_SIZE],
-) -> ([u8; XWING_SECRET_KEY_SIZE], [u8; XWING_PUBLIC_KEY_SIZE]) {
-    let (_, _, pk_m, pk_x) = expand_decapsulation_key(sk);
-    let mut pk = [0u8; XWING_PUBLIC_KEY_SIZE];
-    pk[..mlkem::ML_KEM_768_PUBLIC_KEY_SIZE].copy_from_slice(&pk_m);
-    pk[mlkem::ML_KEM_768_PUBLIC_KEY_SIZE..].copy_from_slice(&pk_x);
-    (*sk, pk)
-}
-
-pub fn encapsulate(pk: &[u8; XWING_PUBLIC_KEY_SIZE]) -> ([u8; XWING_CIPHERTEXT_SIZE], [u8; XWING_SHARED_SECRET_SIZE]) {
-    let eseed: [u8; 64] = rand::random();
-    encapsulate_derand(pk, &eseed)
-}
-
-pub fn encapsulate_derand(
-    pk: &[u8; XWING_PUBLIC_KEY_SIZE],
-    eseed: &[u8; 64],
-) -> ([u8; XWING_CIPHERTEXT_SIZE], [u8; XWING_SHARED_SECRET_SIZE]) {
-    let mut pk_m = [0u8; mlkem::ML_KEM_768_PUBLIC_KEY_SIZE];
-    pk_m.copy_from_slice(&pk[..mlkem::ML_KEM_768_PUBLIC_KEY_SIZE]);
-    let mut pk_x = [0u8; XWING_X25519_KEY_SIZE];
-    pk_x.copy_from_slice(&pk[mlkem::ML_KEM_768_PUBLIC_KEY_SIZE..]);
-
-    let mut ek_x = [0u8; XWING_X25519_KEY_SIZE];
-    ek_x.copy_from_slice(&eseed[32..64]);
-    let ct_x = curve25519::x25519_derive_public_key(&ek_x);
-    let ss_x = curve25519::x25519::x25519(&ek_x, &pk_x).expect("X25519 encapsulation should not fail");
-
-    let mut m = [0u8; 32];
-    m.copy_from_slice(&eseed[..32]);
-    let (ct_m, ss_m) = mlkem::ml_kem_768_enc_derand(&pk_m, &m);
-
-    let ss = combiner(&ss_m, &ss_x, &ct_x, &pk_x);
-
-    let mut ct = [0u8; XWING_CIPHERTEXT_SIZE];
-    ct[..mlkem::ML_KEM_768_CIPHERTEXT_SIZE].copy_from_slice(&ct_m);
-    ct[mlkem::ML_KEM_768_CIPHERTEXT_SIZE..].copy_from_slice(&ct_x);
-
-    (ct, ss)
-}
-
-pub fn decapsulate(
-    ct: &[u8; XWING_CIPHERTEXT_SIZE],
-    sk: &[u8; XWING_SECRET_KEY_SIZE],
-) -> Result<[u8; XWING_SHARED_SECRET_SIZE], XWingError> {
-    let (sk_m, sk_x, _, pk_x) = expand_decapsulation_key(sk);
-
-    let mut ct_m = [0u8; mlkem::ML_KEM_768_CIPHERTEXT_SIZE];
-    ct_m.copy_from_slice(&ct[..mlkem::ML_KEM_768_CIPHERTEXT_SIZE]);
-    let mut ct_x = [0u8; XWING_X25519_KEY_SIZE];
-    ct_x.copy_from_slice(&ct[mlkem::ML_KEM_768_CIPHERTEXT_SIZE..]);
-
-    let ss_m = mlkem::ml_kem_768_decapsulate(&sk_m, &ct_m).map_err(|_| XWingError::MlKem)?;
-    let ss_x = curve25519::x25519::x25519(&sk_x, &ct_x).expect("X25519 decapsulation should not fail");
-
-    Ok(combiner(&ss_m, &ss_x, &ct_x, &pk_x))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,6 +166,12 @@ mod tests {
     fn hex_to_array<const N: usize>(hex_str: &str) -> [u8; N] {
         let bytes = hex::decode(hex_str).unwrap();
         return bytes.try_into().unwrap();
+    }
+
+    #[test]
+    fn constants() {
+        assert!(PUBLIC_KEY_SIZE == 1216);
+        assert!(CIPHERTEXT_SIZE == 1120);
     }
 
     struct TestVector {
@@ -161,52 +205,53 @@ mod tests {
             let eseed: [u8; 64] = hex_to_array(tv.eseed);
             let expected_ss: [u8; 32] = hex_to_array(tv.ss);
 
-            let (sk, pk) = generate_keypair_derand(&seed);
-            assert_eq!(sk, seed, "vector {i}: sk mismatch");
+            let (secret_key, pk) = generate_keypair_derand(&seed);
+            assert_eq!(secret_key.to_bytes(), seed, "vector {i}: sk mismatch");
 
-            let (ct, ss) = encapsulate_derand(&pk, &eseed);
+            let (ss, ct) = pk.encapsulate_derand(&eseed);
             assert_eq!(ss, expected_ss, "vector {i}: encaps ss mismatch");
 
-            let decapsulated_ss = decapsulate(&ct, &sk).unwrap();
+            let decapsulated_ss = secret_key.decapsulate(&ct).unwrap();
             assert_eq!(decapsulated_ss, expected_ss, "vector {i}: decaps ss mismatch");
         }
     }
 
     #[test]
     fn round_trip() {
-        let (sk, pk) = generate_keypair();
-        let (ct, ss) = encapsulate(&pk);
-        let decapsulated = decapsulate(&ct, &sk).unwrap();
+        let (secret_key, public_key) = generate_keypair();
+        let (ss, ct) = public_key.encapsulate();
+        let decapsulated = secret_key.decapsulate(&ct).unwrap();
         assert_eq!(ss, decapsulated);
     }
 
     #[test]
     fn round_trip_many() {
         for _ in 0..10 {
-            let (sk, pk) = generate_keypair();
-            let (ct, ss) = encapsulate(&pk);
-            let decapsulated = decapsulate(&ct, &sk).unwrap();
+            let (secret_key, public_key) = generate_keypair();
+            let (ss, ct) = public_key.encapsulate();
+            let decapsulated = secret_key.decapsulate(&ct).unwrap();
             assert_eq!(ss, decapsulated);
         }
     }
 
     #[test]
     fn decapsulation_with_wrong_key_produces_different_secret() {
-        let (_sk_a, pk_a) = generate_keypair();
+        let (_, pk_a) = generate_keypair();
         let (sk_b, _) = generate_keypair();
-        let (ct, ss_a) = encapsulate(&pk_a);
-        let ss_b = decapsulate(&ct, &sk_b).unwrap();
+
+        let (ss_a, ct) = pk_a.encapsulate();
+        let ss_b = sk_b.decapsulate(&ct).unwrap();
         assert_ne!(ss_a, ss_b);
     }
 
     #[test]
     fn tampered_ciphertext_produces_different_secret() {
-        let (sk, pk) = generate_keypair();
-        let (mut ct, ss) = encapsulate(&pk);
+        let (secret_key, public_key) = generate_keypair();
+        let (ss, mut ct) = public_key.encapsulate();
 
         ct[0] ^= 0x80;
 
-        let tampered_ss = decapsulate(&ct, &sk).unwrap();
+        let tampered_ss = secret_key.decapsulate(&ct).unwrap();
         assert_ne!(ss, tampered_ss);
     }
 
@@ -215,8 +260,8 @@ mod tests {
         let seed: [u8; 32] = hex_to_array("7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26");
         let (sk1, pk1) = generate_keypair_derand(&seed);
         let (sk2, pk2) = generate_keypair_derand(&seed);
-        assert_eq!(sk1, sk2);
-        assert_eq!(pk1, pk2);
+        assert_eq!(sk1.to_bytes(), sk2.to_bytes());
+        assert_eq!(pk1.to_bytes(), pk2.to_bytes());
     }
 
     #[test]
@@ -227,47 +272,10 @@ mod tests {
         );
         let (_, pk) = generate_keypair_derand(&seed);
 
-        let (ct1, ss1) = encapsulate_derand(&pk, &eseed);
-        let (ct2, ss2) = encapsulate_derand(&pk, &eseed);
+        let (ss1, ct1) = pk.encapsulate_derand(&eseed);
+        let (ss2, ct2) = pk.encapsulate_derand(&eseed);
         assert_eq!(ct1, ct2);
         assert_eq!(ss1, ss2);
-    }
-
-    #[test]
-    fn key_sizes_are_correct() {
-        let (sk, pk) = generate_keypair();
-        assert_eq!(sk.len(), XWING_SECRET_KEY_SIZE);
-        assert_eq!(pk.len(), XWING_PUBLIC_KEY_SIZE);
-        let (ct, _ss) = encapsulate(&pk);
-        assert_eq!(ct.len(), XWING_CIPHERTEXT_SIZE);
-    }
-
-    #[test]
-    fn public_key_structure() {
-        let seed: [u8; 32] = hex_to_array("7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26");
-        let (_, pk) = generate_keypair_derand(&seed);
-
-        assert_eq!(pk.len(), XWING_PUBLIC_KEY_SIZE);
-        let pk_m = &pk[..mlkem::ML_KEM_768_PUBLIC_KEY_SIZE];
-        assert_eq!(pk_m.len(), mlkem::ML_KEM_768_PUBLIC_KEY_SIZE);
-        let pk_x = &pk[mlkem::ML_KEM_768_PUBLIC_KEY_SIZE..];
-        assert_eq!(pk_x.len(), XWING_X25519_KEY_SIZE);
-    }
-
-    #[test]
-    fn ciphertext_structure() {
-        let seed: [u8; 32] = hex_to_array("7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26");
-        let eseed: [u8; 64] = hex_to_array(
-            "3cb1eea988004b93103cfb0aeefd2a686e01fa4a58e8a3639ca8a1e3f9ae57e235b8cc873c23dc62b8d260169afa2f75ab916a58d974918835d25e6a435085b2",
-        );
-        let (_, pk) = generate_keypair_derand(&seed);
-        let (ct, _) = encapsulate_derand(&pk, &eseed);
-
-        assert_eq!(ct.len(), XWING_CIPHERTEXT_SIZE);
-        let ct_m = &ct[..mlkem::ML_KEM_768_CIPHERTEXT_SIZE];
-        assert_eq!(ct_m.len(), mlkem::ML_KEM_768_CIPHERTEXT_SIZE);
-        let ct_x = &ct[mlkem::ML_KEM_768_CIPHERTEXT_SIZE..];
-        assert_eq!(ct_x.len(), XWING_X25519_KEY_SIZE);
     }
 
     #[test]
@@ -279,6 +287,7 @@ mod tests {
     #[test]
     fn expand_decapsulation_key_is_deterministic() {
         let seed: [u8; 32] = hex_to_array("7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26");
+
         let (sk_m1, sk_x1, pk_m1, pk_x1) = expand_decapsulation_key(&seed);
         let (sk_m2, sk_x2, pk_m2, pk_x2) = expand_decapsulation_key(&seed);
         assert_eq!(sk_m1, sk_m2);
@@ -297,13 +306,5 @@ mod tests {
         let result1 = combiner(&ss_m, &ss_x, &ct_x, &pk_x);
         let result2 = combiner(&ss_m, &ss_x, &ct_x, &pk_x);
         assert_eq!(result1, result2);
-    }
-
-    #[test]
-    fn pk_x_recovered_from_sk_matches_pk() {
-        let seed: [u8; 32] = hex_to_array("7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26");
-        let (_, sk_x, _, pk_x) = expand_decapsulation_key(&seed);
-        let recovered_pk_x = curve25519::x25519_derive_public_key(&sk_x);
-        assert_eq!(recovered_pk_x, pk_x);
     }
 }
