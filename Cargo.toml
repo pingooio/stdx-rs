@@ -92,27 +92,3 @@ proc-macro2 = "1"
 
 
 criterion = { version = "0.5", features = ["html_reports"] }
-
-
-[patch.crates-io]
-async-trait = { path = "./async-trait" }
-base64 = { path = "./base64" }
-cfg-if = { path = "./cfg-if" }
-constant_time_eq = { path = "./constant_time_eq" }
-crc32fast = { path = "./crc32fast" }
-form_urlencoded = { path = "./form_urlencoded" }
-getopts = { path = "./getopts" }
-hex = { path = "./hex" }
-hostname = { path = "./hostname" }
-httpdate = { path = "./httpdate" }
-itoa = { path = "./itoa" }
-memmem = { path = "./memmem" }
-mime_guess = { path = "./mime_guess" }
-num_cpus = { path = "./num_cpus" }
-percent-encoding = { path = "./percent_encoding" }
-pin-project-lite = { path = "./pin_project_lite" }
-ryu = { path = "./ryu" }
-serde_urlencoded = { path = "./serde_urlencoded" }
-thiserror = { path = "./thiserror" }
-thiserror-impl  = { path = "./thiserror/impl" }
-uuid = { path = "./uuid" }

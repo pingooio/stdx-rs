@@ -1,19 +1,101 @@
 use alloc::{string::String, vec::Vec};
 use core::fmt;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+
 const BEGIN_MARKER: &[u8] = b"-----BEGIN ";
 const END_MARKER: &[u8] = b"-----END ";
 const MARKER_END: &[u8] = b"-----";
 const LINE_WIDTH: usize = 64;
 
+#[derive(Clone)]
+pub struct Headers {
+    buf: String,
+    pairs: Vec<(usize, usize, usize, usize)>,
+}
+
+impl Headers {
+    pub fn new() -> Self {
+        Headers {
+            buf: String::new(),
+            pairs: Vec::new(),
+        }
+    }
+
+    pub fn with_capacity(buf: usize, headers: usize) -> Self {
+        Headers {
+            buf: String::with_capacity(buf),
+            pairs: Vec::with_capacity(headers),
+        }
+    }
+
+    pub fn from_pairs(pairs: &[(&str, &str)]) -> Self {
+        let buf_capacity = pairs.iter().fold(0, |acc, pair| acc + pair.0.len() + pair.1.len());
+        let mut headers = Headers::with_capacity(buf_capacity, pairs.len());
+
+        for (k, v) in pairs {
+            headers.buf.reserve(k.len() + v.len());
+            let ks = headers.buf.len();
+            headers.buf.push_str(k);
+            let kl = headers.buf.len() - ks;
+            let vs = headers.buf.len();
+            headers.buf.push_str(v);
+            let vl = headers.buf.len() - vs;
+            headers.pairs.push((ks, kl, vs, vl));
+        }
+
+        headers
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> + '_ {
+        self.pairs.iter().map(move |&(ks, kl, vs, vl)| {
+            let key = &self.buf[ks..ks + kl];
+            let value = &self.buf[vs..vs + vl];
+            (key, value)
+        })
+    }
+
+    pub fn len(&self) -> usize {
+        self.pairs.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pairs.is_empty()
+    }
+
+    pub fn push(&mut self, key: &str, value: &str) {
+        let ks = self.buf.len();
+        self.buf.push_str(key);
+        let kl = self.buf.len() - ks;
+        let vs = self.buf.len();
+        self.buf.push_str(value);
+        let vl = self.buf.len() - vs;
+        self.pairs.push((ks, kl, vs, vl));
+    }
+}
+
+impl PartialEq for Headers {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && self.iter().zip(other.iter()).all(|(a, b)| a == b)
+    }
+}
+
+impl Eq for Headers {}
+
+impl fmt::Debug for Headers {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
-pub struct Block {
-    pub r#type: String,
-    pub headers: Vec<(String, String)>,
+pub struct Block<'a> {
+    pub r#type: &'a str,
+    pub headers: Headers,
     pub contents: Vec<u8>,
 }
 
-impl fmt::Debug for Block {
+impl fmt::Debug for Block<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Block")
             .field("type", &self.r#type)
@@ -24,20 +106,20 @@ impl fmt::Debug for Block {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PemError {
+pub enum PemError<'a> {
     InvalidEncoding(&'static str),
     Base64(base64::DecodeError),
-    LabelMismatch { expected: String, actual: String },
+    LabelMismatch { expected: &'a str, actual: &'a str },
 }
 
-impl From<base64::DecodeError> for PemError {
+impl<'a> From<base64::DecodeError> for PemError<'a> {
     fn from(err: base64::DecodeError) -> Self {
         PemError::Base64(err)
     }
 }
 
 #[cfg(feature = "alloc")]
-impl core::fmt::Display for PemError {
+impl core::fmt::Display for PemError<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             PemError::InvalidEncoding(str) => write!(f, "{str}"),
@@ -50,14 +132,32 @@ impl core::fmt::Display for PemError {
     }
 }
 
-pub fn encode(blocks: &[Block]) -> Vec<u8> {
-    let mut output = Vec::new();
+pub fn encode(blocks: &[Block<'_>]) -> Vec<u8> {
+    let mut capacity = 0usize;
+    let mut base64_capacity = 0;
+    for block in blocks {
+        capacity += 11 + block.r#type.len() + 6;
+        for (k, v) in block.headers.iter() {
+            capacity += k.len() + 2 + v.len() + 1;
+        }
+        if !block.headers.is_empty() {
+            capacity += 1;
+        }
+        let b64_len = base64::encoded_len(block.contents.len(), true).unwrap_or_default();
+        base64_capacity += b64_len;
+        capacity += b64_len + b64_len / 64 + 1;
+        capacity += 9 + block.r#type.len() + 6;
+    }
+
+    let mut output = Vec::with_capacity(capacity);
+    let mut b64_buf = String::with_capacity(base64_capacity);
+
     for block in blocks {
         output.extend_from_slice(b"-----BEGIN ");
         output.extend_from_slice(block.r#type.as_bytes());
         output.extend_from_slice(b"-----\n");
 
-        for (key, value) in &block.headers {
+        for (key, value) in block.headers.iter() {
             output.extend_from_slice(key.as_bytes());
             output.extend_from_slice(b": ");
             output.extend_from_slice(value.as_bytes());
@@ -68,11 +168,12 @@ pub fn encode(blocks: &[Block]) -> Vec<u8> {
             output.push(b'\n');
         }
 
-        let encoded = base64::encode(&block.contents);
-        for chunk in encoded.as_bytes().chunks(LINE_WIDTH) {
+        STANDARD.encode_string(&block.contents, &mut b64_buf);
+        for chunk in b64_buf.as_bytes().chunks(LINE_WIDTH) {
             output.extend_from_slice(chunk);
             output.push(b'\n');
         }
+        b64_buf.clear();
 
         output.extend_from_slice(b"-----END ");
         output.extend_from_slice(block.r#type.as_bytes());
@@ -81,20 +182,20 @@ pub fn encode(blocks: &[Block]) -> Vec<u8> {
     return output;
 }
 
-pub fn decode<'a>(pem: &'a [u8]) -> Decoder<'a> {
-    Decoder {
+pub fn decode<'a>(pem: &'a [u8]) -> Blocks<'a> {
+    Blocks {
         input: pem,
         pos: 0,
     }
 }
 
-pub struct Decoder<'a> {
+pub struct Blocks<'a> {
     input: &'a [u8],
     pos: usize,
 }
 
-impl<'a> Iterator for Decoder<'a> {
-    type Item = Result<Block, PemError>;
+impl<'a> Iterator for Blocks<'a> {
+    type Item = Result<Block<'a>, PemError<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.pos >= self.input.len() {
@@ -113,7 +214,7 @@ impl<'a> Iterator for Decoder<'a> {
     }
 }
 
-fn parse_one_block<'a>(input: &'a [u8], pos: &mut usize) -> Result<Block, PemError> {
+fn parse_one_block<'a>(input: &'a [u8], pos: &mut usize) -> Result<Block<'a>, PemError<'a>> {
     let remaining = &input[*pos..];
     let begin_offset = find_pattern(remaining, BEGIN_MARKER).ok_or(PemError::InvalidEncoding("no BEGIN line found"))?;
 
@@ -131,15 +232,14 @@ fn parse_one_block<'a>(input: &'a [u8], pos: &mut usize) -> Result<Block, PemErr
         }
 
         let label = &label_bytes[..label_bytes.len() - MARKER_END.len()];
-        let r#type = core::str::from_utf8(label)
-            .map_err(|_| PemError::InvalidEncoding("non-UTF-8 label"))?
-            .to_string();
+        let r#type = core::str::from_utf8(label).map_err(|_| PemError::InvalidEncoding("non-UTF-8 label"))?;
         (r#type, line_advance(remaining))
     };
 
     let mut cursor = label_start + advance;
 
-    let mut headers = Vec::new();
+    let mut header_buf = String::new();
+    let mut pairs: Vec<(usize, usize, usize, usize)> = Vec::new();
 
     loop {
         if cursor >= input.len() {
@@ -154,7 +254,10 @@ fn parse_one_block<'a>(input: &'a [u8], pos: &mut usize) -> Result<Block, PemErr
             *pos = cursor + line_advance(remaining);
             return Ok(Block {
                 r#type,
-                headers,
+                headers: Headers {
+                    buf: header_buf,
+                    pairs,
+                },
                 contents,
             });
         }
@@ -176,36 +279,56 @@ fn parse_one_block<'a>(input: &'a [u8], pos: &mut usize) -> Result<Block, PemErr
             let value_str =
                 core::str::from_utf8(value).map_err(|_| PemError::InvalidEncoding("non-UTF-8 header value"))?;
 
-            let mut full_value = String::from(value_str);
             cursor += line_advance(remaining);
 
-            loop {
-                if cursor >= input.len() {
-                    break;
-                }
-                let rest = &input[cursor..];
-                let cont_line_end =
-                    find_line_end(rest).ok_or(PemError::InvalidEncoding("unexpected end of PEM data"))?;
-                let cont_line = &rest[..cont_line_end];
-                if cont_line.is_empty() {
-                    break;
-                }
-                if cont_line[0] != b' ' && cont_line[0] != b'\t' {
-                    break;
-                }
-                let cont_trimmed = cont_line.trim_ascii_start();
-                if !cont_trimmed.is_empty() {
-                    if !full_value.is_empty() {
-                        full_value.push(' ');
-                    }
-                    if let Ok(s) = core::str::from_utf8(cont_trimmed) {
-                        full_value.push_str(s);
-                    }
-                }
-                cursor += line_advance(rest);
-            }
+            let key_start = header_buf.len();
+            header_buf.push_str(key);
+            let key_len = header_buf.len() - key_start;
 
-            headers.push((String::from(key), full_value));
+            let has_continuation = cursor < input.len() && {
+                let rest = &input[cursor..];
+                let cont_line_end = find_line_end(rest).unwrap_or(rest.len());
+                let cont_line = &rest[..cont_line_end];
+                !cont_line.is_empty() && (cont_line[0] == b' ' || cont_line[0] == b'\t')
+            };
+
+            if has_continuation {
+                let mut full_value = String::from(value_str);
+                loop {
+                    if cursor >= input.len() {
+                        break;
+                    }
+                    let rest = &input[cursor..];
+                    let cont_line_end =
+                        find_line_end(rest).ok_or(PemError::InvalidEncoding("unexpected end of PEM data"))?;
+                    let cont_line = &rest[..cont_line_end];
+                    if cont_line.is_empty() {
+                        break;
+                    }
+                    if cont_line[0] != b' ' && cont_line[0] != b'\t' {
+                        break;
+                    }
+                    let cont_trimmed = cont_line.trim_ascii_start();
+                    if !cont_trimmed.is_empty() {
+                        if !full_value.is_empty() {
+                            full_value.push(' ');
+                        }
+                        if let Ok(s) = core::str::from_utf8(cont_trimmed) {
+                            full_value.push_str(s);
+                        }
+                    }
+                    cursor += line_advance(rest);
+                }
+                let val_start = header_buf.len();
+                header_buf.push_str(&full_value);
+                let val_len = header_buf.len() - val_start;
+                pairs.push((key_start, key_len, val_start, val_len));
+            } else {
+                let val_start = header_buf.len();
+                header_buf.push_str(value_str);
+                let val_len = header_buf.len() - val_start;
+                pairs.push((key_start, key_len, val_start, val_len));
+            }
         } else {
             break;
         }
@@ -241,9 +364,9 @@ fn parse_one_block<'a>(input: &'a [u8], pos: &mut usize) -> Result<Block, PemErr
                         b64_data_end = candidate;
                         break;
                     }
-                    let actual = core::str::from_utf8(end_label).unwrap_or("(invalid UTF-8)").to_string();
+                    let actual = core::str::from_utf8(end_label).unwrap_or("(invalid UTF-8)");
                     return Err(PemError::LabelMismatch {
-                        expected: r#type.clone(),
+                        expected: r#type,
                         actual,
                     });
                 }
@@ -270,7 +393,10 @@ fn parse_one_block<'a>(input: &'a [u8], pos: &mut usize) -> Result<Block, PemErr
 
     return Ok(Block {
         r#type,
-        headers,
+        headers: Headers {
+            buf: header_buf,
+            pairs,
+        },
         contents,
     });
 }
@@ -316,9 +442,9 @@ fn line_advance(data: &[u8]) -> usize {
 mod tests {
     use super::*;
 
-    fn roundtrip(blocks: &[Block]) {
+    fn roundtrip(blocks: &[Block<'_>]) {
         let pem = encode(blocks);
-        let decoded: Vec<Result<Block, PemError>> = decode(&pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(&pem).collect();
         for (i, result) in decoded.iter().enumerate() {
             let decoded_block = result.as_ref().unwrap();
             assert_eq!(decoded_block.r#type, blocks[i].r#type, "block {} type mismatch", i);
@@ -332,7 +458,7 @@ mod tests {
     fn empty_content() {
         let blocks = [Block {
             r#type: "CERTIFICATE".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents: Vec::new(),
         }];
         roundtrip(&blocks);
@@ -342,7 +468,7 @@ mod tests {
     fn simple_certificate() {
         let blocks = [Block {
             r#type: "CERTIFICATE".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents: b"hello world".to_vec(),
         }];
         roundtrip(&blocks);
@@ -353,7 +479,7 @@ mod tests {
         let contents: Vec<u8> = (0u8..255).collect();
         let blocks = [Block {
             r#type: "PRIVATE KEY".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents,
         }];
         roundtrip(&blocks);
@@ -364,7 +490,7 @@ mod tests {
         let contents = b"1234567890abcdef1234567890abcdef1234567890abcdef"; // 48 bytes
         let blocks = [Block {
             r#type: "CERTIFICATE".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents: contents.to_vec(),
         }];
         roundtrip(&blocks);
@@ -375,12 +501,12 @@ mod tests {
         let blocks = [
             Block {
                 r#type: "CERTIFICATE".into(),
-                headers: Vec::new(),
+                headers: Headers::new(),
                 contents: b"first certificate data".to_vec(),
             },
             Block {
                 r#type: "CERTIFICATE".into(),
-                headers: Vec::new(),
+                headers: Headers::new(),
                 contents: b"second certificate data".to_vec(),
             },
         ];
@@ -392,17 +518,17 @@ mod tests {
         let blocks = [
             Block {
                 r#type: "CERTIFICATE".into(),
-                headers: Vec::new(),
+                headers: Headers::new(),
                 contents: b"cert data".to_vec(),
             },
             Block {
                 r#type: "PRIVATE KEY".into(),
-                headers: Vec::new(),
+                headers: Headers::new(),
                 contents: b"key data".to_vec(),
             },
             Block {
                 r#type: "PUBLIC KEY".into(),
-                headers: Vec::new(),
+                headers: Headers::new(),
                 contents: b"pubkey data".to_vec(),
             },
         ];
@@ -413,11 +539,11 @@ mod tests {
     fn with_rfc1421_headers() {
         let blocks = [Block {
             r#type: "PRIVACY-ENHANCED MESSAGE".into(),
-            headers: vec![
-                ("Proc-Type".into(), "4,ENCRYPTED".into()),
-                ("Content-Domain".into(), "RFC822".into()),
-                ("DEK-Info".into(), "DES-CBC,F8143EDE5960C597".into()),
-            ],
+            headers: Headers::from_pairs(&[
+                ("Proc-Type", "4,ENCRYPTED"),
+                ("Content-Domain", "RFC822"),
+                ("DEK-Info", "DES-CBC,F8143EDE5960C597"),
+            ]),
             contents: b"encrypted message data".to_vec(),
         }];
         roundtrip(&blocks);
@@ -432,17 +558,17 @@ Originator-Certificate:\n MIIBlTCCAScCAWUw\n\
 SGVsbG8gV29ybGQ=\n\
 -----END PRIVACY-ENHANCED MESSAGE-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "PRIVACY-ENHANCED MESSAGE");
         assert!(block.headers.len() >= 1);
 
-        let proc_type = block.headers.iter().find(|(k, _)| k == "Proc-Type");
+        let proc_type = block.headers.iter().find(|&(k, _)| k == "Proc-Type");
         assert!(proc_type.is_some(), "Proc-Type not found. Headers: {:?}", block.headers);
         assert_eq!(proc_type.unwrap().1, "4,ENCRYPTED");
 
-        let originator = block.headers.iter().find(|(k, _)| k == "Originator-Certificate");
+        let originator = block.headers.iter().find(|&(k, _)| k == "Originator-Certificate");
         assert!(
             originator.is_some(),
             "Originator-Certificate not found. Headers: {:?}",
@@ -475,7 +601,7 @@ SGVsbG8gV29ybGQ=\n\
                      l4wOuDwKQa+upc8GftXE2C//4mKANBC6It01gUaTIpo=\n\
                      -----END CERTIFICATE-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "CERTIFICATE");
@@ -491,7 +617,7 @@ SGVsbG8gV29ybGQ=\n\
                      H0M6xpM2q+53wmsN/eYLdgtjgBd3DBmHtPilCkiFICXyaA8z9LkJ\n\
                      -----END PRIVATE KEY-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "PRIVATE KEY");
@@ -504,7 +630,7 @@ SGVsbG8gV29ybGQ=\n\
                      SGVsbG8gV29ybGQ=\r\n\
                      -----END CERTIFICATE-----\r\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "CERTIFICATE");
@@ -517,7 +643,7 @@ SGVsbG8gV29ybGQ=\n\
                      SGVsbG8gV29ybGQ=\r\
                      -----END CERTIFICATE-----\r";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.contents, b"Hello World");
@@ -532,7 +658,7 @@ SGVsbG8gV29ybGQ=\n\
                      U2Vjb25k\n\
                      -----END CERTIFICATE-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 2);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"First");
         assert_eq!(decoded[1].as_ref().unwrap().contents, b"Second");
@@ -547,7 +673,7 @@ SGVsbG8gV29ybGQ=\n\
                      SGVsbG8=\n\
                      -----END CERTIFICATE-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"Hello");
     }
@@ -555,7 +681,7 @@ SGVsbG8gV29ybGQ=\n\
     #[test]
     fn decode_empty_pem() {
         let pem = b"";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert!(decoded.is_empty());
     }
 
@@ -565,7 +691,7 @@ SGVsbG8gV29ybGQ=\n\
                      SGVsbG8=\n\
                      -----END PRIVATE KEY-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert!(decoded[0].is_err());
         match &decoded[0] {
@@ -573,8 +699,8 @@ SGVsbG8gV29ybGQ=\n\
                 expected,
                 actual,
             }) => {
-                assert_eq!(expected, "CERTIFICATE");
-                assert_eq!(actual, "PRIVATE KEY");
+                assert_eq!(*expected, "CERTIFICATE");
+                assert_eq!(*actual, "PRIVATE KEY");
             }
             other => panic!("expected LabelMismatch, got {:?}", other),
         }
@@ -585,7 +711,7 @@ SGVsbG8gV29ybGQ=\n\
         let pem = b"-----BEGIN CERTIFICATE-----\n\
                      SGVsbG8=\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert!(decoded[0].is_err());
     }
@@ -596,7 +722,7 @@ SGVsbG8gV29ybGQ=\n\
                      !!!invalid!!!\n\
                      -----END CERTIFICATE-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert!(decoded[0].is_err());
     }
@@ -606,11 +732,11 @@ SGVsbG8gV29ybGQ=\n\
         let contents = b"This is a test message that is long enough to span multiple lines when base64 encoded with 64 character line width";
         let blocks = [Block {
             r#type: "MESSAGE".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents: contents.to_vec(),
         }];
         let pem = encode(&blocks);
-        let decoded: Vec<Result<Block, PemError>> = decode(&pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(&pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, contents);
     }
@@ -619,7 +745,7 @@ SGVsbG8gV29ybGQ=\n\
     fn encode_produces_valid_pem() {
         let block = Block {
             r#type: "TEST".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents: b"data".to_vec(),
         };
         let pem = encode(&[block]);
@@ -633,7 +759,7 @@ SGVsbG8gV29ybGQ=\n\
         let contents = vec![b'A'; 200];
         let block = Block {
             r#type: "DATA".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents,
         };
         let pem = encode(&[block]);
@@ -655,7 +781,7 @@ SGVsbG8gV29ybGQ=\n\
         let pem = b"-----BEGIN CERTIFICATE-----\n\
                      SGVsbG8=\n\
                      -----END CERTIFICATE-----";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"Hello");
     }
@@ -667,7 +793,7 @@ SGVsbG8gV29ybGQ=\n\
                      V29y bGQ=\n\
                      -----END CERTIFICATE-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"Hello World");
     }
@@ -680,7 +806,7 @@ SGVsbG8gV29ybGQ=\n\
                      SGVsbG8=\n\
                      -----END CERTIFICATE-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.contents, b"Hello");
@@ -695,11 +821,11 @@ SGVsbG8gV29ybGQ=\n\
                      SGVsbG8=\n\
                      -----END PRIVACY-ENHANCED MESSAGE-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.contents, b"Hello");
-        assert_eq!(block.headers[0].1, "4,ENCRYPTED");
+        assert_eq!(block.headers.iter().next().unwrap().1, "4,ENCRYPTED");
     }
 
     #[test]
@@ -719,7 +845,7 @@ SGVsbG8gV29ybGQ=\n\
         }
         pem.push_str("-----END CERTIFICATE-----\n");
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem.as_bytes()).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem.as_bytes()).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, der);
     }
@@ -732,7 +858,7 @@ SGVsbG8gV29ybGQ=\n\
                      AaE=\n\
                      -----END EC PRIVATE KEY-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "EC PRIVATE KEY");
@@ -745,7 +871,7 @@ SGVsbG8gV29ybGQ=\n\
         let b64 = base64::encode(data);
         let pem = alloc::format!("-----BEGIN PYTHON DATA-----\n{}\n-----END PYTHON DATA-----\n", b64);
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem.as_bytes()).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem.as_bytes()).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, data);
     }
@@ -761,19 +887,20 @@ SGVsbG8gV29ybGQ=\n\
         pem.push('\n');
         pem.push_str("-----END PYTHON DATA-----\n");
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem.as_bytes()).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem.as_bytes()).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "PYTHON DATA");
         assert_eq!(block.contents, b"Python header data");
-        assert_eq!(block.headers.len(), 2);
+        let h_vec: Vec<(&str, &str)> = block.headers.iter().collect();
+        assert_eq!(h_vec.len(), 2);
     }
 
     #[test]
     fn label_with_spaces() {
         let blocks = [Block {
             r#type: "CERTIFICATE REQUEST".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents: b"csr data".to_vec(),
         }];
         roundtrip(&blocks);
@@ -782,8 +909,8 @@ SGVsbG8gV29ybGQ=\n\
     #[test]
     fn label_empty() {
         let blocks = [Block {
-            r#type: String::new(),
-            headers: Vec::new(),
+            r#type: "",
+            headers: Headers::new(),
             contents: b"data".to_vec(),
         }];
         roundtrip(&blocks);
@@ -794,7 +921,7 @@ SGVsbG8gV29ybGQ=\n\
         let contents = vec![0xABu8; 10000];
         let blocks = [Block {
             r#type: "LARGE DATA".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents,
         }];
         roundtrip(&blocks);
@@ -805,7 +932,7 @@ SGVsbG8gV29ybGQ=\n\
         let pem = b"-----BEGIN EMPTY-----\n\
                      -----END EMPTY-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "EMPTY");
@@ -817,7 +944,7 @@ SGVsbG8gV29ybGQ=\n\
         let der: Vec<u8> = (0u8..128).collect();
         let original = Block {
             r#type: "CERTIFICATE".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents: der,
         };
         roundtrip(&[original]);
@@ -827,11 +954,11 @@ SGVsbG8gV29ybGQ=\n\
     fn roundtrip_rfc1421_encrypted_message() {
         let original = Block {
             r#type: "PRIVACY-ENHANCED MESSAGE".into(),
-            headers: vec![
-                ("Proc-Type".into(), "4,ENCRYPTED".into()),
-                ("Content-Domain".into(), "RFC822".into()),
-                ("DEK-Info".into(), "DES-CBC,BFF968AA74691AC1".into()),
-            ],
+            headers: Headers::from_pairs(&[
+                ("Proc-Type", "4,ENCRYPTED"),
+                ("Content-Domain", "RFC822"),
+                ("DEK-Info", "DES-CBC,BFF968AA74691AC1"),
+            ]),
             contents: b"encrypted content here".to_vec(),
         };
         roundtrip(&[original]);
@@ -841,7 +968,7 @@ SGVsbG8gV29ybGQ=\n\
     fn encode_skip_headers_when_empty() {
         let block = Block {
             r#type: "TEST".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents: b"data".to_vec(),
         };
         let pem = encode(&[block]);
@@ -856,7 +983,7 @@ SGVsbG8gV29ybGQ=\n\
     fn encode_include_headers() {
         let block = Block {
             r#type: "MESSAGE".into(),
-            headers: vec![("X-Custom".into(), "value123".into())],
+            headers: Headers::from_pairs(&[("X-Custom", "value123")]),
             contents: b"data".to_vec(),
         };
         let pem = encode(&[block]);
@@ -871,7 +998,7 @@ SGVsbG8gV29ybGQ=\n\
                      ZGF0YQ==\n\
                      -----END DATA-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"data");
     }
@@ -885,12 +1012,13 @@ SGVsbG8gV29ybGQ=\n\
                      ZGF0YQ==\n\
                      -----END MESSAGE-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
-        assert_eq!(block.headers.len(), 2);
-        assert_eq!(block.headers[1].0, "Key-Info");
-        assert!(block.headers[1].1.contains("RSA,abc123"));
+        let h_vec: Vec<(&str, &str)> = block.headers.iter().collect();
+        assert_eq!(h_vec.len(), 2);
+        assert_eq!(h_vec[1].0, "Key-Info");
+        assert!(h_vec[1].1.contains("RSA,abc123"));
     }
 
     #[test]
@@ -902,7 +1030,7 @@ SGVsbG8gV29ybGQ=\n\
                      !!!invalid!!!\n\
                      -----END BAD-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 2);
         assert!(decoded[0].is_ok());
         assert!(decoded[1].is_err());
@@ -938,14 +1066,14 @@ SGVsbG8gV29ybGQ=\n\
             assert!(output.status.success());
             let pem_bytes = output.stdout;
 
-            let decoded: Vec<Result<Block, PemError>> = decode(&pem_bytes).collect();
+            let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(&pem_bytes).collect();
             assert_eq!(decoded.len(), 1);
             let block = decoded[0].as_ref().unwrap();
             assert_eq!(block.r#type, "CERTIFICATE");
             assert!(!block.contents.is_empty());
 
             let reencoded = encode(&[block.clone()]);
-            let re_decoded: Vec<Result<Block, PemError>> = decode(&reencoded).collect();
+            let re_decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(&reencoded).collect();
             assert_eq!(re_decoded.len(), 1);
             assert_eq!(re_decoded[0].as_ref().unwrap().contents, block.contents);
         }
@@ -975,7 +1103,7 @@ print(pem, end='')
             assert!(output.status.success());
             let pem_bytes = output.stdout;
 
-            let decoded: Vec<Result<Block, PemError>> = decode(&pem_bytes).collect();
+            let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(&pem_bytes).collect();
             assert_eq!(decoded.len(), 1);
             let block = decoded[0].as_ref().unwrap();
             assert_eq!(block.r#type, "PYTHON DATA");
@@ -999,13 +1127,13 @@ print(pem, end='')
             assert!(output.status.success());
             let pem_bytes = output.stdout;
 
-            let decoded: Vec<Result<Block, PemError>> = decode(&pem_bytes).collect();
+            let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(&pem_bytes).collect();
             assert!(decoded.len() >= 1);
             let first_block = decoded[0].as_ref().unwrap();
             assert!(!first_block.contents.is_empty());
 
             let reencoded = encode(&[first_block.clone()]);
-            let re_decoded: Vec<Result<Block, PemError>> = decode(&reencoded).collect();
+            let re_decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(&reencoded).collect();
             assert_eq!(re_decoded.len(), 1);
             assert_eq!(re_decoded[0].as_ref().unwrap().contents, first_block.contents);
         }
@@ -1015,13 +1143,13 @@ print(pem, end='')
     fn encode_with_special_chars_in_label() {
         let label = "X.509 CERTIFICATE";
         let block = Block {
-            r#type: label.into(),
-            headers: Vec::new(),
+            r#type: label,
+            headers: Headers::new(),
             contents: b"data".to_vec(),
         };
         let pem = encode(&[block.clone()]);
         assert!(pem.starts_with(b"-----BEGIN X.509 CERTIFICATE-----\n"));
-        let decoded: Vec<Result<Block, PemError>> = decode(&pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(&pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().r#type, label);
     }
@@ -1034,7 +1162,7 @@ print(pem, end='')
         pem.extend_from_slice(b"SGVsbG8=\n");
         pem.extend_from_slice(b"-----END CERTIFICATE-----\n");
 
-        let decoded: Vec<Result<Block, PemError>> = decode(&pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(&pem).collect();
         assert_eq!(decoded.len(), 1);
         assert!(decoded[0].is_ok());
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"Hello");
@@ -1058,7 +1186,7 @@ print(pem, end='')
                      c3DGMNR+oUmSjKZ0jIhAYmeLxaPHfQwR\n\
                      -----END X509 CRL-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "X509 CRL");
@@ -1079,7 +1207,7 @@ print(pem, end='')
                      dEQc8B8jAcnuOrfU\n\
                      -----END CERTIFICATE REQUEST-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "CERTIFICATE REQUEST");
@@ -1096,7 +1224,7 @@ print(pem, end='')
                      OsYGYUFdAH0RNc1p4VbKEAQUM2Xo8PMHBoYdqEcsbTodlCFAZH4=\n\
                      -----END PKCS7-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "PKCS7");
@@ -1111,7 +1239,7 @@ print(pem, end='')
                      dvb05OXi5XLPLEtViMwvLVLwSE0sKlFIVHAqSk3MBkkBAJv0Fx0=\n\
                      -----END CMS-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "CMS");
@@ -1128,7 +1256,7 @@ print(pem, end='')
                      QC7k0NNzUHTV9yGDwfqMbw==\n\
                      -----END ENCRYPTED PRIVATE KEY-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "ENCRYPTED PRIVATE KEY");
@@ -1152,7 +1280,7 @@ print(pem, end='')
                      Smluak1aZIttePeTAHeJJs8izNJ5aR3Wcd3A5gLztQ==\n\
                      -----END ATTRIBUTE CERTIFICATE-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "ATTRIBUTE CERTIFICATE");
@@ -1167,7 +1295,7 @@ print(pem, end='')
                      Nkn3Eos8EiZByi9DVsyfy9eejh+8AXgp\n\
                      -----END PUBLIC KEY-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "PUBLIC KEY");
@@ -1187,7 +1315,7 @@ print(pem, end='')
                      NnY/OKgBex6MIEAv2AIhAI2GdvfL+mGvhyPZE+JxRxWChmggb5/9eHdUcmW/jkOH\n\
                      -----END X509 CERTIFICATE-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "X509 CERTIFICATE");
@@ -1205,7 +1333,7 @@ print(pem, end='')
                      NnY/OKgBex6MIEAv2AIhAI2GdvfL+mGvhyPZE+JxRxWChmggb5/9eHdUcmW/jkOH\n\
                      -----END X.509 CERTIFICATE-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "X.509 CERTIFICATE");
@@ -1225,7 +1353,7 @@ print(pem, end='')
                      dEQc8B8jAcnuOrfU\n\
                      -----END NEW CERTIFICATE REQUEST-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "NEW CERTIFICATE REQUEST");
@@ -1242,7 +1370,7 @@ print(pem, end='')
                      OsYGYUFdAH0RNc1p4VbKEAQUM2Xo8PMHBoYdqEcsbTodlCFAZH4=\n\
                      -----END CERTIFICATE CHAIN-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "CERTIFICATE CHAIN");
@@ -1254,7 +1382,7 @@ print(pem, end='')
     #[test]
     fn reject_too_few_trailing_dashes_begin() {
         let pem = b"-----BEGIN FOO----\ndGVzdA==\n-----END FOO-----\n";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert!(
             decoded.is_empty() || decoded[0].is_err(),
             "expected error for BEGIN with 4 trailing dashes"
@@ -1264,7 +1392,7 @@ print(pem, end='')
     #[test]
     fn reject_too_many_trailing_dashes_begin() {
         let pem = b"-----BEGIN FOO-------\ndGVzdA==\n-----END FOO-------\n";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert!(
             decoded.is_empty() || decoded[0].is_err(),
             "expected error for BEGIN with 7 trailing dashes"
@@ -1274,7 +1402,7 @@ print(pem, end='')
     #[test]
     fn reject_too_few_trailing_dashes_end() {
         let pem = b"-----BEGIN FOO-----\ndGVzdA==\n-----END FOO----\n";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert!(
             decoded.is_empty() || decoded[0].is_err(),
             "expected error for END with 4 trailing dashes"
@@ -1284,7 +1412,7 @@ print(pem, end='')
     #[test]
     fn reject_too_many_trailing_dashes_end() {
         let pem = b"-----BEGIN FOO-----\ndGVzdA==\n-----END FOO------\n";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert!(
             decoded.is_empty() || decoded[0].is_err(),
             "expected error for END with 6 trailing dashes"
@@ -1294,7 +1422,7 @@ print(pem, end='')
     #[test]
     fn reject_missing_ending_space() {
         let pem = b"-----BEGIN FOO-----\ndGVzdA==\n-----ENDBAR-----\n";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert!(
             decoded.is_empty() || decoded[0].is_err(),
             "expected error for missing space between END and label"
@@ -1304,7 +1432,7 @@ print(pem, end='')
     #[test]
     fn reject_trailing_non_whitespace_on_end() {
         let pem = b"-----BEGIN FOO-----\ndGVzdA==\n-----END FOO----- .\n";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert!(decoded[0].is_err(), "expected error for trailing '. ' on END line");
     }
@@ -1312,7 +1440,7 @@ print(pem, end='')
     #[test]
     fn reject_repeating_begin_no_end() {
         let input = b"-----BEGIN \n".repeat(100);
-        let decoded: Vec<Result<Block, PemError>> = decode(&input).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(&input).collect();
         assert_eq!(decoded.len(), 1);
         assert!(decoded[0].is_err(), "expected error for 100 repeated BEGIN lines with no END");
     }
@@ -1320,7 +1448,7 @@ print(pem, end='')
     #[test]
     fn reject_only_end_marker() {
         let pem = b"-----END PUBLIC KEY-----\n";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert!(
             decoded.is_empty() || decoded[0].is_err(),
             "expected no valid block from input containing only END marker"
@@ -1336,7 +1464,7 @@ print(pem, end='')
                      \n\
                      \n\
                      -----END DATA-----\n";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"data");
     }
@@ -1348,7 +1476,7 @@ print(pem, end='')
                      \n\
                      \n\
                      -----END EMPTY-----\n";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert!(decoded[0].as_ref().unwrap().contents.is_empty());
     }
@@ -1360,11 +1488,11 @@ print(pem, end='')
                      \n\
                      ZGF0YQ==\n\
                      -----END DATA-----\n";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.contents, b"data");
-        let header = block.headers.iter().find(|(k, _)| k == "Key-Only");
+        let header = block.headers.iter().find(|&(k, _)| k == "Key-Only");
         assert!(header.is_some());
         assert_eq!(header.unwrap().1, "");
     }
@@ -1378,7 +1506,7 @@ print(pem, end='')
                      \n\
                      ZGF0YQ==\n\
                      -----END DATA-----\n";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"data");
     }
@@ -1390,7 +1518,7 @@ print(pem, end='')
                      \n\
                      ZGF0YQ==\n\
                      -----END DATA-----\n";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.contents, b"data");
@@ -1404,7 +1532,7 @@ print(pem, end='')
                      \n\
                      ZGF0YQ==\n\
                      -----END DATA-----\n";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.contents, b"data");
@@ -1415,13 +1543,13 @@ print(pem, end='')
         let pem = b"-----BEGIN FOO-----\n\
                      Header: 1\n\
                      -----END FOO-----\n";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "FOO");
         assert_eq!(block.headers.len(), 1);
-        assert_eq!(block.headers[0].0, "Header");
-        assert_eq!(block.headers[0].1, "1");
+        assert_eq!(block.headers.iter().next().unwrap().0, "Header");
+        assert_eq!(block.headers.iter().next().unwrap().1, "1");
         assert!(block.contents.is_empty());
     }
 
@@ -1431,7 +1559,7 @@ print(pem, end='')
     fn roundtrip_0_bytes() {
         let blocks = [Block {
             r#type: "DATA".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents: Vec::new(),
         }];
         roundtrip(&blocks);
@@ -1441,7 +1569,7 @@ print(pem, end='')
     fn roundtrip_1_byte() {
         let blocks = [Block {
             r#type: "DATA".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents: vec![0x00],
         }];
         roundtrip(&blocks);
@@ -1451,7 +1579,7 @@ print(pem, end='')
     fn roundtrip_2_bytes() {
         let blocks = [Block {
             r#type: "DATA".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents: vec![0x00, 0x01],
         }];
         roundtrip(&blocks);
@@ -1461,7 +1589,7 @@ print(pem, end='')
     fn roundtrip_3_bytes() {
         let blocks = [Block {
             r#type: "DATA".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents: vec![0x00, 0x01, 0x02],
         }];
         roundtrip(&blocks);
@@ -1472,7 +1600,7 @@ print(pem, end='')
         let contents: Vec<u8> = (0u8..64).collect();
         let blocks = [Block {
             r#type: "DATA".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents,
         }];
         roundtrip(&blocks);
@@ -1483,7 +1611,7 @@ print(pem, end='')
         let contents: Vec<u8> = (0u8..65).collect();
         let blocks = [Block {
             r#type: "DATA".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents,
         }];
         roundtrip(&blocks);
@@ -1494,7 +1622,7 @@ print(pem, end='')
         let contents: Vec<u8> = (0u8..128).collect();
         let blocks = [Block {
             r#type: "DATA".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents,
         }];
         roundtrip(&blocks);
@@ -1505,7 +1633,7 @@ print(pem, end='')
         let contents: Vec<u8> = (0u8..255).collect();
         let blocks = [Block {
             r#type: "DATA".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents,
         }];
         roundtrip(&blocks);
@@ -1516,7 +1644,7 @@ print(pem, end='')
         let contents: Vec<u8> = (0u8..=255).collect();
         let blocks = [Block {
             r#type: "DATA".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents,
         }];
         roundtrip(&blocks);
@@ -1529,7 +1657,7 @@ print(pem, end='')
         let contents = vec![b'x'; 48];
         let blocks = [Block {
             r#type: "TEST".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents,
         }];
         let pem = encode(&blocks);
@@ -1548,7 +1676,7 @@ print(pem, end='')
         let contents = vec![0u8; 64];
         let blocks = [Block {
             r#type: "TEST".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents,
         }];
         let pem = encode(&blocks);
@@ -1567,7 +1695,7 @@ print(pem, end='')
     fn roundtrip_label_with_hyphen() {
         let blocks = [Block {
             r#type: "TEST-DATA".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents: b"hyphen test".to_vec(),
         }];
         roundtrip(&blocks);
@@ -1577,7 +1705,7 @@ print(pem, end='')
     fn roundtrip_label_with_numbers() {
         let blocks = [Block {
             r#type: "AES-256-CBC".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents: b"number test".to_vec(),
         }];
         roundtrip(&blocks);
@@ -1587,7 +1715,7 @@ print(pem, end='')
     fn roundtrip_label_with_underscores() {
         let blocks = [Block {
             r#type: "MY_CUSTOM_LABEL".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents: b"underscore test".to_vec(),
         }];
         roundtrip(&blocks);
@@ -1597,7 +1725,7 @@ print(pem, end='')
     fn roundtrip_label_with_at_sign() {
         let blocks = [Block {
             r#type: "KEY@DOMAIN.COM".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents: b"at sign test".to_vec(),
         }];
         roundtrip(&blocks);
@@ -1607,7 +1735,7 @@ print(pem, end='')
     fn roundtrip_single_char_label() {
         let blocks = [Block {
             r#type: "X".into(),
-            headers: Vec::new(),
+            headers: Headers::new(),
             contents: b"single char".to_vec(),
         }];
         roundtrip(&blocks);
@@ -1617,8 +1745,8 @@ print(pem, end='')
     fn roundtrip_long_label() {
         let label = "A".repeat(100);
         let blocks = [Block {
-            r#type: label,
-            headers: Vec::new(),
+            r#type: &label,
+            headers: Headers::new(),
             contents: b"long label test".to_vec(),
         }];
         roundtrip(&blocks);
@@ -1631,7 +1759,7 @@ print(pem, end='')
         let pem = b"\n\n\n-----BEGIN DATA-----\n\
                      ZGF0YQ==\n\
                      -----END DATA-----\n";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"data");
     }
@@ -1641,7 +1769,7 @@ print(pem, end='')
         let pem = b"-----BEGIN DATA-----\n\
                      ZGF0\tYQ==\n\
                      -----END DATA-----\n";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"data");
     }
@@ -1652,7 +1780,7 @@ print(pem, end='')
                      ZGF0\n\
                      YQ==\n\
                      -----END DATA-----\n";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"data");
     }
@@ -1663,15 +1791,11 @@ print(pem, end='')
     fn encode_multiple_header_pairs() {
         let block = Block {
             r#type: "DATA".into(),
-            headers: vec![
-                ("Key1".into(), "val1".into()),
-                ("Key2".into(), "val2".into()),
-                ("Key3".into(), "val3".into()),
-            ],
+            headers: Headers::from_pairs(&[("Key1", "val1"), ("Key2", "val2"), ("Key3", "val3")]),
             contents: b"multi header".to_vec(),
         };
         let pem = encode(&[block.clone()]);
-        let decoded: Vec<Result<Block, PemError>> = decode(&pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(&pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().headers, block.headers);
         assert_eq!(decoded[0].as_ref().unwrap().contents, block.contents);
@@ -1681,26 +1805,28 @@ print(pem, end='')
     fn encode_header_with_empty_value() {
         let block = Block {
             r#type: "DATA".into(),
-            headers: vec![("Empty-Key".into(), String::new())],
+            headers: Headers::from_pairs(&[("Empty-Key", "")]),
             contents: b"empty value".to_vec(),
         };
         let pem = encode(&[block.clone()]);
-        let decoded: Vec<Result<Block, PemError>> = decode(&pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(&pem).collect();
         assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].as_ref().unwrap().headers[0].1, "");
+        assert_eq!(decoded[0].as_ref().unwrap().headers.iter().next().unwrap().1, "");
     }
 
     // ─── Multiple blocks roundtrip ───
 
     #[test]
     fn roundtrip_five_blocks() {
-        let blocks: Vec<Block> = (0..5)
-            .map(|i| Block {
-                r#type: format!("BLOCK{}", i),
-                headers: Vec::new(),
-                contents: format!("content {}", i).into_bytes(),
-            })
-            .collect();
+        let type_strs: Vec<String> = (0..5).map(|i| alloc::format!("BLOCK{}", i)).collect();
+        let mut blocks = Vec::new();
+        for i in 0..5 {
+            blocks.push(Block {
+                r#type: &type_strs[i],
+                headers: Headers::new(),
+                contents: alloc::format!("content {}", i).into_bytes(),
+            });
+        }
         roundtrip(&blocks);
     }
 
@@ -1712,7 +1838,7 @@ print(pem, end='')
                      -----BEGIN CERTIFICATE-----\n\
                      SGVsbG8=\n\
                      -----END CERTIFICATE-----\n";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"Hello");
     }
@@ -1737,11 +1863,14 @@ print(pem, end='')
                 })
                 .collect();
 
+            let type_str = alloc::format!("TEST{}", i);
+            let mut headers = Headers::new();
+            for hi in 0..(state % 3) as usize {
+                headers.push(&alloc::format!("H{}{}", i, hi), &alloc::format!("V{}{}", i, hi));
+            }
             let blocks = [Block {
-                r#type: format!("TEST{}", i),
-                headers: (0..(state % 3) as usize)
-                    .map(|h| (format!("H{}{}", i, h), format!("V{}{}", i, h)))
-                    .collect(),
+                r#type: &type_str,
+                headers,
                 contents,
             }];
             roundtrip(&blocks);
@@ -1763,7 +1892,7 @@ print(pem, end='')
                      SGVsbG8=\n\
                      -----END PRIVACY-ENHANCED MESSAGE-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "PRIVACY-ENHANCED MESSAGE");
@@ -1776,7 +1905,7 @@ print(pem, end='')
     #[test]
     fn decode_body_only_padding() {
         let pem = b"-----BEGIN DATA-----\n=\n-----END DATA-----\n";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert!(decoded[0].is_err(), "a single = is invalid base64");
     }
@@ -1784,7 +1913,7 @@ print(pem, end='')
     #[test]
     fn decode_body_only_padding_pair() {
         let pem = b"-----BEGIN DATA-----\n==\n-----END DATA-----\n";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert!(decoded[0].is_err(), "just == is invalid base64");
     }
@@ -1794,7 +1923,7 @@ print(pem, end='')
     #[test]
     fn decode_end_no_newline_matching() {
         let pem = b"-----BEGIN FOO-----\nZGF0YQ==\n-----END FOO-----";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"data");
     }
@@ -1818,7 +1947,7 @@ print(pem, end='')
                      ILwpnZ1izL4MlI9eCSHhVQBHEp2uQdXJB+d5Byg=\n\
                      -----END CERTIFICATE-----\n";
 
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         let block = decoded[0].as_ref().unwrap();
         assert_eq!(block.r#type, "CERTIFICATE");
@@ -1832,7 +1961,7 @@ print(pem, end='')
         let pem = b"-----BEGIN DATA-----\n\
                      ZGF0YQ==   \n\
                      -----END DATA-----\n";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"data");
     }
@@ -1844,7 +1973,7 @@ print(pem, end='')
         let pem = b"-----BEGIN DATA-----\n\
                         ZGF0YQ==\n\
                      -----END DATA-----\n";
-        let decoded: Vec<Result<Block, PemError>> = decode(pem).collect();
+        let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem).collect();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().contents, b"data");
     }
