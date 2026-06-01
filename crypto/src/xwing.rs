@@ -134,7 +134,7 @@ fn expand_decapsulation_key(
 }
 
 fn derive_mlkeem_keys(expnded_secret_key: &[u8; 96]) -> (mlkem::SecretKey768, mlkem::PublicKey768) {
-    mlkem::ml_kem_768_keypair_derand(&expnded_secret_key[..64].try_into().unwrap())
+    mlkem::generate_keypair_768_derand(&expnded_secret_key[..64].try_into().unwrap())
 }
 
 fn combiner(
