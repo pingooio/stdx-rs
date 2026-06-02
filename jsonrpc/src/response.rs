@@ -38,7 +38,7 @@ impl Error {
         Ok(Self {
             code,
             message: message.into(),
-            data: Some(RawValue::from_string(serde_json::to_string(&data)?)?),
+            data: Some(serde_json::value::to_raw_value(&data)?),
         })
     }
 
@@ -102,7 +102,7 @@ impl Response {
     /// Creates a success response.
     pub fn success(id: Id, result: impl Serialize) -> serde_json::Result<Self> {
         Ok(Self::Success {
-            result: RawValue::from_string(serde_json::to_string(&result)?)?,
+            result: serde_json::value::to_raw_value(&result)?,
             id,
         })
     }

@@ -37,11 +37,8 @@ where
         let fut = (self.handler)(ctx, params);
         Box::pin(async move {
             match fut.await {
-                Ok(result) => {
-                    let json = serde_json::to_string(&result)
-                        .map_err(|e| Error::new(ErrorCode::INTERNAL_ERROR, e.to_string()))?;
-                    RawValue::from_string(json).map_err(|e| Error::new(ErrorCode::INTERNAL_ERROR, e.to_string()))
-                }
+                Ok(result) => serde_json::value::to_raw_value(&result)
+                    .map_err(|e| Error::new(ErrorCode::INTERNAL_ERROR, e.to_string())),
                 Err(e) => Err(e.into()),
             }
         })

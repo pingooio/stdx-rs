@@ -2,7 +2,7 @@ use std::fmt;
 
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
-    de::{self, DeserializeOwned, Visitor},
+    de::{self, DeserializeOwned, MapAccess, SeqAccess, Visitor, value::MapAccessDeserializer},
 };
 use serde_json::value::RawValue;
 
@@ -189,24 +189,30 @@ impl Serialize for RequestPacket {
 
 impl<'de> Deserialize<'de> for RequestPacket {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value {
-            serde_json::Value::Array(arr) => {
-                let entries: Result<Vec<_>, _> = arr
-                    .into_iter()
-                    .map(|v| {
-                        let s = serde_json::to_string(&v).map_err(de::Error::custom)?;
-                        RawValue::from_string(s).map_err(de::Error::custom)
-                    })
-                    .collect();
-                Ok(RequestPacket::Batch(entries?))
+        struct RequestPacketVisitor;
+
+        impl<'de> Visitor<'de> for RequestPacketVisitor {
+            type Value = RequestPacket;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a JSON-RPC request object or array")
             }
-            serde_json::Value::Object(_) => {
-                let req: Request = serde_json::from_value(value).map_err(de::Error::custom)?;
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let mut entries = Vec::new();
+                while let Some(entry) = seq.next_element::<Box<RawValue>>()? {
+                    entries.push(entry);
+                }
+                Ok(RequestPacket::Batch(entries))
+            }
+
+            fn visit_map<M: MapAccess<'de>>(self, map: M) -> Result<Self::Value, M::Error> {
+                let req = Request::deserialize(MapAccessDeserializer::new(map))?;
                 Ok(RequestPacket::Single(req))
             }
-            _ => Err(de::Error::custom("expected JSON-RPC request object or array")),
         }
+
+        deserializer.deserialize_any(RequestPacketVisitor)
     }
 }
 

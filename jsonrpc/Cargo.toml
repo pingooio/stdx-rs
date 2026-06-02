@@ -13,7 +13,6 @@ path = "src/jsonrpc.rs"
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["raw_value"] }
-thiserror = "2"
 
 [dev-dependencies]
 tokio = { workspace = true }
