@@ -36,6 +36,7 @@ members = [
     "httpdate",
     "ipnetwork",
     "itoa",
+    "jsonrpc",
     "mail_builder",
     "maxminddb",
     "memmem",

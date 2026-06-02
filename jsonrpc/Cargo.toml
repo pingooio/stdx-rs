@@ -1,0 +1,19 @@
+[package]
+name = "jsonrpc"
+version = "0.1.0"
+description = "JSON-RPC 2.0 types and serialization"
+repository = "https://github.com/bloom42/stdx"
+license = "MIT"
+edition = "2024"
+readme = "README.md"
+
+[lib]
+path = "src/jsonrpc.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
+thiserror = "2"
+
+[dev-dependencies]
+tokio = { workspace = true }
