@@ -42,6 +42,8 @@ impl Kmac256 {
 
 #[cfg(test)]
 mod tests {
+    use hex;
+
     use super::Kmac256;
 
     const KEY: [u8; 32] = [
@@ -98,5 +100,45 @@ mod tests {
         let mut incremental = [0u8; 64];
         kmac.finalize_into(&mut incremental);
         assert_eq!(incremental, one_shot);
+    }
+
+    #[test]
+    fn wycheproof_kmac256() {
+        let data: serde_json::Value = serde_json::from_str(include_str!(
+            "../../testdata/wycheproof/testvectors_v1/kmac256_no_customization_test.json"
+        ))
+        .unwrap();
+        let mut valid_tested = 0u64;
+        for group in data["testGroups"].as_array().unwrap() {
+            for test in group["tests"].as_array().unwrap() {
+                let key_hex = test["key"].as_str().unwrap();
+                let msg_hex = test["msg"].as_str().unwrap();
+                let tag_hex = test["tag"].as_str().unwrap();
+                let result = test["result"].as_str().unwrap();
+
+                let key = hex::decode(key_hex).unwrap();
+                let msg = hex::decode(msg_hex).unwrap();
+                let expected_tag = hex::decode(tag_hex).unwrap();
+
+                let mut out = vec![0u8; expected_tag.len()];
+                Kmac256::mac(&key, &msg, b"", &mut out);
+
+                if result == "valid" {
+                    assert_eq!(
+                        out.as_slice(),
+                        expected_tag.as_slice(),
+                        "wycheproof KMAC256 tcId={}",
+                        test["tcId"]
+                    );
+                    valid_tested += 1;
+                } else if result == "acceptable" {
+                    if out.as_slice() != expected_tag.as_slice() {
+                        continue;
+                    }
+                    valid_tested += 1;
+                }
+            }
+        }
+        assert!(valid_tested > 0, "no valid KMAC256 wycheproof tests were run");
     }
 }

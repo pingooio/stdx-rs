@@ -881,6 +881,156 @@ mod tests {
         out
     }
 
+    // Read a DER TLV (tag-length-value) item.
+    // Returns (tag, value) or None on error.
+    fn der_read_tlv<'a>(data: &'a [u8], offset: &mut usize) -> Option<(u8, &'a [u8])> {
+        if *offset >= data.len() {
+            return None;
+        }
+        let tag = data[*offset];
+        *offset += 1;
+        if *offset >= data.len() {
+            return None;
+        }
+        let len_byte = data[*offset];
+        *offset += 1;
+        let (len, _) = if len_byte & 0x80 != 0 {
+            let num_bytes = (len_byte & 0x7f) as usize;
+            if num_bytes == 0 || num_bytes > core::mem::size_of::<usize>() || *offset + num_bytes > data.len() {
+                return None;
+            }
+            // DER requires the first length byte to be non-zero when
+            // num_bytes > 1, otherwise shorter encoding would suffice
+            if num_bytes > 1 && data[*offset] == 0 {
+                return None;
+            }
+            let mut l = 0usize;
+            for i in 0..num_bytes {
+                l = (l << 8) | data[*offset + i] as usize;
+            }
+            if l < 128 {
+                return None;
+            }
+            *offset += num_bytes;
+            (l, num_bytes + 1)
+        } else {
+            (len_byte as usize, 1)
+        };
+        if (*offset).checked_add(len).map_or(true, |sum| sum > data.len()) {
+            return None;
+        }
+        let value = &data[*offset..*offset + len];
+        *offset = (*offset).checked_add(len)?;
+        Some((tag, value))
+    }
+
+    // Convert a DER-encoded ECDSA signature (SEQUENCE { INTEGER r, INTEGER s })
+    // to P1363 format (r || s, each 32 bytes).
+    fn der_ecdsa_sig_to_p1363(der: &[u8]) -> Option<[u8; 64]> {
+        let mut offset = 0;
+        let (tag, inner) = der_read_tlv(der, &mut offset)?;
+        if tag != 0x30 {
+            return None;
+        }
+        // DER signature must be fully consumed (no trailing bytes)
+        if offset != der.len() {
+            return None;
+        }
+        let mut inner_offset = 0;
+        let (rtag, rval) = der_read_tlv(inner, &mut inner_offset)?;
+        if rtag != 0x02 || rval.is_empty() || rval.len() > 33 {
+            return None;
+        }
+        let (stag, sval) = der_read_tlv(inner, &mut inner_offset)?;
+        if stag != 0x02 || sval.is_empty() || sval.len() > 33 {
+            return None;
+        }
+        // Strict DER requires no trailing data in the SEQUENCE
+        if inner_offset != inner.len() {
+            return None;
+        }
+        // DER INTEGER encoding rules:
+        // - Must use minimal number of bytes.
+        // - If the high bit would be set, prepend 0x00.
+        // - If leading 0x00 is used, the next byte must have high bit set.
+        let r_valid = if rval.len() == 32 && rval[0] >= 0x80 {
+            false
+        } else if rval.len() == 33 && rval[0] != 0 {
+            false
+        } else if rval.len() == 33 && rval[0] == 0 && rval[1] < 0x80 {
+            false
+        } else if rval.len() > 33 {
+            false
+        } else {
+            true
+        };
+        let s_valid = if sval.len() == 32 && sval[0] >= 0x80 {
+            false
+        } else if sval.len() == 33 && sval[0] != 0 {
+            false
+        } else if sval.len() == 33 && sval[0] == 0 && sval[1] < 0x80 {
+            false
+        } else if sval.len() > 33 {
+            false
+        } else {
+            true
+        };
+        if !r_valid || !s_valid {
+            return None;
+        }
+
+        let r_trimmed = if rval.len() == 33 && rval[0] == 0 {
+            &rval[1..]
+        } else {
+            rval
+        };
+        let s_trimmed = if sval.len() == 33 && sval[0] == 0 {
+            &sval[1..]
+        } else {
+            sval
+        };
+        if r_trimmed.len() > 32 || s_trimmed.len() > 32 {
+            return None;
+        }
+        let mut sig = [0u8; 64];
+        sig[32 - r_trimmed.len()..32].copy_from_slice(r_trimmed);
+        sig[64 - s_trimmed.len()..64].copy_from_slice(s_trimmed);
+        Some(sig)
+    }
+
+    // Extract the raw SEC1 uncompressed point from a DER SubjectPublicKeyInfo
+    // that uses the named secp256r1 curve (explicit parameters are rejected).
+    fn spki_to_sec1_point(spki: &[u8]) -> Option<Vec<u8>> {
+        let ec_public_key_oid: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
+        let secp256r1_oid: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
+        let mut offset = 0;
+        let (_tag, outer) = der_read_tlv(spki, &mut offset)?;
+        let mut inner = 0;
+        // Parse AlgorithmIdentifier SEQUENCE to verify it uses secp256r1 OID
+        let (_alg_tag, alg_content) = der_read_tlv(outer, &mut inner)?;
+        if _alg_tag != 0x30 {
+            return None;
+        }
+        // First element must be OID ecPublicKey
+        let mut ai = 0;
+        let (oid1_tag, oid1) = der_read_tlv(alg_content, &mut ai)?;
+        if oid1_tag != 0x06 || oid1 != ec_public_key_oid {
+            return None;
+        }
+        // Second element must be OID secp256r1 (named curve), not explicit params
+        let (oid2_tag, oid2) = der_read_tlv(alg_content, &mut ai)?;
+        if oid2_tag != 0x06 || oid2 != secp256r1_oid {
+            return None;
+        }
+        // Read BIT STRING
+        let (_bs_tag, bs_val) = der_read_tlv(outer, &mut inner)?;
+        if _bs_tag != 0x03 || bs_val.is_empty() {
+            return None;
+        }
+        // Skip the unused-bits byte
+        Some(bs_val[1..].to_vec())
+    }
+
     #[test]
     fn derive_public_key_generator_matches_sec1_base_point() {
         let mut private_key = [0u8; 32];
@@ -2162,5 +2312,113 @@ mod tests {
             let expected = decode_hex::<64>(hex_sig);
             assert_eq!(sig, expected, "failed for message: {:?}", String::from_utf8_lossy(msg));
         }
+    }
+
+    #[test]
+    fn wycheproof_ecdsa_p256_sha256_der() {
+        let data: serde_json::Value = serde_json::from_str(include_str!(
+            "../testdata/wycheproof/testvectors_v1/ecdsa_secp256r1_sha256_test.json"
+        ))
+        .unwrap();
+        let mut valid_tested = 0u64;
+        let mut invalid_tested = 0u64;
+        for group in data["testGroups"].as_array().unwrap() {
+            let uncompressed_hex = group["publicKey"]["uncompressed"].as_str().unwrap();
+            let pubkey_bytes = hex::decode(uncompressed_hex).unwrap();
+            let pk = PublicKey::from_bytes(&pubkey_bytes).unwrap();
+
+            for test in group["tests"].as_array().unwrap() {
+                let msg_hex = test["msg"].as_str().unwrap();
+                let sig_hex = test["sig"].as_str().unwrap();
+                let result = test["result"].as_str().unwrap();
+
+                let msg = hex::decode(msg_hex).unwrap();
+                let der_sig = hex::decode(sig_hex).unwrap();
+                let Some(sig) = der_ecdsa_sig_to_p1363(&der_sig) else {
+                    continue;
+                };
+
+                let verify_result = pk.verify(&msg, &sig);
+
+                if result == "valid" {
+                    assert!(
+                        verify_result.is_ok(),
+                        "wycheproof ECDSA DER SHA-256 tcId={} expected valid but failed",
+                        test["tcId"]
+                    );
+                    valid_tested += 1;
+                } else {
+                    assert!(
+                        verify_result.is_err(),
+                        "wycheproof ECDSA DER SHA-256 tcId={} expected invalid but passed",
+                        test["tcId"]
+                    );
+                    invalid_tested += 1;
+                }
+            }
+        }
+        assert!(valid_tested > 0, "no valid ECDSA DER SHA-256 wycheproof tests were run");
+        assert!(invalid_tested > 0, "no invalid ECDSA DER SHA-256 wycheproof tests were run");
+    }
+
+    #[test]
+    fn wycheproof_ecdh_p256_asn() {
+        let data: serde_json::Value =
+            serde_json::from_str(include_str!("../testdata/wycheproof/testvectors_v1/ecdh_secp256r1_test.json"))
+                .unwrap();
+        let mut valid_tested = 0u64;
+        let mut invalid_tested = 0u64;
+        let mut acceptable_tested = 0u64;
+        for group in data["testGroups"].as_array().unwrap() {
+            for test in group["tests"].as_array().unwrap() {
+                let public_hex = test["public"].as_str().unwrap();
+                let private_hex = test["private"].as_str().unwrap();
+                let expected_shared_hex = test["shared"].as_str().unwrap();
+                let result = test["result"].as_str().unwrap();
+
+                let spki_der = hex::decode(public_hex).unwrap();
+                let Some(sec1_point) = spki_to_sec1_point(&spki_der) else {
+                    if result == "valid" {
+                        panic!("wycheproof ECDH ASN tcId={}: failed to parse valid SPKI", test["tcId"]);
+                    }
+                    invalid_tested += 1;
+                    continue;
+                };
+
+                // Private key hex is a bigint, may have leading zeros or be
+                // shorter than 32 bytes. Pad or strip to exactly 32 bytes.
+                let private_bytes = hex::decode(private_hex).unwrap();
+                let mut private_key = [0u8; PRIVATE_KEY_SIZE];
+                let effective_len = private_bytes.len().min(PRIVATE_KEY_SIZE);
+                let skip = if private_bytes.len() > PRIVATE_KEY_SIZE {
+                    private_bytes.len() - PRIVATE_KEY_SIZE
+                } else {
+                    0
+                };
+                private_key[PRIVATE_KEY_SIZE - effective_len..]
+                    .copy_from_slice(&private_bytes[skip..skip + effective_len]);
+
+                let shared = ecdh(&private_key, &sec1_point);
+
+                if result == "valid" {
+                    let shared = shared.unwrap();
+                    let shared_hex = hex::encode(shared);
+                    assert_eq!(shared_hex, expected_shared_hex, "wycheproof ECDH ASN tcId={}", test["tcId"]);
+                    valid_tested += 1;
+                } else if result == "invalid" {
+                    assert!(
+                        shared.is_err(),
+                        "wycheproof ECDH ASN tcId={} expected invalid but passed",
+                        test["tcId"]
+                    );
+                    invalid_tested += 1;
+                } else {
+                    acceptable_tested += 1;
+                }
+            }
+        }
+        assert!(valid_tested > 0, "no valid ECDH ASN wycheproof tests were run");
+        assert!(invalid_tested > 0, "no invalid ECDH ASN wycheproof tests were run");
+        assert!(acceptable_tested > 0, "no acceptable ECDH ASN wycheproof tests were run");
     }
 }
