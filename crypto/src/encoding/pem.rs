@@ -1,92 +1,10 @@
 use alloc::{string::String, vec::Vec};
 use core::fmt;
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
-
 const BEGIN_MARKER: &[u8] = b"-----BEGIN ";
 const END_MARKER: &[u8] = b"-----END ";
 const MARKER_END: &[u8] = b"-----";
 const LINE_WIDTH: usize = 64;
-
-#[derive(Clone)]
-pub struct Headers {
-    buf: String,
-    pairs: Vec<(usize, usize, usize, usize)>,
-}
-
-impl Headers {
-    pub fn new() -> Self {
-        Headers {
-            buf: String::new(),
-            pairs: Vec::new(),
-        }
-    }
-
-    pub fn with_capacity(buf: usize, headers: usize) -> Self {
-        Headers {
-            buf: String::with_capacity(buf),
-            pairs: Vec::with_capacity(headers),
-        }
-    }
-
-    pub fn from_pairs(pairs: &[(&str, &str)]) -> Self {
-        let buf_capacity = pairs.iter().fold(0, |acc, pair| acc + pair.0.len() + pair.1.len());
-        let mut headers = Headers::with_capacity(buf_capacity, pairs.len());
-
-        for (k, v) in pairs {
-            headers.buf.reserve(k.len() + v.len());
-            let ks = headers.buf.len();
-            headers.buf.push_str(k);
-            let kl = headers.buf.len() - ks;
-            let vs = headers.buf.len();
-            headers.buf.push_str(v);
-            let vl = headers.buf.len() - vs;
-            headers.pairs.push((ks, kl, vs, vl));
-        }
-
-        headers
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> + '_ {
-        self.pairs.iter().map(move |&(ks, kl, vs, vl)| {
-            let key = &self.buf[ks..ks + kl];
-            let value = &self.buf[vs..vs + vl];
-            (key, value)
-        })
-    }
-
-    pub fn len(&self) -> usize {
-        self.pairs.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.pairs.is_empty()
-    }
-
-    pub fn push(&mut self, key: &str, value: &str) {
-        let ks = self.buf.len();
-        self.buf.push_str(key);
-        let kl = self.buf.len() - ks;
-        let vs = self.buf.len();
-        self.buf.push_str(value);
-        let vl = self.buf.len() - vs;
-        self.pairs.push((ks, kl, vs, vl));
-    }
-}
-
-impl PartialEq for Headers {
-    fn eq(&self, other: &Self) -> bool {
-        self.len() == other.len() && self.iter().zip(other.iter()).all(|(a, b)| a == b)
-    }
-}
-
-impl Eq for Headers {}
-
-impl fmt::Debug for Headers {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_list().entries(self.iter()).finish()
-    }
-}
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct Block<'a> {
@@ -135,6 +53,7 @@ impl core::fmt::Display for PemError<'_> {
 pub fn encode(blocks: &[Block<'_>]) -> Vec<u8> {
     let mut capacity = 0usize;
     let mut base64_capacity = 0;
+
     for block in blocks {
         capacity += 11 + block.r#type.len() + 6;
         for (k, v) in block.headers.iter() {
@@ -168,7 +87,7 @@ pub fn encode(blocks: &[Block<'_>]) -> Vec<u8> {
             output.push(b'\n');
         }
 
-        STANDARD.encode_string(&block.contents, &mut b64_buf);
+        base64::encode_to_string(&block.contents, base64::Alphabet::Standard, &mut b64_buf);
         for chunk in b64_buf.as_bytes().chunks(LINE_WIDTH) {
             output.extend_from_slice(chunk);
             output.push(b'\n');
@@ -214,6 +133,100 @@ impl<'a> Iterator for Blocks<'a> {
     }
 }
 
+#[derive(Clone, Copy)]
+struct Header {
+    key_start: usize,
+    key_len: usize,
+    value_start: usize,
+    value_len: usize,
+}
+
+#[derive(Clone)]
+pub struct Headers {
+    buf: String,
+    pairs: Vec<Header>,
+}
+
+impl Headers {
+    pub fn new() -> Self {
+        Headers {
+            buf: String::new(),
+            pairs: Vec::new(),
+        }
+    }
+
+    pub fn with_capacity(buf: usize, headers: usize) -> Self {
+        Headers {
+            buf: String::with_capacity(buf),
+            pairs: Vec::with_capacity(headers),
+        }
+    }
+
+    pub fn from_pairs(pairs: &[(&str, &str)]) -> Self {
+        let buf_capacity = pairs.iter().fold(0, |acc, pair| acc + pair.0.len() + pair.1.len());
+        let mut headers = Headers::with_capacity(buf_capacity, pairs.len());
+
+        for (k, v) in pairs {
+            headers.buf.reserve(k.len() + v.len());
+            let key_start = headers.buf.len();
+            headers.buf.push_str(k);
+            let value_start = headers.buf.len();
+            headers.buf.push_str(v);
+            headers.pairs.push(Header {
+                key_start,
+                key_len: value_start - key_start,
+                value_start,
+                value_len: headers.buf.len() - value_start,
+            });
+        }
+
+        headers
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> + '_ {
+        self.pairs.iter().map(move |span| {
+            let key = &self.buf[span.key_start..span.key_start + span.key_len];
+            let value = &self.buf[span.value_start..span.value_start + span.value_len];
+            (key, value)
+        })
+    }
+
+    pub fn len(&self) -> usize {
+        self.pairs.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pairs.is_empty()
+    }
+
+    pub fn push(&mut self, key: &str, value: &str) {
+        let key_start = self.buf.len();
+        self.buf.push_str(key);
+        let value_start = self.buf.len();
+        self.buf.push_str(value);
+        self.pairs.push(Header {
+            key_start,
+            key_len: value_start - key_start,
+            value_start,
+            value_len: self.buf.len() - value_start,
+        });
+    }
+}
+
+impl PartialEq for Headers {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && self.iter().zip(other.iter()).all(|(a, b)| a == b)
+    }
+}
+
+impl Eq for Headers {}
+
+impl fmt::Debug for Headers {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
 fn parse_one_block<'a>(input: &'a [u8], pos: &mut usize) -> Result<Block<'a>, PemError<'a>> {
     let remaining = &input[*pos..];
     let begin_offset = find_pattern(remaining, BEGIN_MARKER).ok_or(PemError::InvalidEncoding("no BEGIN line found"))?;
@@ -239,7 +252,7 @@ fn parse_one_block<'a>(input: &'a [u8], pos: &mut usize) -> Result<Block<'a>, Pe
     let mut cursor = label_start + advance;
 
     let mut header_buf = String::new();
-    let mut pairs: Vec<(usize, usize, usize, usize)> = Vec::new();
+    let mut pairs: Vec<Header> = Vec::new();
 
     loop {
         if cursor >= input.len() {
@@ -322,12 +335,22 @@ fn parse_one_block<'a>(input: &'a [u8], pos: &mut usize) -> Result<Block<'a>, Pe
                 let val_start = header_buf.len();
                 header_buf.push_str(&full_value);
                 let val_len = header_buf.len() - val_start;
-                pairs.push((key_start, key_len, val_start, val_len));
+                pairs.push(Header {
+                    key_start,
+                    key_len,
+                    value_start: val_start,
+                    value_len: val_len,
+                });
             } else {
                 let val_start = header_buf.len();
                 header_buf.push_str(value_str);
                 let val_len = header_buf.len() - val_start;
-                pairs.push((key_start, key_len, val_start, val_len));
+                pairs.push(Header {
+                    key_start,
+                    key_len,
+                    value_start: val_start,
+                    value_len: val_len,
+                });
             }
         } else {
             break;
