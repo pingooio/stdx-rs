@@ -1479,7 +1479,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "jsonrpc"
+name = "json_rpc"
 version = "0.1.0"
 dependencies = [
  "serde",

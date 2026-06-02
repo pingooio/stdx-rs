@@ -1,5 +1,5 @@
 [package]
-name = "jsonrpc"
+name = "json_rpc"
 version = "0.1.0"
 description = "JSON-RPC 2.0 types and serialization"
 repository = "https://github.com/bloom42/stdx"
@@ -8,7 +8,7 @@ edition = "2024"
 readme = "README.md"
 
 [lib]
-path = "src/jsonrpc.rs"
+path = "src/json_rpc.rs"
 
 [dependencies]
 serde = { workspace = true }

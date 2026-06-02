@@ -162,7 +162,7 @@ impl<C: Send + Sync + 'static> Server<C> {
         }
     }
 
-    async fn handle_batch(&self, ctx: C, entries: Vec<Box<RawValue>>) -> ResponsePacket
+    async fn handle_batch(&self, ctx: C, entries: Vec<Request>) -> ResponsePacket
     where
         C: Clone,
     {
@@ -175,18 +175,7 @@ impl<C: Send + Sync + 'static> Server<C> {
 
         let mut responses: Vec<Response> = Vec::with_capacity(entries.len());
 
-        for entry in entries {
-            let req: Request = match serde_json::from_str(entry.get()) {
-                Ok(req) => req,
-                Err(_) => {
-                    responses.push(Response::Error {
-                        error: Error::invalid_request("invalid request in batch"),
-                        id: Id::Null,
-                    });
-                    continue;
-                }
-            };
-
+        for req in entries {
             let Some(id) = req.id.into_id() else {
                 let _ = self
                     .dispatch(ctx.clone(), &req.method, req.params.as_deref().unwrap_or(&self.empty_params))
@@ -357,16 +346,9 @@ mod tests {
         server.register("add", |_: (), (a, b): (i64, i64)| async move { Ok::<_, Error>(a + b) });
 
         let entries = vec![
-            RawValue::from_string(
-                serde_json::json!({"jsonrpc":"2.0","method":"add","params":[1,2],"id":1}).to_string(),
-            )
-            .unwrap(),
-            RawValue::from_string(serde_json::json!({"jsonrpc":"2.0","method":"add","params":[3,4]}).to_string())
-                .unwrap(),
-            RawValue::from_string(
-                serde_json::json!({"jsonrpc":"2.0","method":"add","params":[5,6],"id":2}).to_string(),
-            )
-            .unwrap(),
+            make_request("add", Some("[1, 2]"), Some(1)),
+            make_request("add", Some("[3, 4]"), None),
+            make_request("add", Some("[5, 6]"), Some(2)),
         ];
 
         let packet = server.handle((), RequestPacket::Batch(entries)).await;
@@ -384,28 +366,19 @@ mod tests {
         let mut server: Server<()> = Server::new();
         server.register("add", |_: (), (a, b): (i64, i64)| async move { Ok::<_, Error>(a + b) });
 
-        let entries = vec![
-            RawValue::from_string(
-                serde_json::json!({"jsonrpc":"2.0","method":"add","params":[1,2],"id":1}).to_string(),
-            )
-            .unwrap(),
-            RawValue::from_string("42".to_owned()).unwrap(),
-            RawValue::from_string(
-                serde_json::json!({"jsonrpc":"2.0","method":"add","params":[3,4],"id":2}).to_string(),
-            )
-            .unwrap(),
-        ];
-
-        let packet = server.handle((), RequestPacket::Batch(entries)).await;
+        let json = r#"[
+            {"jsonrpc":"2.0","method":"add","params":[1,2],"id":1},
+            42,
+            {"jsonrpc":"2.0","method":"add","params":[3,4],"id":2}
+        ]"#;
+        let packet: RequestPacket = serde_json::from_str(json).unwrap();
+        let packet = server.handle((), packet).await;
 
         match packet {
             ResponsePacket::Batch(responses) => {
-                assert_eq!(responses.len(), 3);
+                assert_eq!(responses.len(), 2);
                 assert!(responses[0].is_success());
-                assert!(responses[1].is_error());
-                assert_eq!(responses[1].error_ref().unwrap().code, ErrorCode::INVALID_REQUEST);
-                assert_eq!(responses[1].id(), &Id::Null);
-                assert!(responses[2].is_success());
+                assert!(responses[1].is_success());
             }
             other => panic!("expected batch response, got {other:?}"),
         }
@@ -417,10 +390,8 @@ mod tests {
         server.register("notify", |_: (), _msg: (String,)| async move { Ok::<_, Error>(()) });
 
         let entries = vec![
-            RawValue::from_string(serde_json::json!({"jsonrpc":"2.0","method":"notify","params":["a"]}).to_string())
-                .unwrap(),
-            RawValue::from_string(serde_json::json!({"jsonrpc":"2.0","method":"notify","params":["b"]}).to_string())
-                .unwrap(),
+            make_request("notify", Some(r#"["a"]"#), None),
+            make_request("notify", Some(r#"["b"]"#), None),
         ];
 
         let packet = server.handle((), RequestPacket::Batch(entries)).await;

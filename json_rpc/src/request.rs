@@ -146,7 +146,7 @@ pub enum RequestPacket {
     Single(Request),
     /// A batch of raw request values. Each element is parsed individually
     /// during dispatch, so invalid entries get individual error responses.
-    Batch(Vec<Box<RawValue>>),
+    Batch(Vec<Request>),
 }
 
 impl RequestPacket {
@@ -199,11 +199,11 @@ impl<'de> Deserialize<'de> for RequestPacket {
             }
 
             fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-                let mut entries = Vec::new();
-                while let Some(entry) = seq.next_element::<Box<RawValue>>()? {
-                    entries.push(entry);
+                let mut requests = Vec::with_capacity(seq.size_hint().unwrap_or(1));
+                while let Some(req) = seq.next_element::<Request>()? {
+                    requests.push(req);
                 }
-                Ok(RequestPacket::Batch(entries))
+                Ok(RequestPacket::Batch(requests))
             }
 
             fn visit_map<M: MapAccess<'de>>(self, map: M) -> Result<Self::Value, M::Error> {
@@ -320,7 +320,7 @@ mod tests {
         ]"#;
         let packet: RequestPacket = serde_json::from_str(json).unwrap();
         assert!(packet.is_batch());
-        assert_eq!(packet.len(), 3);
+        assert_eq!(packet.len(), 2);
     }
 
     #[test]
@@ -369,11 +369,7 @@ mod tests {
                 id: RequestId(Some(Id::Number(2))),
             },
         ];
-        let packet = RequestPacket::Batch(
-            reqs.into_iter()
-                .map(|r| RawValue::from_string(serde_json::to_string(&r).unwrap()).unwrap())
-                .collect(),
-        );
+        let packet = RequestPacket::Batch(reqs);
         assert!(packet.is_batch());
         let json = serde_json::to_string(&packet).unwrap();
         let actual: serde_json::Value = serde_json::from_str(&json).unwrap();

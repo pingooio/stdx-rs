@@ -1,12 +1,12 @@
-use jsonrpc::{Error, RequestPacket, Server};
+use json_rpc::{Error, RequestPacket, Server};
 
 #[tokio::main]
 async fn main() {
     let mut server: Server<()> = Server::new();
 
-    server.register("add", |_: (), (a, b): (i64, i64)| async move { Ok::<_, Error>(a + b) });
+    server.register("add", async move |_: (), (a, b): (i64, i64)| Ok::<_, Error>(a + b));
 
-    server.register("subtract", |_: (), (a, b): (i64, i64)| async move { Ok::<_, Error>(a - b) });
+    server.register("subtract", async move |_: (), (a, b): (i64, i64)| Ok::<_, Error>(a - b));
 
     server.register("multiply", |_: (), (a, b): (i64, i64)| async move { Ok::<_, Error>(a * b) });
 
@@ -64,7 +64,7 @@ async fn main() {
     println!("batch      => {}", json_from_resp(&resp));
 }
 
-fn json_from_resp(packet: &jsonrpc::ResponsePacket) -> String {
+fn json_from_resp(packet: &json_rpc::ResponsePacket) -> String {
     packet.to_json().unwrap().unwrap_or_else(|| "nothing".to_string())
 }
 
