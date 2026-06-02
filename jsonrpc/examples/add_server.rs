@@ -10,13 +10,7 @@ async fn main() {
 
     server.register("multiply", |_: (), (a, b): (i64, i64)| async move { Ok::<_, Error>(a * b) });
 
-    server.register("divide", |_: (), (a, b): (i64, i64)| async move {
-        if b == 0 {
-            Err(Error::new(-32000, "division by zero"))
-        } else {
-            Ok(a / b)
-        }
-    });
+    server.register("divide", divide);
 
     // --- Single requests ---
 
@@ -72,4 +66,12 @@ async fn main() {
 
 fn json_from_resp(packet: &jsonrpc::ResponsePacket) -> String {
     packet.to_json().unwrap().unwrap_or_else(|| "nothing".to_string())
+}
+
+async fn divide(_: (), (a, b): (i64, i64)) -> Result<i64, Error> {
+    if b == 0 {
+        Err(Error::new(-32000, "division by zero"))
+    } else {
+        Ok(a / b)
+    }
 }
