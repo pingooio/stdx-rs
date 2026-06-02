@@ -304,6 +304,16 @@ pub fn encode_with_alphabet(input: &[u8], alphabet: Alphabet) -> String {
     }
 }
 
+/// encodes input with the standard base64 alphabet, as defined in RFC 4648.
+pub fn encode_to_string(input: &[u8], alphabet: Alphabet, out: &mut String) {
+    match alphabet {
+        Alphabet::Standard => engine::general_purpose::STANDARD.encode_string(input, out),
+        Alphabet::StandardNoPadding => engine::general_purpose::STANDARD_NO_PAD.encode_string(input, out),
+        Alphabet::Url => engine::general_purpose::URL_SAFE.encode_string(input, out),
+        Alphabet::UrlNoPadding => engine::general_purpose::URL_SAFE_NO_PAD.encode_string(input, out),
+    }
+}
+
 /// decodes input with the standard base64 alphabet, as defined in RFC 4648.
 pub fn decode(input: &[u8]) -> Result<Vec<u8>, DecodeError> {
     return decode_with_alphabet(input, Alphabet::Standard);
