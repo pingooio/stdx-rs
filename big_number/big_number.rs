@@ -12,6 +12,15 @@ use core::{
 
 pub const MAX_LIMBS: usize = 64;
 
+const fn max_limbs<const BITS: usize, const LIMBS: usize>() -> [u64; LIMBS] {
+    let mut limbs = [u64::MAX; LIMBS];
+    let rem = BITS % 64;
+    if rem != 0 {
+        limbs[LIMBS - 1] = (1u64 << rem) - 1;
+    }
+    limbs
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Uint<const BITS: usize, const LIMBS: usize> {
     pub limbs: [u64; LIMBS],
@@ -100,7 +109,7 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
     };
     pub const ONE: Self = Self::from_u64(1);
     pub const MAX: Self = Self {
-        limbs: [u64::MAX; LIMBS],
+        limbs: max_limbs::<BITS, LIMBS>(),
     };
 
     #[inline]
@@ -301,7 +310,9 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
     pub fn add_mod(&self, rhs: &Self, modulus: &Self) -> Self {
         let (sum, carry) = self.add_raw(rhs);
         let (reduced, borrow) = sum.sub_raw(modulus);
-        Self::ct_select(&reduced, &sum, carry == 1 || borrow == 0)
+        // Use bitwise OR to avoid short-circuit branching on secret carry/borrow bits.
+        // Reduce when carry==1 (overflow) OR borrow==0 (sum >= modulus).
+        Self::ct_select(&reduced, &sum, (carry | (borrow ^ 1)) != 0)
     }
 
     #[inline]
@@ -364,7 +375,8 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
                 limbs: shifted,
             };
             let (reduced, borrow) = shifted_rem.sub_raw(modulus);
-            rem = Self::ct_select(&reduced, &shifted_rem, carry == 1 || borrow == 0);
+            // Use bitwise OR to avoid short-circuit branching on secret carry/borrow bits.
+            rem = Self::ct_select(&reduced, &shifted_rem, (carry | (borrow ^ 1)) != 0);
         }
         rem
     }
@@ -1758,5 +1770,462 @@ mod tests {
 
         let (a, _) = U256::MAX.mul_word(2);
         assert_eq!(a.add_mod(&U256::ZERO, &P256_MODULUS), U256::MAX.double_mod(&P256_MODULUS));
+    }
+
+    // P-256 generator point coordinates (NIST SP 800-186 / RFC 6979).
+    // Test vectors generated with Python: `hex((Gx * Gy) % p256_p)` etc.
+    const P256_GX: U256 = U256::from_be_slice_const(
+        0x6b17d1f2, 0xe12c4247, 0xf8bce6e5, 0x63a440f2, 0x77037d81, 0x2deb33a0, 0xf4a13945,
+        0xd898c296,
+    );
+    const P256_GY: U256 = U256::from_be_slice_const(
+        0x4fe342e2, 0xfe1a7f9b, 0x8ee7eb4a, 0x7c0f9e16, 0x2bce3357, 0x6b315ece, 0xcbb64068,
+        0x37bf51f5,
+    );
+
+    impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
+        // Helper to build a 256-bit constant from eight 32-bit big-endian words.
+        // Only valid for BITS=256, LIMBS=4; used only in test helpers.
+        const fn from_be_slice_const(
+            w7: u32, w6: u32, w5: u32, w4: u32, w3: u32, w2: u32, w1: u32, w0: u32,
+        ) -> Self {
+            let limb3 = ((w7 as u64) << 32) | (w6 as u64);
+            let limb2 = ((w5 as u64) << 32) | (w4 as u64);
+            let limb1 = ((w3 as u64) << 32) | (w2 as u64);
+            let limb0 = ((w1 as u64) << 32) | (w0 as u64);
+            let limbs = [0u64; LIMBS];
+            if LIMBS > 0 { let mut l = [0u64; LIMBS]; l[0] = limb0; l[1] = limb1; l[2] = limb2; l[3] = limb3; return Self { limbs: l }; }
+            Self { limbs }
+        }
+    }
+
+    #[test]
+    fn p256_mul_mod_with_generator_coordinates() {
+        // Vectors verified with Python's arbitrary-precision arithmetic.
+        let gx_gy_mod_p = U256::from_be_slice(&decode_hex::<32>(
+            "823cd15f6dd3c71933565064513a6b2bd183e554c6a08622f713ebbbface98be",
+        ));
+        let gx_sq_mod_p = U256::from_be_slice(&decode_hex::<32>(
+            "98f6b84d29bef2b281819a5e0e3690d833b699495d694dd1002ae56c426b3f8c",
+        ));
+        let gy_sq_mod_p = U256::from_be_slice(&decode_hex::<32>(
+            "55df5d5850f47bad82149139979369fe498a9022a412b5e0bedd2cfc21c3ed91",
+        ));
+
+        assert_eq!(
+            P256_GX.mul_mod(&P256_GY, &P256_MODULUS),
+            gx_gy_mod_p,
+            "Gx*Gy mod p"
+        );
+        // Commutativity
+        assert_eq!(
+            P256_GY.mul_mod(&P256_GX, &P256_MODULUS),
+            gx_gy_mod_p,
+            "Gy*Gx mod p (commutativity)"
+        );
+        assert_eq!(
+            P256_GX.mul_mod(&P256_GX, &P256_MODULUS),
+            gx_sq_mod_p,
+            "Gx^2 mod p"
+        );
+        assert_eq!(
+            P256_GY.mul_mod(&P256_GY, &P256_MODULUS),
+            gy_sq_mod_p,
+            "Gy^2 mod p"
+        );
+    }
+
+    #[test]
+    fn p256_add_sub_mod_with_generator_coordinates() {
+        // Gx + Gy mod p256_p  (Python: hex((Gx + Gy) % p))
+        let gx_plus_gy = U256::from_be_slice(&decode_hex::<32>(
+            "bafb14d5df46c1e387a4d22fdfb3df08a2d1b0d8991c926fc05779ae1058148b",
+        ));
+        // Gx - Gy mod p256_p  (Python: hex((Gx - Gy) % p))
+        let gx_minus_gy = U256::from_be_slice(&decode_hex::<32>(
+            "1b348f0fe311c2ac69d4fb9ae794a2dc4b354a29c2b9d4d228eaf8dda0d970a1",
+        ));
+        // Gy - Gx mod p256_p
+        let gy_minus_gx = U256::from_be_slice(&decode_hex::<32>(
+            "e4cb70ef1cee3d54962b0465186b5d23b4cab5d73d462b2dd71507225f268f5e",
+        ));
+
+        assert_eq!(P256_GX.add_mod(&P256_GY, &P256_MODULUS), gx_plus_gy);
+        assert_eq!(P256_GX.sub_mod(&P256_GY, &P256_MODULUS), gx_minus_gy);
+        assert_eq!(P256_GY.sub_mod(&P256_GX, &P256_MODULUS), gy_minus_gx);
+        // (a-b) + (b-a) = 0 mod p
+        assert_eq!(gx_minus_gy.add_mod(&gy_minus_gx, &P256_MODULUS), U256::ZERO);
+    }
+
+    #[test]
+    fn bit_access() {
+        // Gx = 0x6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296
+        // Bit 0: the LSB of limb[0] = 0x...96 → bit 0 = 0
+        assert!(!P256_GX.bit(0), "bit 0 of Gx");
+        assert!(P256_GX.bit(1), "bit 1 of Gx");
+        assert!(P256_GX.bit(2), "bit 2 of Gx");
+        assert!(P256_GX.bit(63), "bit 63 of Gx");
+        assert!(!P256_GX.bit(64), "bit 64 of Gx");
+        assert!(!P256_GX.bit(65), "bit 65 of Gx");
+        assert!(!P256_GX.bit(127), "bit 127 of Gx");
+        assert!(!P256_GX.bit(128), "bit 128 of Gx");
+        assert!(P256_GX.bit(192), "bit 192 of Gx");
+        assert!(!P256_GX.bit(255), "bit 255 of Gx");
+        // Out-of-range bit is false
+        assert!(!P256_GX.bit(256), "bit 256 (out of range) of Gx");
+
+        // p256_p: all-ones in low 64 bits → bit 0 is 1
+        assert!(P256_MODULUS.bit(0), "bit 0 of p256_p");
+        assert!(P256_MODULUS.bit(63), "bit 63 of p256_p");
+        assert!(P256_MODULUS.bit(64), "bit 64 of p256_p");
+        assert!(!P256_MODULUS.bit(96), "bit 96 of p256_p");
+        assert!(P256_MODULUS.bit(255), "bit 255 of p256_p");
+
+        assert!(!U256::ZERO.bit(0));
+        assert!(!U256::ZERO.bit(255));
+        assert!(U256::ONE.bit(0));
+        assert!(!U256::ONE.bit(1));
+        assert!(U256::MAX.bit(0));
+        assert!(U256::MAX.bit(255));
+    }
+
+    #[test]
+    fn is_odd_flag() {
+        assert!(!U256::ZERO.is_odd(), "0 is even");
+        assert!(U256::ONE.is_odd(), "1 is odd");
+        assert!(!U256::from_u64(2).is_odd(), "2 is even");
+        assert!(U256::from_u64(3).is_odd(), "3 is odd");
+        assert!(P256_MODULUS.is_odd(), "p256_p is odd");
+        assert!(P256_ORDER.is_odd(), "p256_n is odd");
+        assert!(!P256_GX.is_odd(), "Gx is even");
+        assert!(P256_GY.is_odd(), "Gy is odd");
+        assert!(U256::MAX.is_odd(), "MAX is odd");
+    }
+
+    #[test]
+    fn ct_ge_comprehensive() {
+        let zero = U256::ZERO;
+        let one = U256::ONE;
+        let max = U256::MAX;
+
+        // Equal values
+        assert!(zero.ct_ge(&zero), "0 >= 0");
+        assert!(one.ct_ge(&one), "1 >= 1");
+        assert!(max.ct_ge(&max), "MAX >= MAX");
+        assert!(P256_MODULUS.ct_ge(&P256_MODULUS), "p >= p");
+
+        // Strict greater
+        assert!(one.ct_ge(&zero), "1 >= 0");
+        assert!(max.ct_ge(&zero), "MAX >= 0");
+        assert!(max.ct_ge(&one), "MAX >= 1");
+        assert!(P256_GX.ct_ge(&zero), "Gx >= 0");
+
+        // Strict less
+        assert!(!zero.ct_ge(&one), "NOT 0 >= 1");
+        assert!(!zero.ct_ge(&max), "NOT 0 >= MAX");
+        assert!(!one.ct_ge(&max), "NOT 1 >= MAX");
+        assert!(!P256_GX.ct_ge(&max), "NOT Gx >= MAX");
+
+        // Adjacent values
+        assert!((P256_MODULUS - U256::ONE).ct_ge(&(P256_MODULUS - U256::from_u64(2))));
+        assert!(!P256_MODULUS.sub_mod(&U256::ONE, &P256_MODULUS).ct_ge(&P256_MODULUS));
+    }
+
+    #[test]
+    fn div_rem_word_vectors() {
+        // Vectors generated with Python: p256_p / divisor
+        // p256_p = 0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff
+        struct Test {
+            dividend: U256,
+            divisor: u64,
+            expected_quotient: U256,
+            expected_rem: u64,
+        }
+        let tests = [
+            Test {
+                dividend: P256_MODULUS,
+                divisor: 1,
+                expected_quotient: P256_MODULUS,
+                expected_rem: 0,
+            },
+            Test {
+                dividend: P256_MODULUS,
+                divisor: 2,
+                expected_quotient: U256::from_be_slice(&decode_hex::<32>(
+                    "7fffffff800000008000000000000000000000007fffffffffffffffffffffff",
+                )),
+                expected_rem: 1,
+            },
+            Test {
+                dividend: P256_MODULUS,
+                divisor: 10,
+                expected_quotient: U256::from_be_slice(&decode_hex::<32>(
+                    "1999999980000000199999999999999999999999b33333333333333333333333",
+                )),
+                expected_rem: 1,
+            },
+            Test {
+                dividend: P256_MODULUS,
+                divisor: 16,
+                expected_quotient: U256::from_be_slice(&decode_hex::<32>(
+                    "0ffffffff00000001000000000000000000000000fffffffffffffffffffffff",
+                )),
+                expected_rem: 0xf,
+            },
+            Test {
+                dividend: P256_MODULUS,
+                divisor: 0xffff_ffff,
+                expected_quotient: U256::from_be_slice(&decode_hex::<32>(
+                    "0000000100000000000000010000000100000001000000020000000200000002",
+                )),
+                expected_rem: 1,
+            },
+            Test {
+                dividend: P256_MODULUS,
+                divisor: 0x1_0000_0000,
+                expected_quotient: U256::from_be_slice(&decode_hex::<32>(
+                    "00000000ffffffff00000001000000000000000000000000ffffffffffffffff",
+                )),
+                expected_rem: 0xffff_ffff,
+            },
+            Test {
+                dividend: U256::ZERO,
+                divisor: 7,
+                expected_quotient: U256::ZERO,
+                expected_rem: 0,
+            },
+            Test {
+                dividend: U256::ONE,
+                divisor: 7,
+                expected_quotient: U256::ZERO,
+                expected_rem: 1,
+            },
+            Test {
+                dividend: U256::from_u64(100),
+                divisor: 7,
+                expected_quotient: U256::from_u64(14),
+                expected_rem: 2,
+            },
+        ];
+        for t in &tests {
+            let (q, r) = t.dividend.div_rem_word(t.divisor);
+            assert_eq!(q, t.expected_quotient, "div_rem_word({:x}, {}).quotient", t.dividend, t.divisor);
+            assert_eq!(r, t.expected_rem, "div_rem_word({:x}, {}).rem", t.dividend, t.divisor);
+        }
+    }
+
+    #[test]
+    fn add_word_vectors() {
+        // Vectors: Python hex(Gx + k) for small k
+        let gx = P256_GX;
+        let gx_plus_1 = U256::from_be_slice(&decode_hex::<32>(
+            "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c297",
+        ));
+        let gx_minus_1 = U256::from_be_slice(&decode_hex::<32>(
+            "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c295",
+        ));
+
+        let (sum, carry) = gx.add_word(1);
+        assert_eq!(sum, gx_plus_1, "Gx + 1");
+        assert_eq!(carry, 0);
+
+        let (diff, borrow) = gx.sub_word(1);
+        assert_eq!(diff, gx_minus_1, "Gx - 1");
+        assert_eq!(borrow, 0);
+
+        // Adding to MAX wraps
+        let (sum_max, carry_max) = U256::MAX.add_word(1);
+        assert_eq!(sum_max, U256::ZERO);
+        assert_eq!(carry_max, 1);
+
+        // Subtracting from ZERO borrows
+        let (diff_zero, borrow_zero) = U256::ZERO.sub_word(1);
+        assert_eq!(diff_zero, U256::MAX);
+        assert_eq!(borrow_zero, 1);
+
+        // Word that carries across limb boundary: 2^64 - 1 + 1
+        let val = U256::from_u64(u64::MAX);
+        let (sum2, carry2) = val.add_word(1);
+        assert_eq!(sum2, U256::from_limbs([0, 1, 0, 0]));
+        assert_eq!(carry2, 0);
+    }
+
+    #[test]
+    fn mul_word_vectors() {
+        // Gx * 2 = 2*Gx (no overflow since Gx < 2^255)
+        // Python: hex(Gx * 2)
+        let gx_times_2 = U256::from_be_slice(&decode_hex::<32>(
+            "d62fa3e5c258848ff179cdcac74881e4ee06fb025bd66741e942728bb131852c",
+        ));
+        let (prod, carry) = P256_GX.mul_word(2);
+        assert_eq!(prod, gx_times_2, "Gx * 2");
+        assert_eq!(carry, 0, "Gx * 2 carry");
+
+        // MAX * 2 = 2^256 - 2: low 256 bits = all-ones XOR 1, overflow carry = 1
+        let (prod_max, carry_max) = U256::MAX.mul_word(2);
+        assert_eq!(prod_max, U256::from_limbs([u64::MAX - 1, u64::MAX, u64::MAX, u64::MAX]));
+        assert_eq!(carry_max, 1);
+
+        // ONE * 0 = 0
+        let (zero_prod, zero_carry) = U256::ONE.mul_word(0);
+        assert_eq!(zero_prod, U256::ZERO);
+        assert_eq!(zero_carry, 0);
+
+        // from_u64(10) * from_u64(10) (single-word)
+        let (p, c) = U128::from_u64(u64::MAX).mul_word(u64::MAX);
+        // u64::MAX * u64::MAX = 2^128 - 2^65 + 1 = (2^64-1)^2
+        // low 64 bits = 1, high 64 bits = u64::MAX - 1
+        assert_eq!(p, U128::from_limbs([1, u64::MAX - 1]));
+        assert_eq!(c, 0);
+    }
+
+    #[test]
+    fn fibonacci_number_round_trip() {
+        // Fib(100) = 354224848179261915075
+        // hex: 0x1333db76a7c594bfc3
+        // Verified with Python: `a, b = 0, 1; [a, b = b, a+b for _ in range(100)]; print(a)`
+        let fib100_dec = "354224848179261915075";
+        let fib100_hex = "1333db76a7c594bfc3";
+
+        let from_dec = U128::from_str_radix(fib100_dec, 10).unwrap();
+        let from_hex = U128::from_str_radix(fib100_hex, 16).unwrap();
+
+        assert_eq!(from_dec, from_hex, "Fib(100) from decimal == from hex");
+        assert_eq!(from_dec.to_string_radix(10), fib100_dec);
+        assert_eq!(from_dec.to_string_radix(16), fib100_hex);
+
+        // Fib(100) in binary
+        let fib100_bin = from_dec.to_string_radix(2);
+        let from_bin = U128::from_str_radix(&fib100_bin, 2).unwrap();
+        assert_eq!(from_bin, from_dec);
+
+        // Octal round-trip
+        let fib100_oct = from_dec.to_string_radix(8);
+        let from_oct = U128::from_str_radix(&fib100_oct, 8).unwrap();
+        assert_eq!(from_oct, from_dec);
+    }
+
+    #[test]
+    fn display_and_debug_formatting() {
+        // Display uses decimal
+        assert_eq!(format!("{}", U256::ZERO), "0");
+        assert_eq!(format!("{}", U256::ONE), "1");
+        assert_eq!(
+            format!("{}", U256::MAX),
+            "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+        );
+        assert_eq!(
+            format!("{}", P256_MODULUS),
+            "115792089210356248762697446949407573530086143415290314195533631308867097853951"
+        );
+
+        // LowerHex
+        assert_eq!(format!("{:x}", U256::ZERO), "0");
+        assert_eq!(format!("{:x}", U256::ONE), "1");
+        assert_eq!(
+            format!("{:x}", U256::MAX),
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        );
+        assert_eq!(
+            format!("{:#x}", U256::from_u64(255)),
+            "0xff"
+        );
+
+        // UpperHex
+        assert_eq!(format!("{:X}", U256::ZERO), "0");
+        assert_eq!(
+            format!("{:X}", P256_MODULUS),
+            "FFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF"
+        );
+        assert_eq!(
+            format!("{:#X}", U256::from_u64(255)),
+            "0xFF"
+        );
+
+        // Debug
+        assert_eq!(format!("{:?}", U256::ZERO), "Uint(0x0)");
+        assert_eq!(format!("{:?}", U256::ONE), "Uint(0x1)");
+        assert_eq!(
+            format!("{:?}", P256_MODULUS),
+            "Uint(0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff)"
+        );
+    }
+
+    #[test]
+    fn to_be_le_bytes_vec() {
+        // Verify Vec<u8> output matches fixed-size output
+        let values = [U256::ZERO, U256::ONE, U256::MAX, P256_MODULUS, P256_GX, P256_GY];
+        for v in &values {
+            let be_vec = v.to_be_bytes();
+            let be_fixed = v.to_be_bytes_fixed::<32>();
+            assert_eq!(be_vec.as_slice(), be_fixed.as_slice(), "BE bytes of {:x}", v);
+
+            let le_vec = v.to_le_bytes();
+            let le_fixed = v.to_le_bytes_fixed::<32>();
+            assert_eq!(le_vec.as_slice(), le_fixed.as_slice(), "LE bytes of {:x}", v);
+
+            // Round-trip through be
+            let rt_be = U256::from_be_slice(&be_vec);
+            assert_eq!(rt_be, *v, "BE round-trip of {:x}", v);
+
+            // Round-trip through le
+            let rt_le = U256::from_le_slice(&le_vec);
+            assert_eq!(rt_le, *v, "LE round-trip of {:x}", v);
+        }
+    }
+
+    #[test]
+    fn max_for_non_64_multiple_bits() {
+        // Uint<130, 3>: LIMBS=3, top limb should have only bits 0-1 set.
+        // MAX = 2^130 - 1:
+        //   limb[0] = 2^64 - 1
+        //   limb[1] = 2^64 - 1
+        //   limb[2] = 0b11 = 3  (only 2 bits, since 130 % 64 = 2)
+        type U130 = Uint<130, 3>;
+        let max = U130::MAX;
+        assert_eq!(max.limbs[0], u64::MAX, "U130::MAX limb[0]");
+        assert_eq!(max.limbs[1], u64::MAX, "U130::MAX limb[1]");
+        assert_eq!(max.limbs[2], 0b11, "U130::MAX limb[2] should have only 2 bits set");
+
+        // Uint<192, 3>: 192 = 3*64, all limbs should be u64::MAX
+        type U192 = Uint<192, 3>;
+        let max192 = U192::MAX;
+        assert_eq!(max192.limbs[0], u64::MAX, "U192::MAX limb[0]");
+        assert_eq!(max192.limbs[1], u64::MAX, "U192::MAX limb[1]");
+        assert_eq!(max192.limbs[2], u64::MAX, "U192::MAX limb[2]");
+
+        // Uint<65, 2>: top limb should have only 1 bit set
+        type U65 = Uint<65, 2>;
+        let max65 = U65::MAX;
+        assert_eq!(max65.limbs[0], u64::MAX, "U65::MAX limb[0]");
+        assert_eq!(max65.limbs[1], 1, "U65::MAX limb[1] should be 1 (bit 64 only)");
+    }
+
+    #[test]
+    fn mul_mod_associativity_and_identity() {
+        // (a * b) * c == a * (b * c) mod p
+        let a = P256_GX;
+        let b = P256_GY;
+        let c = P256_MODULUS - U256::ONE;
+        let m = P256_MODULUS;
+
+        let ab = a.mul_mod(&b, &m);
+        let bc = b.mul_mod(&c, &m);
+
+        assert_eq!(ab.mul_mod(&c, &m), a.mul_mod(&bc, &m), "associativity");
+
+        // Identity: a * 1 = a
+        assert_eq!(a.mul_mod(&U256::ONE, &m), a, "a * 1 = a");
+        assert_eq!(U256::ONE.mul_mod(&a, &m), a, "1 * a = a");
+
+        // Zero: a * 0 = 0
+        assert_eq!(a.mul_mod(&U256::ZERO, &m), U256::ZERO, "a * 0 = 0");
+        assert_eq!(U256::ZERO.mul_mod(&a, &m), U256::ZERO, "0 * a = 0");
+
+        // Distributivity: (a + b) * c == a*c + b*c mod p
+        let ab_sum = a.add_mod(&b, &m);
+        let lhs = ab_sum.mul_mod(&c, &m);
+        let rhs = a.mul_mod(&c, &m).add_mod(&b.mul_mod(&c, &m), &m);
+        assert_eq!(lhs, rhs, "distributivity");
     }
 }
