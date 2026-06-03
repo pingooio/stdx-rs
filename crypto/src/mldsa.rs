@@ -489,14 +489,12 @@ fn expand_mask(nonce: &[u8; 64], kappa: usize) -> Poly {
     shake.absorb(nonce);
     shake.absorb(&(kappa as u16).to_le_bytes());
 
-    let byte_len = POLYZ_BYTES;
-    let mut v = vec![0u8; byte_len];
-    shake.squeeze(&mut v);
-
     let b = 1u32 << 19;
     let mask20 = (1u32 << 20) - 1;
+    let mut buf = [0u8; POLYZ_BYTES];
+    shake.squeeze(&mut buf);
     let mut r = Poly::default();
-    let mut p = &v[..];
+    let mut p = &buf[..];
     for i in (0..N).step_by(2) {
         let w0 = (p[0] as u32) | ((p[1] as u32) << 8) | ((p[2] as u32) << 16);
         r.coeffs[i] = field_sub_to_montgomery(b, w0 & mask20);
@@ -598,9 +596,9 @@ fn pk_decode(pk: &[u8; ML_DSA_65_PUBLIC_KEY_SIZE]) -> Result<([u8; 32], [[u16; N
     Ok((rho, t1))
 }
 
-fn bitpack_20(z: &Poly) -> Vec<u8> {
+fn bitpack_20(z: &Poly) -> [u8; POLYZ_BYTES] {
     let b = 1u32 << 19;
-    let mut out = vec![0u8; POLYZ_BYTES];
+    let mut out = [0u8; POLYZ_BYTES];
     let mut q = 0usize;
 
     for i in (0..N).step_by(2) {
@@ -658,12 +656,18 @@ fn hint_decode(sig: &[u8; OMEGA + K]) -> Result<[[u8; N]; K], MlDsaError> {
         if limit < idx || limit > OMEGA as u8 {
             return Err(MlDsaError::InvalidSignature);
         }
+        // Track polynomial start so the ordering check doesn't fire across polynomial boundaries.
+        let poly_start = idx;
         while idx < limit {
-            let j = sig[idx as usize] as usize;
-            if j >= N {
+            let j = sig[idx as usize];
+            // FIPS 204 §6.2 Algorithm 24: indices within a polynomial must be strictly increasing.
+            if idx > poly_start && sig[(idx - 1) as usize] >= j {
                 return Err(MlDsaError::InvalidSignature);
             }
-            h[i][j] = 1;
+            if j as usize >= N {
+                return Err(MlDsaError::InvalidSignature);
+            }
+            h[i][j as usize] = 1;
             idx += 1;
         }
     }
@@ -1020,11 +1024,19 @@ pub fn ml_dsa_65_verify(
 
     let (ch, z, h) = sig_decode(sig)?;
 
-    let c = sample_in_ball(&ch);
-    let c_hat = ntt(&c);
-
     let gamma1 = GAMMA1;
     let gamma1beta = gamma1 - BETA;
+
+    // FIPS 204 §6.2 Algorithm 3 step 5: check ||z||∞ < γ1 − β before the
+    // expensive matrix-vector product.
+    for i in 0..L {
+        if coefficients_exceed_bound(&z[i], gamma1beta) {
+            return Err(MlDsaError::InvalidSignature);
+        }
+    }
+
+    let c = sample_in_ball(&ch);
+    let c_hat = ntt(&c);
 
     let mut z_hat: [NttPoly; L] = Default::default();
     for i in 0..L {
@@ -1052,12 +1064,6 @@ pub fn ml_dsa_65_verify(
     ch_shake.absorb(&w1_bytes[..K * N / 2]);
     let mut computed_ch = [0u8; LAMBDA_OVER_4];
     ch_shake.squeeze(&mut computed_ch);
-
-    for i in 0..L {
-        if coefficients_exceed_bound(&z[i], gamma1beta) {
-            return Err(MlDsaError::InvalidSignature);
-        }
-    }
 
     if !constant_time_eq(&ch, &computed_ch) {
         return Err(MlDsaError::InvalidSignature);
@@ -1764,10 +1770,9 @@ mod tests {
                     .unwrap_or_default();
                 let is_incorrect_public_key_len = flags.iter().any(|f| f == "IncorrectPublicKeyLength");
                 let is_incorrect_signature_len = flags.iter().any(|f| f == "IncorrectSignatureLength");
-                let is_invalid_hints = flags.iter().any(|f| f == "InvalidHintsEncoding");
                 let result = test["result"].as_str().unwrap();
 
-                if is_incorrect_public_key_len || is_invalid_hints {
+                if is_incorrect_public_key_len {
                     skipped += 1;
                     continue;
                 }
