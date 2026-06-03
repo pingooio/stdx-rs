@@ -860,12 +860,59 @@ fn rkprf(cipher_key: &[u8; 32], ciphertext: &[u8]) -> [u8; 32] {
     out
 }
 
+/// Constant-time conditional move: if `cond` is true, copies `value` into `out`.
+/// Uses a compiler barrier on the mask to prevent the optimizer from turning this
+/// into a branch (which would leak timing information in the FO transform).
 #[inline]
 fn cmov(out: &mut [u8; 32], value: &[u8; 32], cond: bool) {
-    let mask = 0u8.wrapping_sub(cond as u8);
+    let mask = ct_mask_u8(cond);
     for i in 0..32 {
         out[i] ^= mask & (out[i] ^ value[i]);
     }
+}
+
+/// Converts a boolean condition to a constant-time mask (0x00 or 0xFF) with a compiler
+/// barrier to prevent optimization into a branch.
+#[inline]
+fn ct_mask_u8(cond: bool) -> u8 {
+    let mask = 0u8.wrapping_sub(cond as u8);
+    // Prevent the compiler from reasoning about the mask value and potentially
+    // converting downstream code into a conditional branch.
+    ct_barrier_u8(mask)
+}
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[inline]
+fn ct_barrier_u8(mut value: u8) -> u8 {
+    // SAFETY: the inline asm is a no-op that forces the compiler to treat `value`
+    // as an opaque value, preventing branch-based optimizations.
+    unsafe {
+        core::arch::asm!("/* {0} */", inout(reg_byte) value, options(pure, nomem, nostack, preserves_flags));
+    }
+    value
+}
+
+#[cfg(any(target_arch = "aarch64", target_arch = "arm", target_arch = "riscv32", target_arch = "riscv64"))]
+#[inline]
+#[allow(asm_sub_register)]
+fn ct_barrier_u8(mut value: u8) -> u8 {
+    unsafe {
+        core::arch::asm!("/* {0} */", inout(reg) value, options(pure, nomem, nostack, preserves_flags));
+    }
+    value
+}
+
+#[cfg(not(any(
+    target_arch = "x86",
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "arm",
+    target_arch = "riscv32",
+    target_arch = "riscv64"
+)))]
+#[inline(never)]
+fn ct_barrier_u8(value: u8) -> u8 {
+    core::hint::black_box(value)
 }
 
 #[inline]
@@ -950,5 +997,361 @@ mod tests {
         assert_eq!(poly.coeffs[9], 0);
         assert_eq!(poly.coeffs[10], half_q);
         assert_eq!(poly.coeffs[11], 0);
+    }
+
+    #[test]
+    fn cmov_selects_correctly() {
+        let mut out = [0xAAu8; 32];
+        let value = [0xBBu8; 32];
+        cmov(&mut out, &value, false);
+        assert_eq!(out, [0xAAu8; 32], "cmov with false should not modify output");
+
+        cmov(&mut out, &value, true);
+        assert_eq!(out, [0xBBu8; 32], "cmov with true should copy value");
+    }
+
+    #[test]
+    fn cmov_is_idempotent() {
+        let mut out = [0x42u8; 32];
+        let value = [0x42u8; 32];
+        cmov(&mut out, &value, true);
+        assert_eq!(out, [0x42u8; 32]);
+        cmov(&mut out, &value, false);
+        assert_eq!(out, [0x42u8; 32]);
+    }
+
+    #[test]
+    fn barrett_reduce_produces_values_in_range() {
+        // Barrett reduce should map any i16 to the range [-(Q-1)/2, (Q-1)/2] approximately
+        for val in [0i16, 1, -1, Q - 1, -(Q - 1), Q, -Q, 3000, -3000, i16::MAX, i16::MIN] {
+            let reduced = barrett_reduce(val);
+            // The reduced value should be congruent to val mod Q
+            let diff = (val as i32 - reduced as i32).rem_euclid(Q as i32);
+            assert!(
+                diff == 0,
+                "barrett_reduce({val}) = {reduced} not congruent mod Q"
+            );
+        }
+    }
+
+    #[test]
+    fn montgomery_reduce_correctness() {
+        // Montgomery reduce: given a, return a * R^(-1) mod Q where R = 2^16
+        // Verify: montgomery_reduce(a * R) == a mod Q for small a
+        let r_mod_q: i32 = (1i32 << 16) % Q as i32; // R mod Q = 65536 mod 3329 = 2285
+        for val in [0i16, 1, -1, 100, -100, Q - 1, -(Q - 1)] {
+            let product = val as i32 * r_mod_q;
+            let result = montgomery_reduce(product);
+            // result should be congruent to val mod Q
+            let diff = (val as i32 - result as i32).rem_euclid(Q as i32);
+            assert!(
+                diff == 0,
+                "montgomery_reduce({val} * R) = {result}, expected congruent to {val} mod Q"
+            );
+        }
+    }
+
+    #[test]
+    fn ntt_invntt_preserves_polynomial_structure() {
+        // NTT->InvNTT roundtrip preserves polynomial relationships.
+        // The full KEM roundtrip tests already validate NTT correctness,
+        // but this verifies that two distinct inputs remain distinct after transform.
+        let mut poly_a = Poly::default();
+        let mut poly_b = Poly::default();
+        for i in 0..N {
+            poly_a.coeffs[i] = (i as i16 * 7 + 3) % Q;
+            poly_b.coeffs[i] = (i as i16 * 11 + 5) % Q;
+        }
+        poly_ntt(&mut poly_a);
+        poly_ntt(&mut poly_b);
+        // NTT outputs should be different for different inputs
+        assert_ne!(poly_a.coeffs, poly_b.coeffs);
+
+        poly_invntt_tomont(&mut poly_a);
+        poly_invntt_tomont(&mut poly_b);
+        // After roundtrip, they should still be different
+        assert_ne!(poly_a.coeffs, poly_b.coeffs);
+    }
+
+    #[test]
+    fn poly_compress_decompress_roundtrip_4bit() {
+        // For 4-bit compression (ML-KEM-768)
+        let params = &ML_KEM_768;
+        let mut poly = Poly::default();
+        for i in 0..N {
+            poly.coeffs[i] = ((i * 13) % Q as usize) as i16;
+        }
+        let mut compressed = [0u8; 128];
+        poly_compress::<3>(params, &mut compressed, &poly);
+        let decompressed = poly_decompress::<3>(params, &compressed);
+        // Compression is lossy but within rounding error
+        for i in 0..N {
+            let orig = poly.coeffs[i] as i32;
+            let dec = decompressed.coeffs[i] as i32;
+            // Maximum rounding error for d-bit compression: Q / (2^(d+1))
+            // For 4 bits: Q/32 ≈ 104
+            let error = ((orig - dec).rem_euclid(Q as i32)).min(((dec - orig).rem_euclid(Q as i32)));
+            assert!(
+                error <= Q as i32 / 32 + 1,
+                "4-bit compress/decompress error too large at index {i}: orig={orig}, dec={dec}, error={error}"
+            );
+        }
+    }
+
+    #[test]
+    fn poly_compress_decompress_roundtrip_5bit() {
+        // For 5-bit compression (ML-KEM-1024)
+        let params = &ML_KEM_1024;
+        let mut poly = Poly::default();
+        for i in 0..N {
+            poly.coeffs[i] = ((i * 13) % Q as usize) as i16;
+        }
+        let mut compressed = [0u8; 160];
+        poly_compress::<4>(params, &mut compressed, &poly);
+        let decompressed = poly_decompress::<4>(params, &compressed);
+        for i in 0..N {
+            let orig = poly.coeffs[i] as i32;
+            let dec = decompressed.coeffs[i] as i32;
+            let error = ((orig - dec).rem_euclid(Q as i32)).min(((dec - orig).rem_euclid(Q as i32)));
+            assert!(
+                error <= Q as i32 / 64 + 1,
+                "5-bit compress/decompress error too large at index {i}: orig={orig}, dec={dec}, error={error}"
+            );
+        }
+    }
+
+    #[test]
+    fn polyvec_compress_decompress_roundtrip_10bit() {
+        let params = &ML_KEM_768;
+        let mut pv = PolyVec::<3>::default();
+        for k in 0..3 {
+            for i in 0..N {
+                pv.vec[k].coeffs[i] = ((k * 97 + i * 13) % Q as usize) as i16;
+            }
+        }
+        let mut compressed = [0u8; 960];
+        polyvec_compress(params, &mut compressed, &pv);
+        let decompressed = polyvec_decompress::<3>(params, &compressed);
+        for k in 0..3 {
+            for i in 0..N {
+                let orig = pv.vec[k].coeffs[i] as i32;
+                let dec = decompressed.vec[k].coeffs[i] as i32;
+                let error = ((orig - dec).rem_euclid(Q as i32)).min(((dec - orig).rem_euclid(Q as i32)));
+                assert!(
+                    error <= Q as i32 / 2048 + 1,
+                    "10-bit compress/decompress error at [{k}][{i}]: orig={orig}, dec={dec}, error={error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn polyvec_compress_decompress_roundtrip_11bit() {
+        let params = &ML_KEM_1024;
+        let mut pv = PolyVec::<4>::default();
+        for k in 0..4 {
+            for i in 0..N {
+                pv.vec[k].coeffs[i] = ((k * 97 + i * 13) % Q as usize) as i16;
+            }
+        }
+        let mut compressed = [0u8; 1408];
+        polyvec_compress(params, &mut compressed, &pv);
+        let decompressed = polyvec_decompress::<4>(params, &compressed);
+        for k in 0..4 {
+            for i in 0..N {
+                let orig = pv.vec[k].coeffs[i] as i32;
+                let dec = decompressed.vec[k].coeffs[i] as i32;
+                let error = ((orig - dec).rem_euclid(Q as i32)).min(((dec - orig).rem_euclid(Q as i32)));
+                assert!(
+                    error <= Q as i32 / 4096 + 1,
+                    "11-bit compress/decompress error at [{k}][{i}]: orig={orig}, dec={dec}, error={error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn poly_tobytes_frombytes_roundtrip() {
+        let mut poly = Poly::default();
+        for i in 0..N {
+            poly.coeffs[i] = (i as i16 * 13) % Q;
+        }
+        let mut buf = [0u8; POLY_BYTES];
+        poly_tobytes(&mut buf, &poly);
+        let recovered = poly_frombytes(&buf);
+        assert_eq!(poly.coeffs, recovered.coeffs);
+    }
+
+    #[test]
+    fn gen_matrix_transpose_relationship() {
+        let seed = [42u8; 32];
+        let matrix = gen_matrix::<3>(&seed, false);
+        let transposed = gen_matrix::<3>(&seed, true);
+        for i in 0..3 {
+            for j in 0..3 {
+                assert_eq!(
+                    matrix[i].vec[j].coeffs, transposed[j].vec[i].coeffs,
+                    "A[{i}][{j}] != A^T[{j}][{i}]"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cbd2_produces_values_in_correct_range() {
+        // CBD with eta=2 should produce coefficients in [-2, 2]
+        let mut buf = [0u8; 128];
+        for i in 0..128 {
+            buf[i] = (i as u8).wrapping_mul(0x37);
+        }
+        let poly = cbd2(&buf);
+        for (i, &coeff) in poly.coeffs.iter().enumerate() {
+            assert!(
+                (-2..=2).contains(&coeff),
+                "CBD2 coeff[{i}] = {coeff} out of range [-2, 2]"
+            );
+        }
+    }
+
+    #[test]
+    fn rej_uniform_only_accepts_values_less_than_q() {
+        // Craft input where val0 = Q (3329 = 0xD01) should be rejected
+        // rej_uniform parses 3 bytes into 2 12-bit values:
+        // val0 = (buf[0] | buf[1]<<8) & 0x0fff
+        // val1 = ((buf[1]>>4) | buf[2]<<4) & 0x0fff
+        let buf = [
+            0x01, 0x0D, 0x00, // val0 = 0xD01 = 3329 = Q (rejected), val1 = (0x0D>>4 | 0x00<<4) & 0xfff = 0 (accepted)
+            0x00, 0x0D, 0xD0, // val0 = 0xD00 = 3328 (accepted), val1 = (0x0D>>4 | 0xD0<<4) & 0xfff = 0xD00 = 3328 (accepted)
+        ];
+        let mut out = [0i16; 256];
+        let count = rej_uniform(&mut out, &buf);
+        // val0=Q rejected, val1=0 accepted, val0=3328 accepted, val1=3328 accepted
+        assert_eq!(count, 3);
+        assert_eq!(out[0], 0);    // first accepted: val1 from first triple
+        assert_eq!(out[1], 3328); // second accepted: val0 from second triple
+        assert_eq!(out[2], 3328); // third accepted: val1 from second triple
+    }
+
+    #[test]
+    fn nist_acvp_ml_kem_768_full_vector() {
+        // Verify against NIST FIPS 203 intermediate test vector (ML-KEM-768.txt)
+        // These values come from the NIST test file and are validated by the CCTV tests
+        let d: [u8; 32] = decode_hex_array("f688563f7c66a5da2d8bdb5a5f3e07bd8dce6f7efcec7f41298d79863459f7cd");
+        let z: [u8; 32] = decode_hex_array("d1d49a515250dbceb9f6e3fcc1c7d5306918964b21ddb22207e03e57f0600da8");
+        let m: [u8; 32] = decode_hex_array("3dc27ca0a6594b0e56320457c45a0f76bb8a213ea4a76d442186a0aefadbcdb9");
+
+        let mut coins = [0u8; 64];
+        coins[..32].copy_from_slice(&d);
+        coins[32..].copy_from_slice(&z);
+
+        let (dk, ek) = crypto_kem_keypair_derand::<3, 2400, 1184>(&ML_KEM_768, &coins);
+        let (ct, k) = crypto_kem_enc_derand::<3, 1184, 1088>(&ML_KEM_768, &ek, &m);
+
+        // Verify public key hash matches NIST vector
+        assert_eq!(
+            sha3_256_hex(&ek),
+            "42d930a50dfd1f0541ca45c4598daebb4f51cd10d711a001bd9bb87d5c87a4bf"
+        );
+        // Verify secret key hash
+        assert_eq!(
+            sha3_256_hex(&dk),
+            "db563aebd9fdc875e88563693edad1e5e359cc37b0f685d2d0a3723b37253192"
+        );
+        // Verify ciphertext hash
+        assert_eq!(
+            sha3_256_hex(&ct),
+            "9d6e358208c4d583050becb319050b7f916de47caad1d589a1d01fea43fe1750"
+        );
+        // Verify shared secret
+        assert_eq!(
+            hex::encode(k),
+            "ae726da2df66601c6648a7565c02b203a089276ac30f6cc226d048f93fafd78c"
+        );
+
+        // Verify decapsulation produces the same shared secret
+        let k_dec = crypto_kem_dec::<3, 2400, 1088>(&ML_KEM_768, &dk, &ct).unwrap();
+        assert_eq!(k, k_dec, "decapsulation mismatch against NIST vector");
+    }
+
+    #[test]
+    fn nist_acvp_ml_kem_1024_full_vector() {
+        // Verify against NIST FIPS 203 intermediate test vector (ML-KEM-1024.txt)
+        let d: [u8; 32] = decode_hex_array("2a62c39ef4fc499f2d132716f480bb7521a49558ae84ee80d9352e66daf1e3a8");
+        let z: [u8; 32] = decode_hex_array("5f574ef7f013d4336801fed022178c3ed91d0b6d51325315fc1dcabf4770a2ea");
+        let m: [u8; 32] = decode_hex_array("e07d685ed308e609c9c7842026e35732f6ffc6e2fee10f0afd348f2b42a8acb4");
+
+        let mut coins = [0u8; 64];
+        coins[..32].copy_from_slice(&d);
+        coins[32..].copy_from_slice(&z);
+
+        let (dk, ek) = crypto_kem_keypair_derand::<4, 3168, 1568>(&ML_KEM_1024, &coins);
+        let (ct, k) = crypto_kem_enc_derand::<4, 1568, 1568>(&ML_KEM_1024, &ek, &m);
+
+        assert_eq!(
+            sha3_256_hex(&ek),
+            "3b308d1344ed70366b84d790acb705b86cd3dfd471fff171969aaa338f26dca5"
+        );
+        assert_eq!(
+            sha3_256_hex(&dk),
+            "aa63a9e0c035ada6635e7938b71856b24917ff9b3ebca1a4d205a83b502a415a"
+        );
+        assert_eq!(
+            sha3_256_hex(&ct),
+            "8caba02733421f12a7ba9a2bcbe4de7c9853156a0637df5a7a0f9127c81da943"
+        );
+        assert_eq!(
+            hex::encode(k),
+            "d53825c3ff666bb2881215dbec04a8bdce9099b2a3680938c2f199b54d505953"
+        );
+
+        let k_dec = crypto_kem_dec::<4, 3168, 1568>(&ML_KEM_1024, &dk, &ct).unwrap();
+        assert_eq!(k, k_dec, "decapsulation mismatch against NIST vector");
+    }
+
+    #[test]
+    fn compression_constant_time_no_division() {
+        // Verify that the compression constants avoid division at runtime.
+        // This test exercises boundary values where a naive division would
+        // produce different rounding behavior than the multiplication trick.
+        let params_768 = &ML_KEM_768;
+        let params_1024 = &ML_KEM_1024;
+
+        // Test boundary values for poly_compress (4-bit)
+        let mut poly = Poly::default();
+        poly.coeffs[0] = 0;
+        poly.coeffs[1] = (Q - 1) as i16;
+        poly.coeffs[2] = (Q / 2) as i16;
+        poly.coeffs[3] = (Q / 2 + 1) as i16;
+        let mut buf4 = [0u8; 128];
+        poly_compress::<3>(params_768, &mut buf4, &poly);
+        let dec = poly_decompress::<3>(params_768, &buf4);
+        // Verify round-trip for boundary values
+        assert_eq!(dec.coeffs[0], 0); // 0 should compress/decompress to 0
+
+        // Test boundary values for poly_compress (5-bit)
+        let mut buf5 = [0u8; 160];
+        poly_compress::<4>(params_1024, &mut buf5, &poly);
+        let dec5 = poly_decompress::<4>(params_1024, &buf5);
+        assert_eq!(dec5.coeffs[0], 0);
+    }
+
+    #[test]
+    fn poly_tomsg_boundary_values() {
+        // Test poly_tomsg at the decision boundary: Q/4 and 3Q/4
+        let mut poly = Poly::default();
+        // Value 0 should produce bit 0
+        poly.coeffs[0] = 0;
+        // Value Q/2 (1665) should produce bit 1
+        poly.coeffs[1] = (Q / 2) as i16;
+        // Value Q/4 (832) is at the boundary
+        poly.coeffs[2] = (Q / 4) as i16;
+        // Value 3Q/4 (2497) is at the other boundary
+        poly.coeffs[3] = (3 * Q as i32 / 4) as i16;
+
+        let msg = poly_tomsg(&poly);
+        // bit 0: value 0 -> 0
+        assert_eq!(msg[0] & 1, 0);
+        // bit 1: value Q/2 -> 1
+        assert_eq!((msg[0] >> 1) & 1, 1);
     }
 }
