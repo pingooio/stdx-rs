@@ -3,7 +3,7 @@ use std::{collections::HashMap, future::Future, marker::PhantomData, pin::Pin, s
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::value::RawValue;
 
-use crate::{Error, ErrorCode, Id, Request, RequestPacket, Response};
+use crate::{Error, ErrorCode, Id, Request, RequestMessage, Response};
 
 trait MethodHandler<C>: Send + Sync {
     fn call(&self, ctx: C, params: &RawValue) -> Pin<Box<dyn Future<Output = Result<Box<RawValue>, Error>> + Send>>;
@@ -49,7 +49,7 @@ where
 ///
 /// An `Empty` variant means nothing should be sent back (e.g., all-notification batch).
 #[derive(Clone, Debug)]
-pub enum ResponsePacket {
+pub enum ResponseMessage {
     /// A single response.
     Single(Response),
     /// A batch of responses.
@@ -58,8 +58,8 @@ pub enum ResponsePacket {
     Empty,
 }
 
-impl ResponsePacket {
-    /// Serializes this packet into a JSON string suitable for writing to a transport.
+impl ResponseMessage {
+    /// Serializes this message into a JSON string suitable for writing to a transport.
     ///
     /// For `Empty` variants, returns `None`.
     /// For `Single`, returns the serialized `Response`.
@@ -128,46 +128,46 @@ impl<C: Send + Sync + 'static> Server<C> {
         self.methods.insert(method.into(), Arc::new(entry));
     }
 
-    /// Handles a request packet and returns the corresponding response packet.
+    /// Handles a request message and returns the corresponding response message.
     ///
     /// The context `ctx` is consumed and, for batches, cloned once per handler invocation.
-    pub async fn handle(&self, ctx: C, packet: RequestPacket) -> ResponsePacket
+    pub async fn handle(&self, ctx: C, message: RequestMessage) -> ResponseMessage
     where
         C: Clone,
     {
-        match packet {
-            RequestPacket::Single(req) => self.handle_single(ctx, req).await,
-            RequestPacket::Batch(entries) => self.handle_batch(ctx, entries).await,
+        match message {
+            RequestMessage::Single(req) => self.handle_single(ctx, req).await,
+            RequestMessage::Batch(entries) => self.handle_batch(ctx, entries).await,
         }
     }
 
-    async fn handle_single(&self, ctx: C, req: Request) -> ResponsePacket {
+    async fn handle_single(&self, ctx: C, req: Request) -> ResponseMessage {
         let Some(id) = req.id.into_id() else {
             let _ = self
                 .dispatch(ctx, &req.method, req.params.as_deref().unwrap_or(&self.empty_params))
                 .await;
-            return ResponsePacket::Empty;
+            return ResponseMessage::Empty;
         };
 
         let params = req.params.as_deref().unwrap_or(&self.empty_params);
         match self.dispatch(ctx, &req.method, params).await {
-            Ok(result) => ResponsePacket::Single(Response::Success {
+            Ok(result) => ResponseMessage::Single(Response::Success {
                 result,
                 id,
             }),
-            Err(error) => ResponsePacket::Single(Response::Error {
+            Err(error) => ResponseMessage::Single(Response::Error {
                 error,
                 id,
             }),
         }
     }
 
-    async fn handle_batch(&self, ctx: C, entries: Vec<Request>) -> ResponsePacket
+    async fn handle_batch(&self, ctx: C, entries: Vec<Request>) -> ResponseMessage
     where
         C: Clone,
     {
         if entries.is_empty() {
-            return ResponsePacket::Single(Response::Error {
+            return ResponseMessage::Single(Response::Error {
                 error: Error::invalid_request("empty batch"),
                 id: Id::Null,
             });
@@ -197,9 +197,9 @@ impl<C: Send + Sync + 'static> Server<C> {
         }
 
         if responses.is_empty() {
-            ResponsePacket::Empty
+            ResponseMessage::Empty
         } else {
-            ResponsePacket::Batch(responses)
+            ResponseMessage::Batch(responses)
         }
     }
 
@@ -232,10 +232,10 @@ mod tests {
         server.register("add", |_: (), (a, b): (i64, i64)| async move { Ok::<_, Error>(a + b) });
 
         let req = make_request("add", Some("[3, 4]"), Some(1));
-        let packet = server.handle((), RequestPacket::Single(req)).await;
+        let message = server.handle((), RequestMessage::Single(req)).await;
 
-        match packet {
-            ResponsePacket::Single(Response::Success {
+        match message {
+            ResponseMessage::Single(Response::Success {
                 result,
                 id,
             }) => {
@@ -259,10 +259,10 @@ mod tests {
         });
 
         let req = make_request("div", Some("[4, 0]"), Some(1));
-        let packet = server.handle((), RequestPacket::Single(req)).await;
+        let message = server.handle((), RequestMessage::Single(req)).await;
 
-        match packet {
-            ResponsePacket::Single(Response::Error {
+        match message {
+            ResponseMessage::Single(Response::Error {
                 error,
                 id,
             }) => {
@@ -278,10 +278,10 @@ mod tests {
     async fn test_method_not_found() {
         let server: Server<()> = Server::new();
         let req = make_request("unknown", None, Some(1));
-        let packet = server.handle((), RequestPacket::Single(req)).await;
+        let message = server.handle((), RequestMessage::Single(req)).await;
 
-        match packet {
-            ResponsePacket::Single(Response::Error {
+        match message {
+            ResponseMessage::Single(Response::Error {
                 error,
                 id,
             }) => {
@@ -298,10 +298,10 @@ mod tests {
         server.register("add", |_: (), (a, b): (i64, i64)| async move { Ok::<_, Error>(a + b) });
 
         let req = make_request("add", Some(r#""not_an_array""#), Some(1));
-        let packet = server.handle((), RequestPacket::Single(req)).await;
+        let message = server.handle((), RequestMessage::Single(req)).await;
 
-        match packet {
-            ResponsePacket::Single(Response::Error {
+        match message {
+            ResponseMessage::Single(Response::Error {
                 error,
                 id,
             }) => {
@@ -315,21 +315,21 @@ mod tests {
     #[tokio::test]
     async fn test_notification_is_silent() {
         let mut server: Server<()> = Server::new();
-        server.register("log", |_: (), _msg: (String,)| async move { Ok::<_, Error>(()) });
+        server.register("log", |_: (), _message: (String,)| async move { Ok::<_, Error>(()) });
 
         let req = make_request("log", Some(r#"["hello"]"#), None);
-        let packet = server.handle((), RequestPacket::Single(req)).await;
+        let message = server.handle((), RequestMessage::Single(req)).await;
 
-        assert!(matches!(packet, ResponsePacket::Empty));
+        assert!(matches!(message, ResponseMessage::Empty));
     }
 
     #[tokio::test]
     async fn test_empty_batch() {
         let server: Server<()> = Server::new();
-        let packet = server.handle((), RequestPacket::Batch(vec![])).await;
+        let message = server.handle((), RequestMessage::Batch(vec![])).await;
 
-        match packet {
-            ResponsePacket::Single(Response::Error {
+        match message {
+            ResponseMessage::Single(Response::Error {
                 error,
                 id,
             }) => {
@@ -351,10 +351,10 @@ mod tests {
             make_request("add", Some("[5, 6]"), Some(2)),
         ];
 
-        let packet = server.handle((), RequestPacket::Batch(entries)).await;
+        let message = server.handle((), RequestMessage::Batch(entries)).await;
 
-        match packet {
-            ResponsePacket::Batch(responses) => {
+        match message {
+            ResponseMessage::Batch(responses) => {
                 assert_eq!(responses.len(), 2);
             }
             other => panic!("expected batch response, got {other:?}"),
@@ -371,11 +371,11 @@ mod tests {
             42,
             {"jsonrpc":"2.0","method":"add","params":[3,4],"id":2}
         ]"#;
-        let packet: RequestPacket = serde_json::from_str(json).unwrap();
-        let packet = server.handle((), packet).await;
+        let message: RequestMessage = serde_json::from_str(json).unwrap();
+        let message = server.handle((), message).await;
 
-        match packet {
-            ResponsePacket::Batch(responses) => {
+        match message {
+            ResponseMessage::Batch(responses) => {
                 assert_eq!(responses.len(), 2);
                 assert!(responses[0].is_success());
                 assert!(responses[1].is_success());
@@ -387,40 +387,40 @@ mod tests {
     #[tokio::test]
     async fn test_all_notification_batch_is_empty() {
         let mut server: Server<()> = Server::new();
-        server.register("notify", |_: (), _msg: (String,)| async move { Ok::<_, Error>(()) });
+        server.register("notify", |_: (), _message: (String,)| async move { Ok::<_, Error>(()) });
 
         let entries = vec![
             make_request("notify", Some(r#"["a"]"#), None),
             make_request("notify", Some(r#"["b"]"#), None),
         ];
 
-        let packet = server.handle((), RequestPacket::Batch(entries)).await;
-        assert!(matches!(packet, ResponsePacket::Empty));
+        let message = server.handle((), RequestMessage::Batch(entries)).await;
+        assert!(matches!(message, ResponseMessage::Empty));
     }
 
     #[test]
-    fn test_response_packet_to_json_single() {
+    fn test_response_message_to_json_single() {
         let resp = Response::success(Id::Number(1), 42).unwrap();
-        let packet = ResponsePacket::Single(resp);
-        let json = packet.to_json().unwrap().unwrap();
+        let message = ResponseMessage::Single(resp);
+        let json = message.to_json().unwrap().unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["result"], serde_json::json!(42));
     }
 
     #[test]
-    fn test_response_packet_to_json_empty() {
-        let packet: ResponsePacket = ResponsePacket::Empty;
-        assert!(packet.to_json().unwrap().is_none());
+    fn test_response_message_to_json_empty() {
+        let message: ResponseMessage = ResponseMessage::Empty;
+        assert!(message.to_json().unwrap().is_none());
     }
 
     #[test]
-    fn test_response_packet_to_json_batch() {
+    fn test_response_message_to_json_batch() {
         let resps = vec![
             Response::success(Id::Number(1), 10).unwrap(),
             Response::success(Id::Number(2), 20).unwrap(),
         ];
-        let packet = ResponsePacket::Batch(resps);
-        let json = packet.to_json().unwrap().unwrap();
+        let message = ResponseMessage::Batch(resps);
+        let json = message.to_json().unwrap().unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert!(v.is_array());
         assert_eq!(v.as_array().unwrap().len(), 2);
@@ -440,10 +440,10 @@ mod tests {
             base: 100,
         };
         let req = make_request("add", Some("[5]"), Some(1));
-        let packet = server.handle(state, RequestPacket::Single(req)).await;
+        let message = server.handle(state, RequestMessage::Single(req)).await;
 
-        match packet {
-            ResponsePacket::Single(Response::Success {
+        match message {
+            ResponseMessage::Single(Response::Success {
                 result, ..
             }) => {
                 let v: i64 = serde_json::from_str(result.get()).unwrap();

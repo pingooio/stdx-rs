@@ -1,4 +1,4 @@
-use json_rpc::{Error, RequestPacket, Server};
+use json_rpc::{Error, RequestMessage, Server};
 
 #[tokio::main]
 async fn main() {
@@ -19,27 +19,29 @@ async fn main() {
             .unwrap()
     };
 
-    let resp = server.handle((), RequestPacket::Single(call("add", [3, 4]))).await;
+    let resp = server.handle((), RequestMessage::Single(call("add", [3, 4]))).await;
     println!("add(3, 4)  => {}", json_from_resp(&resp));
 
     let resp = server
-        .handle((), RequestPacket::Single(call("subtract", [10, 3])))
+        .handle((), RequestMessage::Single(call("subtract", [10, 3])))
         .await;
     println!("sub(10, 3) => {}", json_from_resp(&resp));
 
-    let resp = server.handle((), RequestPacket::Single(call("multiply", [6, 7]))).await;
+    let resp = server
+        .handle((), RequestMessage::Single(call("multiply", [6, 7])))
+        .await;
     println!("mul(6, 7)  => {}", json_from_resp(&resp));
 
-    let resp = server.handle((), RequestPacket::Single(call("divide", [42, 6]))).await;
+    let resp = server.handle((), RequestMessage::Single(call("divide", [42, 6]))).await;
     println!("div(42, 6) => {}", json_from_resp(&resp));
 
-    let resp = server.handle((), RequestPacket::Single(call("divide", [1, 0]))).await;
+    let resp = server.handle((), RequestMessage::Single(call("divide", [1, 0]))).await;
     println!("div(1, 0)  => {}", json_from_resp(&resp));
 
     // --- Notification (no response expected) ---
 
     let notif = serde_json::from_str(r#"{"jsonrpc":"2.0","method":"add","params":[1,1]}"#).unwrap();
-    let resp = server.handle((), RequestPacket::Single(notif)).await;
+    let resp = server.handle((), RequestMessage::Single(notif)).await;
     println!("notif      => {:?}", resp); // Empty
 
     // --- Method not found ---
@@ -47,7 +49,7 @@ async fn main() {
     let resp = server
         .handle(
             (),
-            RequestPacket::Single(serde_json::from_str(r#"{"jsonrpc":"2.0","method":"unknown","id":1}"#).unwrap()),
+            RequestMessage::Single(serde_json::from_str(r#"{"jsonrpc":"2.0","method":"unknown","id":1}"#).unwrap()),
         )
         .await;
     println!("unknown    => {}", json_from_resp(&resp));
@@ -59,13 +61,13 @@ async fn main() {
         {"jsonrpc":"2.0","method":"multiply","params":[3,4],"id":"b"},
         {"jsonrpc":"2.0","method":"subtract","params":[10,7],"id":"c"}
     ]"#;
-    let packet: RequestPacket = serde_json::from_str(batch_json).unwrap();
-    let resp = server.handle((), packet).await;
+    let message: RequestMessage = serde_json::from_str(batch_json).unwrap();
+    let resp = server.handle((), message).await;
     println!("batch      => {}", json_from_resp(&resp));
 }
 
-fn json_from_resp(packet: &json_rpc::ResponsePacket) -> String {
-    packet.to_json().unwrap().unwrap_or_else(|| "nothing".to_string())
+fn json_from_resp(message: &json_rpc::ResponseMessage) -> String {
+    message.to_json().unwrap().unwrap_or_else(|| "nothing".to_string())
 }
 
 async fn divide(_: (), (a, b): (i64, i64)) -> Result<i64, Error> {

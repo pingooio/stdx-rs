@@ -134,14 +134,14 @@ impl Request {
     }
 }
 
-/// A packet of one or more JSON-RPC requests.
+/// A single JSON-RPC request message, or a batch of them.
 ///
 /// Per the spec, a client may send either a single `Request` object
 /// or an `Array` of request objects (a batch). Batch entries that are
 /// not valid request objects are preserved as raw JSON so the server
 /// can respond with individual `Invalid Request` errors.
 #[derive(Clone, Debug)]
-pub enum RequestPacket {
+pub enum RequestMessage {
     /// A single request.
     Single(Request),
     /// A batch of raw request values. Each element is parsed individually
@@ -149,13 +149,13 @@ pub enum RequestPacket {
     Batch(Vec<Request>),
 }
 
-impl RequestPacket {
-    /// Returns `true` if this packet is a batch.
+impl RequestMessage {
+    /// Returns `true` if this message is a batch.
     pub fn is_batch(&self) -> bool {
         matches!(self, Self::Batch(_))
     }
 
-    /// Returns the number of entries in this packet.
+    /// Returns the number of entries in this message.
     pub fn len(&self) -> usize {
         match self {
             Self::Single(_) => 1,
@@ -163,7 +163,7 @@ impl RequestPacket {
         }
     }
 
-    /// Returns `true` if there are no entries in this packet.
+    /// Returns `true` if there are no entries in this message.
     pub fn is_empty(&self) -> bool {
         match self {
             Self::Batch(entries) => entries.is_empty(),
@@ -172,13 +172,13 @@ impl RequestPacket {
     }
 }
 
-impl From<Request> for RequestPacket {
+impl From<Request> for RequestMessage {
     fn from(req: Request) -> Self {
         Self::Single(req)
     }
 }
 
-impl Serialize for RequestPacket {
+impl Serialize for RequestMessage {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
             Self::Single(req) => req.serialize(serializer),
@@ -187,12 +187,12 @@ impl Serialize for RequestPacket {
     }
 }
 
-impl<'de> Deserialize<'de> for RequestPacket {
+impl<'de> Deserialize<'de> for RequestMessage {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct RequestPacketVisitor;
+        struct RequestMessageVisitor;
 
-        impl<'de> Visitor<'de> for RequestPacketVisitor {
-            type Value = RequestPacket;
+        impl<'de> Visitor<'de> for RequestMessageVisitor {
+            type Value = RequestMessage;
 
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.write_str("a JSON-RPC request object or array")
@@ -203,16 +203,16 @@ impl<'de> Deserialize<'de> for RequestPacket {
                 while let Some(req) = seq.next_element::<Request>()? {
                     requests.push(req);
                 }
-                Ok(RequestPacket::Batch(requests))
+                Ok(RequestMessage::Batch(requests))
             }
 
             fn visit_map<M: MapAccess<'de>>(self, map: M) -> Result<Self::Value, M::Error> {
                 let req = Request::deserialize(MapAccessDeserializer::new(map))?;
-                Ok(RequestPacket::Single(req))
+                Ok(RequestMessage::Single(req))
             }
         }
 
-        deserializer.deserialize_any(RequestPacketVisitor)
+        deserializer.deserialize_any(RequestMessageVisitor)
     }
 }
 
@@ -291,24 +291,24 @@ mod tests {
     }
 
     #[test]
-    fn test_deserialize_single_request_packet() {
+    fn test_deserialize_single_request_message() {
         let json = r#"{"jsonrpc":"2.0","method":"test","id":1}"#;
-        let packet: RequestPacket = serde_json::from_str(json).unwrap();
-        assert!(!packet.is_batch());
-        assert_eq!(packet.len(), 1);
-        assert!(!packet.is_empty());
+        let message: RequestMessage = serde_json::from_str(json).unwrap();
+        assert!(!message.is_batch());
+        assert_eq!(message.len(), 1);
+        assert!(!message.is_empty());
     }
 
     #[test]
-    fn test_deserialize_batch_request_packet() {
+    fn test_deserialize_batch_request_message() {
         let json = r#"[
             {"jsonrpc":"2.0","method":"a","id":1},
             {"jsonrpc":"2.0","method":"b","id":2}
         ]"#;
-        let packet: RequestPacket = serde_json::from_str(json).unwrap();
-        assert!(packet.is_batch());
-        assert_eq!(packet.len(), 2);
-        assert!(!packet.is_empty());
+        let message: RequestMessage = serde_json::from_str(json).unwrap();
+        assert!(message.is_batch());
+        assert_eq!(message.len(), 2);
+        assert!(!message.is_empty());
     }
 
     #[test]
@@ -318,25 +318,25 @@ mod tests {
             42,
             {"jsonrpc":"2.0","method":"b","id":2}
         ]"#;
-        let packet: RequestPacket = serde_json::from_str(json).unwrap();
-        assert!(packet.is_batch());
-        assert_eq!(packet.len(), 2);
+        let message: RequestMessage = serde_json::from_str(json).unwrap();
+        assert!(message.is_batch());
+        assert_eq!(message.len(), 2);
     }
 
     #[test]
     fn test_deserialize_empty_array() {
         let json = "[]";
-        let packet: RequestPacket = serde_json::from_str(json).unwrap();
-        assert!(packet.is_batch());
-        assert!(packet.is_empty());
-        assert_eq!(packet.len(), 0);
+        let message: RequestMessage = serde_json::from_str(json).unwrap();
+        assert!(message.is_batch());
+        assert!(message.is_empty());
+        assert_eq!(message.len(), 0);
     }
 
     #[test]
-    fn test_request_packet_from_request() {
+    fn test_request_message_from_request() {
         let req: Request = serde_json::from_str(r#"{"jsonrpc":"2.0","method":"x","id":1}"#).unwrap();
-        let packet: RequestPacket = req.into();
-        assert!(!packet.is_batch());
+        let message: RequestMessage = req.into();
+        assert!(!message.is_batch());
     }
 
     #[test]
@@ -354,7 +354,7 @@ mod tests {
     }
 
     #[test]
-    fn test_request_packet_batch_serialize() {
+    fn test_request_message_batch_serialize() {
         let reqs = vec![
             Request {
                 jsonrpc: "2.0".into(),
@@ -369,9 +369,9 @@ mod tests {
                 id: RequestId(Some(Id::Number(2))),
             },
         ];
-        let packet = RequestPacket::Batch(reqs);
-        assert!(packet.is_batch());
-        let json = serde_json::to_string(&packet).unwrap();
+        let message = RequestMessage::Batch(reqs);
+        assert!(message.is_batch());
+        let json = serde_json::to_string(&message).unwrap();
         let actual: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert!(actual.is_array());
         assert_eq!(actual.as_array().unwrap().len(), 2);

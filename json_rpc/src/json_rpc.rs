@@ -11,6 +11,6 @@ pub mod server;
 
 pub use error_code::ErrorCode;
 pub use id::Id;
-pub use request::{Request, RequestId, RequestPacket};
+pub use request::{Request, RequestId, RequestMessage};
 pub use response::{Error, Response};
-pub use server::{ResponsePacket, Server};
+pub use server::{ResponseMessage, Server};

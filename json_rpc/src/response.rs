@@ -164,12 +164,13 @@ impl Response {
 
 impl Serialize for Response {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+
         match self {
             Self::Success {
                 result,
                 id,
             } => {
-                use serde::ser::SerializeStruct;
                 let mut s = serializer.serialize_struct("Response", 3)?;
                 s.serialize_field("jsonrpc", "2.0")?;
                 s.serialize_field("result", result)?;
@@ -180,7 +181,6 @@ impl Serialize for Response {
                 error,
                 id,
             } => {
-                use serde::ser::SerializeStruct;
                 let mut s = serializer.serialize_struct("Response", 3)?;
                 s.serialize_field("jsonrpc", "2.0")?;
                 s.serialize_field("error", error)?;
@@ -199,7 +199,7 @@ impl<'de> Deserialize<'de> for Response {
             type Value = Response;
 
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("a JSON-RPC 2.0 response object with jsonrpc, result/error, and id")
+                f.write_str("a JSON-RPC 2.0 response object with jsonrpc, result/error, and optional id")
             }
 
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {

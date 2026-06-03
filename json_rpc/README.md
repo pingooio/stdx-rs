@@ -53,15 +53,15 @@ server.register("add", |ctx: AppState, params: AddParams| async move {
 ### Handling a single request
 
 ```rust
-use jsonrpc::{Request, ResponsePacket};
+use jsonrpc::{Request, ResponseMessage};
 
 // Parse a request from JSON received over a transport:
 let json = r#"{"jsonrpc":"2.0","method":"add","params":{"a":3,"b":4},"id":1}"#;
 let request: Request = serde_json::from_str(json).unwrap();
-let packet = jsonrpc::RequestPacket::Single(request);
+let message = jsonrpc::RequestMessage::Single(request);
 
 let state = AppState { prefix: String::new() };
-let response = server.handle(state, packet).await;
+let response = server.handle(state, message).await;
 
 // Serialize the response back to JSON for the transport:
 if let Some(json) = response.to_json().unwrap() {
@@ -78,11 +78,11 @@ server.register("log", |_: AppState, msg: String| async move {
     Ok::<_, Error>(())
 });
 
-// Notification has no "id" — server returns ResponsePacket::Empty
+// Notification has no "id" — server returns ResponseMessage::Empty
 let json = r#"{"jsonrpc":"2.0","method":"log","params":"hello"}"#;
 let request: Request = serde_json::from_str(json).unwrap();
-let response = server.handle(&state, jsonrpc::RequestPacket::Single(request)).await;
-assert!(matches!(response, ResponsePacket::Empty));
+let response = server.handle(&state, jsonrpc::RequestMessage::Single(request)).await;
+assert!(matches!(response, ResponseMessage::Empty));
 ```
 
 ### Handling a batch
@@ -92,8 +92,8 @@ let json = r#"[
     {"jsonrpc":"2.0","method":"add","params":{"a":1,"b":2},"id":"1"},
     {"jsonrpc":"2.0","method":"add","params":{"a":3,"b":4},"id":"2"}
 ]"#;
-let packet: jsonrpc::RequestPacket = serde_json::from_str(json).unwrap();
-let response = server.handle(state, packet).await;
+let message: jsonrpc::RequestMessage = serde_json::from_str(json).unwrap();
+let response = server.handle(state, message).await;
 if let Some(json) = response.to_json().unwrap() {
     println!("{json}");
     // => [{"jsonrpc":"2.0","result":{"sum":3},"id":"1"},
@@ -118,7 +118,7 @@ impl From<AppError> for Error {
     fn from(e: AppError) -> Self {
         match &e {
             AppError::DivisionByZero => Error::new(-32000, e.to_string()),
-            AppError::Db(msg) => Error::new(-32001, format!("internal: {msg}")),
+            AppError::Db(message) => Error::new(-32001, format!("internal: {message}")),
         }
     }
 }
@@ -147,7 +147,7 @@ use axum::{
     routing::post,
     Router,
 };
-use jsonrpc::{Error, Id, RequestPacket, Response, ResponsePacket, Server};
+use jsonrpc::{Error, Id, RequestMessage, Response, ResponseMessage, Server};
 use serde_json::Value;
 
 #[derive(Clone)]
@@ -156,9 +156,9 @@ struct AppState { /* ... */ }
 async fn rpc_handler(
     State(server): State<Arc<Server<AppState>>>,
     State(state): State<Arc<AppState>>,
-    payload: Result<Json<RequestPacket>, JsonRejection>,
+    payload: Result<Json<RequestMessage>, JsonRejection>,
 ) -> impl IntoResponse {
-    let packet = match payload {
+    let message = match payload {
         Ok(Json(p)) => p,
         Err(_) => {
             let err = Response::error(Id::Null, Error::parse_error());
@@ -167,7 +167,7 @@ async fn rpc_handler(
         }
     };
 
-    let response = server.handle((*state).clone(), packet).await;
+    let response = server.handle((*state).clone(), message).await;
     match response.to_json().unwrap() {
         Some(json) => {
             let value: Value = serde_json::from_str(&json).unwrap();
@@ -216,7 +216,7 @@ async fn main() -> std::io::Result<()> {
         let mut lines = BufReader::new(reader).lines();
 
         while let Ok(Some(line)) = lines.next_line().await {
-            let packet: jsonrpc::RequestPacket = match serde_json::from_str(&line) {
+            let message: jsonrpc::RequestMessage = match serde_json::from_str(&line) {
                 Ok(p) => p,
                 Err(_) => {
                     let err = jsonrpc::Response::error(
@@ -229,7 +229,7 @@ async fn main() -> std::io::Result<()> {
                 }
             };
 
-            let response = server.handle((), packet).await;
+            let response = server.handle((), message).await;
             if let Some(json) = response.to_json().unwrap() {
                 writer.write_all(json.as_bytes()).await?;
                 writer.write_all(b"\n").await?;
