@@ -1775,27 +1775,34 @@ mod tests {
     // P-256 generator point coordinates (NIST SP 800-186 / RFC 6979).
     // Test vectors generated with Python: `hex((Gx * Gy) % p256_p)` etc.
     const P256_GX: U256 = U256::from_be_slice_const(
-        0x6b17d1f2, 0xe12c4247, 0xf8bce6e5, 0x63a440f2, 0x77037d81, 0x2deb33a0, 0xf4a13945,
-        0xd898c296,
+        0x6b17d1f2, 0xe12c4247, 0xf8bce6e5, 0x63a440f2, 0x77037d81, 0x2deb33a0, 0xf4a13945, 0xd898c296,
     );
     const P256_GY: U256 = U256::from_be_slice_const(
-        0x4fe342e2, 0xfe1a7f9b, 0x8ee7eb4a, 0x7c0f9e16, 0x2bce3357, 0x6b315ece, 0xcbb64068,
-        0x37bf51f5,
+        0x4fe342e2, 0xfe1a7f9b, 0x8ee7eb4a, 0x7c0f9e16, 0x2bce3357, 0x6b315ece, 0xcbb64068, 0x37bf51f5,
     );
 
     impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
         // Helper to build a 256-bit constant from eight 32-bit big-endian words.
         // Only valid for BITS=256, LIMBS=4; used only in test helpers.
-        const fn from_be_slice_const(
-            w7: u32, w6: u32, w5: u32, w4: u32, w3: u32, w2: u32, w1: u32, w0: u32,
-        ) -> Self {
+        const fn from_be_slice_const(w7: u32, w6: u32, w5: u32, w4: u32, w3: u32, w2: u32, w1: u32, w0: u32) -> Self {
             let limb3 = ((w7 as u64) << 32) | (w6 as u64);
             let limb2 = ((w5 as u64) << 32) | (w4 as u64);
             let limb1 = ((w3 as u64) << 32) | (w2 as u64);
             let limb0 = ((w1 as u64) << 32) | (w0 as u64);
             let limbs = [0u64; LIMBS];
-            if LIMBS > 0 { let mut l = [0u64; LIMBS]; l[0] = limb0; l[1] = limb1; l[2] = limb2; l[3] = limb3; return Self { limbs: l }; }
-            Self { limbs }
+            if LIMBS > 0 {
+                let mut l = [0u64; LIMBS];
+                l[0] = limb0;
+                l[1] = limb1;
+                l[2] = limb2;
+                l[3] = limb3;
+                return Self {
+                    limbs: l,
+                };
+            }
+            Self {
+                limbs,
+            }
         }
     }
 
@@ -1812,27 +1819,15 @@ mod tests {
             "55df5d5850f47bad82149139979369fe498a9022a412b5e0bedd2cfc21c3ed91",
         ));
 
-        assert_eq!(
-            P256_GX.mul_mod(&P256_GY, &P256_MODULUS),
-            gx_gy_mod_p,
-            "Gx*Gy mod p"
-        );
+        assert_eq!(P256_GX.mul_mod(&P256_GY, &P256_MODULUS), gx_gy_mod_p, "Gx*Gy mod p");
         // Commutativity
         assert_eq!(
             P256_GY.mul_mod(&P256_GX, &P256_MODULUS),
             gx_gy_mod_p,
             "Gy*Gx mod p (commutativity)"
         );
-        assert_eq!(
-            P256_GX.mul_mod(&P256_GX, &P256_MODULUS),
-            gx_sq_mod_p,
-            "Gx^2 mod p"
-        );
-        assert_eq!(
-            P256_GY.mul_mod(&P256_GY, &P256_MODULUS),
-            gy_sq_mod_p,
-            "Gy^2 mod p"
-        );
+        assert_eq!(P256_GX.mul_mod(&P256_GX, &P256_MODULUS), gx_sq_mod_p, "Gx^2 mod p");
+        assert_eq!(P256_GY.mul_mod(&P256_GY, &P256_MODULUS), gy_sq_mod_p, "Gy^2 mod p");
     }
 
     #[test]
@@ -2126,10 +2121,7 @@ mod tests {
             format!("{:x}", U256::MAX),
             "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
         );
-        assert_eq!(
-            format!("{:#x}", U256::from_u64(255)),
-            "0xff"
-        );
+        assert_eq!(format!("{:#x}", U256::from_u64(255)), "0xff");
 
         // UpperHex
         assert_eq!(format!("{:X}", U256::ZERO), "0");
@@ -2137,10 +2129,7 @@ mod tests {
             format!("{:X}", P256_MODULUS),
             "FFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF"
         );
-        assert_eq!(
-            format!("{:#X}", U256::from_u64(255)),
-            "0xFF"
-        );
+        assert_eq!(format!("{:#X}", U256::from_u64(255)), "0xFF");
 
         // Debug
         assert_eq!(format!("{:?}", U256::ZERO), "Uint(0x0)");

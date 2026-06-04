@@ -96,7 +96,7 @@ fn encrypt(password: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, String> {
     // Encrypt inner layer with AES-256-GCM
     let aes = Aes256Gcm::new(&aes_key);
     let mut aes_buf = plaintext.to_vec();
-    let tag = aes.encrypt_in_place_detached(&mut aes_buf, &aes_nonce, &[]);
+    let tag = aes.encrypt_in_place(&mut aes_buf, &aes_nonce, &[]);
     aes_buf.extend_from_slice(&tag);
 
     // Encrypt outer layer with ChaCha20-BLAKE3
@@ -142,7 +142,7 @@ fn decrypt(password: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, String> {
     let tag_pos = aes_ciphertext.len() - Aes256Gcm::TAG_SIZE;
     let tag: [u8; 16] = aes_ciphertext[tag_pos..].try_into().unwrap();
     let mut plaintext_buf = aes_ciphertext[..tag_pos].to_vec();
-    aes.decrypt_in_place_detached(&mut plaintext_buf, &tag, &aes_nonce, &[])
+    aes.decrypt_in_place(&mut plaintext_buf, &tag, &aes_nonce, &[])
         .map_err(|_| "error decrypting data with AES-256-GCM: authentication failed".to_string())?;
 
     Ok(plaintext_buf)

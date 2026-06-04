@@ -23,7 +23,7 @@
 ///
 /// ## Feature detection
 ///
-/// `try_encrypt_in_place_detached` / `try_decrypt_in_place_detached` check for
+/// `try_encrypt_in_place` / `try_decrypt_in_place` check for
 /// `aes + pclmulqdq + ssse3 + sse4.1` at runtime (via `is_x86_feature_detected!`)
 /// and return `None` when any feature is absent, causing the caller to fall back
 /// to the pure-Rust implementation.
@@ -37,7 +37,7 @@ use crate::AeadError;
 /// Attempt to encrypt using AES-NI + PCLMULQDQ.  Returns `None` when the CPU
 /// does not support the required feature set.
 #[inline]
-pub(crate) fn try_encrypt_in_place_detached(
+pub(crate) fn try_encrypt_in_place(
     key: &[u8; 32],
     in_out: &mut [u8],
     nonce: &[u8; 12],
@@ -53,7 +53,7 @@ pub(crate) fn try_encrypt_in_place_detached(
 /// Attempt to decrypt using AES-NI + PCLMULQDQ.  Returns `None` when the CPU
 /// does not support the required feature set.
 #[inline]
-pub(crate) fn try_decrypt_in_place_detached(
+pub(crate) fn try_decrypt_in_place(
     key: &[u8; 32],
     in_out: &mut [u8],
     tag: &[u8; 16],
@@ -588,7 +588,7 @@ mod tests {
 
         let cipher = crate::aes::aes256::Aes256Gcm::new(&key);
         let mut soft_buf = pt.clone();
-        let soft_tag = cipher.encrypt_in_place_detached_soft(&mut soft_buf, &nonce, &aad);
+        let soft_tag = cipher.encrypt_in_place_soft(&mut soft_buf, &nonce, &aad);
 
         let mut ni_buf = pt.clone();
         let ni_tag = unsafe { encrypt_aesni(&key, &mut ni_buf, &nonce, &aad) };

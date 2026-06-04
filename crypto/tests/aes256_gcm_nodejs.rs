@@ -81,7 +81,7 @@ fn rust_encrypt_node_decrypt_roundtrip() {
     for (key, nonce, aad, plaintext) in test_cases {
         let cipher = Aes256Gcm::new(&key);
         let mut buf = plaintext.clone();
-        let tag = cipher.encrypt_in_place_detached(&mut buf, &nonce, &aad);
+        let tag = cipher.encrypt_in_place(&mut buf, &nonce, &aad);
 
         let decrypted = node_decrypt(&key, &nonce, &aad, &buf, &tag);
         assert_eq!(decrypted, plaintext, "Roundtrip failed for key={}", hex::encode(key));
@@ -113,7 +113,7 @@ fn node_encrypt_rust_decrypt_roundtrip() {
         let cipher = Aes256Gcm::new(&key);
         let mut buf = ciphertext.clone();
         cipher
-            .decrypt_in_place_detached(&mut buf, &tag, &nonce, &aad)
+            .decrypt_in_place(&mut buf, &tag, &nonce, &aad)
             .expect("Rust decrypt failed");
 
         assert_eq!(buf, plaintext, "Roundtrip failed for key={}", hex::encode(key));
@@ -129,7 +129,7 @@ fn bidirectional_large_payload() {
 
     let cipher = Aes256Gcm::new(&key);
     let mut buf = plaintext.clone();
-    let tag = cipher.encrypt_in_place_detached(&mut buf, &nonce, aad);
+    let tag = cipher.encrypt_in_place(&mut buf, &nonce, aad);
 
     let decrypted = node_decrypt(&key, &nonce, aad, &buf, &tag);
     assert_eq!(decrypted, plaintext);
@@ -137,7 +137,7 @@ fn bidirectional_large_payload() {
     let (ciphertext, node_tag) = node_encrypt(&key, &nonce, aad, &plaintext);
     let mut buf2 = ciphertext.clone();
     cipher
-        .decrypt_in_place_detached(&mut buf2, &node_tag, &nonce, aad)
+        .decrypt_in_place(&mut buf2, &node_tag, &nonce, aad)
         .expect("Rust decrypt failed");
     assert_eq!(buf2, plaintext);
 }
@@ -151,7 +151,7 @@ fn bidirectional_empty_plaintext_with_aad() {
 
     let cipher = Aes256Gcm::new(&key);
     let mut buf = plaintext.clone();
-    let tag = cipher.encrypt_in_place_detached(&mut buf, &nonce, aad);
+    let tag = cipher.encrypt_in_place(&mut buf, &nonce, aad);
 
     let decrypted = node_decrypt(&key, &nonce, aad, &buf, &tag);
     assert_eq!(decrypted, plaintext);
@@ -159,7 +159,7 @@ fn bidirectional_empty_plaintext_with_aad() {
     let (ciphertext, node_tag) = node_encrypt(&key, &nonce, aad, &plaintext);
     let mut buf2 = ciphertext.clone();
     cipher
-        .decrypt_in_place_detached(&mut buf2, &node_tag, &nonce, aad)
+        .decrypt_in_place(&mut buf2, &node_tag, &nonce, aad)
         .expect("Rust decrypt failed");
     assert_eq!(buf2, plaintext);
 }
@@ -175,7 +175,7 @@ fn bidirectional_various_sizes() {
 
         let cipher = Aes256Gcm::new(&key);
         let mut buf = plaintext.clone();
-        let tag = cipher.encrypt_in_place_detached(&mut buf, &nonce, aad);
+        let tag = cipher.encrypt_in_place(&mut buf, &nonce, aad);
 
         let decrypted = node_decrypt(&key, &nonce, aad, &buf, &tag);
         assert_eq!(decrypted, plaintext, "Failed for size {}", size);
@@ -183,7 +183,7 @@ fn bidirectional_various_sizes() {
         let (ciphertext, node_tag) = node_encrypt(&key, &nonce, aad, &plaintext);
         let mut buf2 = ciphertext.clone();
         cipher
-            .decrypt_in_place_detached(&mut buf2, &node_tag, &nonce, aad)
+            .decrypt_in_place(&mut buf2, &node_tag, &nonce, aad)
             .expect(&format!("Rust decrypt failed for size {}", size));
         assert_eq!(buf2, plaintext, "Failed for size {}", size);
     }

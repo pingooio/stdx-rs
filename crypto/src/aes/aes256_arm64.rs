@@ -268,7 +268,7 @@ mod tests {
 
         let cipher = crate::aes::aes256::Aes256Gcm::new(&key);
         let mut soft_buf = pt.clone();
-        let soft_tag = cipher.encrypt_in_place_detached_soft(&mut soft_buf, &nonce, &aad);
+        let soft_tag = cipher.encrypt_in_place_soft(&mut soft_buf, &nonce, &aad);
 
         let mut arm_buf = pt.clone();
         let arm_tag = unsafe { encrypt_armv8(&key, &mut arm_buf, &nonce, &aad) };

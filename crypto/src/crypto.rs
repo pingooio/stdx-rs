@@ -52,6 +52,9 @@ impl core::fmt::Display for Error {
     }
 }
 
+#[cfg(feature = "std")]
+impl std::error::Error for Error {}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AeadError {
     InvalidKey,
@@ -94,22 +97,16 @@ pub trait Aead: Sized {
     const TAG_SIZE: usize;
     const NONCE_SIZE: usize;
 
-    fn encrypt_in_place_detached(&self, in_out: &mut [u8], nonce: &[u8], aad: &[u8]) -> Tag;
+    fn encrypt_in_place(&self, in_out: &mut [u8], nonce: &[u8], aad: &[u8]) -> Tag;
 
-    fn decrypt_in_place_detached(
-        &self,
-        in_out: &mut [u8],
-        nonce: &[u8],
-        aad: &[u8],
-        tag: &[u8],
-    ) -> Result<(), AeadError>;
+    fn decrypt_in_place(&self, in_out: &mut [u8], nonce: &[u8], aad: &[u8], tag: &[u8]) -> Result<(), AeadError>;
 
     #[cfg(feature = "alloc")]
     fn encrypt(&self, plaintext: &[u8], nonce: &[u8], aad: &[u8]) -> Vec<u8> {
         let mut ciphertext = Vec::with_capacity(plaintext.len() + Self::TAG_SIZE);
         ciphertext.extend_from_slice(plaintext);
 
-        let tag = self.encrypt_in_place_detached(&mut ciphertext, nonce, aad);
+        let tag = self.encrypt_in_place(&mut ciphertext, nonce, aad);
         ciphertext.extend_from_slice(tag.as_ref());
 
         return ciphertext;
@@ -125,7 +122,7 @@ pub trait Aead: Sized {
         let mut plaintext = Vec::with_capacity(plaintext_length);
         plaintext.extend_from_slice(&ciphertext[..plaintext_length]);
 
-        self.decrypt_in_place_detached(&mut plaintext, &nonce, aad, &ciphertext[plaintext_length..])?;
+        self.decrypt_in_place(&mut plaintext, &nonce, aad, &ciphertext[plaintext_length..])?;
 
         return Ok(plaintext);
     }

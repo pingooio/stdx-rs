@@ -892,7 +892,12 @@ fn ct_barrier_u8(mut value: u8) -> u8 {
     value
 }
 
-#[cfg(any(target_arch = "aarch64", target_arch = "arm", target_arch = "riscv32", target_arch = "riscv64"))]
+#[cfg(any(
+    target_arch = "aarch64",
+    target_arch = "arm",
+    target_arch = "riscv32",
+    target_arch = "riscv64"
+))]
 #[inline]
 #[allow(asm_sub_register)]
 fn ct_barrier_u8(mut value: u8) -> u8 {
@@ -1027,10 +1032,7 @@ mod tests {
             let reduced = barrett_reduce(val);
             // The reduced value should be congruent to val mod Q
             let diff = (val as i32 - reduced as i32).rem_euclid(Q as i32);
-            assert!(
-                diff == 0,
-                "barrett_reduce({val}) = {reduced} not congruent mod Q"
-            );
+            assert!(diff == 0, "barrett_reduce({val}) = {reduced} not congruent mod Q");
         }
     }
 
@@ -1206,10 +1208,7 @@ mod tests {
         }
         let poly = cbd2(&buf);
         for (i, &coeff) in poly.coeffs.iter().enumerate() {
-            assert!(
-                (-2..=2).contains(&coeff),
-                "CBD2 coeff[{i}] = {coeff} out of range [-2, 2]"
-            );
+            assert!((-2..=2).contains(&coeff), "CBD2 coeff[{i}] = {coeff} out of range [-2, 2]");
         }
     }
 
@@ -1220,14 +1219,16 @@ mod tests {
         // val0 = (buf[0] | buf[1]<<8) & 0x0fff
         // val1 = ((buf[1]>>4) | buf[2]<<4) & 0x0fff
         let buf = [
-            0x01, 0x0D, 0x00, // val0 = 0xD01 = 3329 = Q (rejected), val1 = (0x0D>>4 | 0x00<<4) & 0xfff = 0 (accepted)
-            0x00, 0x0D, 0xD0, // val0 = 0xD00 = 3328 (accepted), val1 = (0x0D>>4 | 0xD0<<4) & 0xfff = 0xD00 = 3328 (accepted)
+            0x01, 0x0D,
+            0x00, // val0 = 0xD01 = 3329 = Q (rejected), val1 = (0x0D>>4 | 0x00<<4) & 0xfff = 0 (accepted)
+            0x00, 0x0D,
+            0xD0, // val0 = 0xD00 = 3328 (accepted), val1 = (0x0D>>4 | 0xD0<<4) & 0xfff = 0xD00 = 3328 (accepted)
         ];
         let mut out = [0i16; 256];
         let count = rej_uniform(&mut out, &buf);
         // val0=Q rejected, val1=0 accepted, val0=3328 accepted, val1=3328 accepted
         assert_eq!(count, 3);
-        assert_eq!(out[0], 0);    // first accepted: val1 from first triple
+        assert_eq!(out[0], 0); // first accepted: val1 from first triple
         assert_eq!(out[1], 3328); // second accepted: val0 from second triple
         assert_eq!(out[2], 3328); // third accepted: val1 from second triple
     }

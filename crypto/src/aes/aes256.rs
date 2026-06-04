@@ -431,7 +431,7 @@ impl Aes256Gcm {
     /// * `aad`   – additional authenticated data (not encrypted)
     #[inline]
     #[allow(unreachable_code)]
-    pub fn encrypt_in_place_detached(&self, in_out: &mut [u8], nonce: &[u8; 12], aad: &[u8]) -> [u8; 16] {
+    pub fn encrypt_in_place(&self, in_out: &mut [u8], nonce: &[u8; 12], aad: &[u8]) -> [u8; 16] {
         // we assume that AES instructions are always present on aarch64
         #[cfg(target_arch = "aarch64")]
         {
@@ -466,7 +466,7 @@ impl Aes256Gcm {
             }
         }
 
-        self.encrypt_in_place_detached_soft(in_out, nonce, aad)
+        self.encrypt_in_place_soft(in_out, nonce, aad)
     }
 
     /// Decrypt `in_out` in-place and verify the authentication tag.
@@ -474,7 +474,7 @@ impl Aes256Gcm {
     /// Returns `Err(Error::Unspecified)` if the tag does not match.
     #[inline]
     #[allow(unreachable_code)]
-    pub fn decrypt_in_place_detached(
+    pub fn decrypt_in_place(
         &self,
         in_out: &mut [u8],
         tag: &[u8; 16],
@@ -514,11 +514,11 @@ impl Aes256Gcm {
             }
         }
 
-        self.decrypt_in_place_detached_soft(in_out, tag, nonce, aad)
+        self.decrypt_in_place_soft(in_out, tag, nonce, aad)
     }
 
     /// Pure-Rust encrypt implementation.
-    pub(crate) fn encrypt_in_place_detached_soft(&self, in_out: &mut [u8], nonce: &[u8; 12], aad: &[u8]) -> [u8; 16] {
+    pub(crate) fn encrypt_in_place_soft(&self, in_out: &mut [u8], nonce: &[u8; 12], aad: &[u8]) -> [u8; 16] {
         let rk = &self.round_keys;
         let h = encrypt_block(rk, &[0u8; 16]);
 
@@ -538,7 +538,7 @@ impl Aes256Gcm {
     }
 
     /// Pure-Rust decrypt implementation.
-    pub(crate) fn decrypt_in_place_detached_soft(
+    pub(crate) fn decrypt_in_place_soft(
         &self,
         in_out: &mut [u8],
         tag: &[u8; 16],
@@ -770,14 +770,14 @@ mod tests {
 
         // Encrypt
         let mut buf = pt.clone();
-        let tag = cipher.encrypt_in_place_detached_soft(&mut buf, &nonce, &aad);
+        let tag = cipher.encrypt_in_place_soft(&mut buf, &nonce, &aad);
         assert_eq!(buf, expected_ct, "ciphertext mismatch for key={}", v.key);
         assert_eq!(tag, expected_tag, "tag mismatch for key={}", v.key);
 
         // Decrypt
         let mut buf2 = expected_ct.clone();
         cipher
-            .decrypt_in_place_detached_soft(&mut buf2, &expected_tag, &nonce, &aad)
+            .decrypt_in_place_soft(&mut buf2, &expected_tag, &nonce, &aad)
             .expect("decrypt failed");
         assert_eq!(buf2, pt, "plaintext mismatch after decrypt for key={}", v.key);
     }
@@ -795,16 +795,12 @@ mod tests {
         let nonce = [0u8; 12];
         let cipher = Aes256Gcm::new(&key);
         let mut buf = b"hello world".to_vec();
-        let tag = cipher.encrypt_in_place_detached_soft(&mut buf, &nonce, &[]);
+        let tag = cipher.encrypt_in_place_soft(&mut buf, &nonce, &[]);
         // Flip one tag byte
         let mut bad_tag = tag;
         bad_tag[0] ^= 0xff;
         let mut buf2 = buf.clone();
-        assert!(
-            cipher
-                .decrypt_in_place_detached_soft(&mut buf2, &bad_tag, &nonce, &[])
-                .is_err()
-        );
+        assert!(cipher.decrypt_in_place_soft(&mut buf2, &bad_tag, &nonce, &[]).is_err());
     }
 
     #[test]
@@ -816,9 +812,9 @@ mod tests {
 
         let cipher = Aes256Gcm::new(&key);
         let mut buf = plaintext.clone();
-        let tag = cipher.encrypt_in_place_detached_soft(&mut buf, &nonce, aad);
+        let tag = cipher.encrypt_in_place_soft(&mut buf, &nonce, aad);
         cipher
-            .decrypt_in_place_detached_soft(&mut buf, &tag, &nonce, aad)
+            .decrypt_in_place_soft(&mut buf, &tag, &nonce, aad)
             .expect("decrypt failed");
         assert_eq!(buf, plaintext);
     }
@@ -830,9 +826,9 @@ mod tests {
         let aad = hex::decode("feedfacedeadbeeffeedfacedeadbeef").unwrap();
         let cipher = Aes256Gcm::new(&key);
         let mut buf: Vec<u8> = vec![];
-        let tag = cipher.encrypt_in_place_detached_soft(&mut buf, &nonce, &aad);
+        let tag = cipher.encrypt_in_place_soft(&mut buf, &nonce, &aad);
         cipher
-            .decrypt_in_place_detached_soft(&mut buf, &tag, &nonce, &aad)
+            .decrypt_in_place_soft(&mut buf, &tag, &nonce, &aad)
             .expect("decrypt failed");
     }
 
@@ -851,13 +847,13 @@ mod tests {
             let cipher = Aes256Gcm::new(&key);
 
             let mut buf = pt.clone();
-            let tag = cipher.encrypt_in_place_detached(&mut buf, &nonce, &aad);
+            let tag = cipher.encrypt_in_place(&mut buf, &nonce, &aad);
             assert_eq!(buf, expected_ct, "dispatch ciphertext mismatch key={}", v.key);
             assert_eq!(tag, expected_tag, "dispatch tag mismatch key={}", v.key);
 
             let mut buf2 = expected_ct.clone();
             cipher
-                .decrypt_in_place_detached(&mut buf2, &expected_tag, &nonce, &aad)
+                .decrypt_in_place(&mut buf2, &expected_tag, &nonce, &aad)
                 .expect("dispatch decrypt failed");
             assert_eq!(buf2, pt);
         }
@@ -901,19 +897,19 @@ mod tests {
 
                 if result == "valid" {
                     let mut buf = pt.clone();
-                    let tag = cipher.encrypt_in_place_detached(&mut buf, &nonce, &aad);
+                    let tag = cipher.encrypt_in_place(&mut buf, &nonce, &aad);
                     assert_eq!(buf, expected_ct, "wycheproof GCM tcId={} ct mismatch", test["tcId"]);
                     assert_eq!(tag, expected_tag, "wycheproof GCM tcId={} tag mismatch", test["tcId"]);
 
                     let mut buf2 = expected_ct.clone();
                     cipher
-                        .decrypt_in_place_detached(&mut buf2, &expected_tag, &nonce, &aad)
+                        .decrypt_in_place(&mut buf2, &expected_tag, &nonce, &aad)
                         .expect("wycheproof GCM decrypt failed");
                     assert_eq!(buf2, pt, "wycheproof GCM tcId={} pt mismatch", test["tcId"]);
                     valid_tested += 1;
                 } else {
                     let mut buf = expected_ct.clone();
-                    let result = cipher.decrypt_in_place_detached(&mut buf, &expected_tag, &nonce, &aad);
+                    let result = cipher.decrypt_in_place(&mut buf, &expected_tag, &nonce, &aad);
                     assert!(
                         result.is_err(),
                         "wycheproof GCM tcId={} expected invalid but passed",
