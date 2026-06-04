@@ -34,3 +34,7 @@ harness = false
 [[bench]]
 name = "mac"
 harness = false
+
+[[bench]]
+name = "signatures"
+harness = false

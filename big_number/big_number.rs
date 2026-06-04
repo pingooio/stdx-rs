@@ -55,6 +55,24 @@ pub const fn mac(acc: u64, a: u64, b: u64, carry: u64) -> (u64, u64) {
     (value as u64, (value >> 64) as u64)
 }
 
+fn mul_limbs(out: &mut [u64], a: &[u64], a_len: usize, b: &[u64], b_len: usize) {
+    for i in 0..a_len {
+        let mut carry = 0u64;
+        for j in 0..b_len {
+            let (word, next_carry) = mac(out[i + j], a[i], b[j], carry);
+            out[i + j] = word;
+            carry = next_carry;
+        }
+        let mut k = i + b_len;
+        while carry != 0 {
+            let (word, next_carry) = adc(out[k], 0, carry);
+            out[k] = word;
+            carry = next_carry;
+            k += 1;
+        }
+    }
+}
+
 #[inline]
 const fn ct_select_u64(a: u64, b: u64, choice: bool) -> u64 {
     let mask = 0u64.wrapping_sub(choice as u64);
@@ -385,6 +403,69 @@ impl<const BITS: usize, const LIMBS: usize> Uint<BITS, LIMBS> {
     pub fn mul_mod(&self, rhs: &Self, modulus: &Self) -> Self {
         let product = self.mul_wide_internal(rhs);
         Self::reduce_wide_internal(&product, modulus)
+    }
+
+    /// Barrett reduction of a 2*LIMBS-wide product modulo `modulus`.
+    ///
+    /// `mu` must equal `floor(2^(2*LIMBS*64) / modulus)` and have `LIMBS+1` limbs.
+    pub fn reduce_wide_barrett<const MU_LIMBS: usize>(
+        product: &[u64; MAX_LIMBS],
+        modulus: &Self,
+        mu: &[u64; MU_LIMBS],
+    ) -> Self {
+        assert!(MU_LIMBS == LIMBS + 1);
+
+        let k = LIMBS;
+        let k1 = k + 1;
+        let k_minus_1 = k - 1;
+
+        let mut q1 = [0u64; MAX_LIMBS];
+        q1[..k1].copy_from_slice(&product[k_minus_1..k_minus_1 + k1]);
+
+        let mut q2 = [0u64; MAX_LIMBS];
+        mul_limbs(&mut q2, &q1, k1, mu, k1);
+
+        let mut q3 = [0u64; MAX_LIMBS];
+        q3[..k1].copy_from_slice(&q2[k1..k1 + k1]);
+
+        let mut r1 = [0u64; MAX_LIMBS];
+        r1[..k1].copy_from_slice(&product[..k1]);
+
+        let mut q3m = [0u64; MAX_LIMBS];
+        mul_limbs(&mut q3m, &q3[..k1], k1, &modulus.limbs, k);
+        let mut r2 = [0u64; MAX_LIMBS];
+        r2[..k1].copy_from_slice(&q3m[..k1]);
+
+        let mut r = [0u64; MAX_LIMBS];
+        let mut borrow = 0u64;
+        let mut i = 0;
+        while i < k1 {
+            let (word, next_borrow) = sbb(r1[i], r2[i], borrow);
+            r[i] = word;
+            borrow = next_borrow;
+            i += 1;
+        }
+
+        let mut limbs = [0u64; LIMBS];
+        limbs.copy_from_slice(&r[..LIMBS]);
+        let mut result = Self {
+            limbs,
+        };
+
+        let (d1, b1) = result.sub_raw(modulus);
+        result = Self::ct_select(&d1, &result, b1 == 0);
+        let (d2, b2) = result.sub_raw(modulus);
+        result = Self::ct_select(&d2, &result, b2 == 0);
+
+        result
+    }
+
+    /// Modular multiplication using Barrett reduction.
+    ///
+    /// `mu` must equal `floor(2^(2*LIMBS*64) / modulus)` and have `LIMBS+1` limbs.
+    pub fn mul_mod_barrett<const MU_LIMBS: usize>(&self, rhs: &Self, modulus: &Self, mu: &[u64; MU_LIMBS]) -> Self {
+        let product = self.mul_wide_internal(rhs);
+        Self::reduce_wide_barrett(&product, modulus, mu)
     }
 
     #[inline]

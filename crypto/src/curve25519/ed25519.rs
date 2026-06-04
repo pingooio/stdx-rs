@@ -28,6 +28,23 @@ const EDWARDS_D: FieldElement = FieldElement(U256::from_limbs([
     0x5203_6cee_2b6f_fe73,
 ]));
 
+/// R = 2^256 mod L, used for fast scalar reduction.
+const R: U256 = U256::from_limbs([
+    0xd6ec_3174_8d98_951d,
+    0xc6ef_5bf4_737d_cf70,
+    0xffff_ffff_ffff_fffe,
+    0x0fff_ffff_ffff_ffff,
+]);
+
+/// Barrett µ = floor(2^512 / L), used for fast wide reduction modulo L.
+const BAR_MU: [u64; 5] = [
+    0xed9c_e5a3_0a2c_131b,
+    0x2106_215d_0863_29a7,
+    0xffff_ffff_ffff_ffeb,
+    0xffff_ffff_ffff_ffff,
+    0x0000_0000_0000_000f,
+];
+
 const EDWARDS_2D: FieldElement = FieldElement(U256::from_limbs([
     0xebd6_9b94_26b2_f159,
     0x00e0_149a_8283_b156,
@@ -178,21 +195,57 @@ impl Scalar {
         }
     }
 
+    /// Reduce an arbitrary-length byte sequence modulo L (the ed25519 subgroup order).
+    ///
+    /// Two fast paths:
+    /// - <= 32 bytes: parse as U256 and repeatedly conditionally subtract L (at most 16 times,
+    ///   since a 256-bit value is < 16·L). Constant-time via ct_select.
+    /// - > 32 bytes: Horner evaluation in base 2^256. Split into 32-byte chunks processed
+    ///   from most significant to least, using the precomputed R = 2^256 mod L for shifting
+    ///   and the Barrett constant µ for fast modular multiplication of the accumulator by R.
     fn reduce_bytes_mod_l(bytes: &[u8]) -> Self {
-        let mut acc = U256::ZERO;
-        let mut i = bytes.len();
-        while i > 0 {
-            i -= 1;
-            let mut bit = 8usize;
-            while bit > 0 {
-                bit -= 1;
-                acc = acc.double_mod(&MODULUS_L);
-                if ((bytes[i] >> bit) & 1) == 1 {
-                    acc = acc.add_mod(&U256::ONE, &MODULUS_L);
-                }
+        let len = bytes.len();
+        if len <= 32 {
+            let mut padded = [0u8; 32];
+            padded[..len].copy_from_slice(bytes);
+            let val = U256::from_le_slice(&padded);
+            let mut result = val;
+            let mut i = 16;
+            while i > 0 {
+                let (diff, borrow) = result.sub_raw(&MODULUS_L);
+                result = U256::ct_select(&diff, &result, borrow == 0);
+                i -= 1;
             }
+            Self(result)
+        } else {
+            let chunk_count = (len + 31) / 32;
+            let mut acc = U256::ZERO;
+            let mut chunk_idx = chunk_count;
+            while chunk_idx > 0 {
+                chunk_idx -= 1;
+                let chunk_start = chunk_idx * 32;
+                let chunk_end = usize::min(chunk_start + 32, len);
+                let chunk_len = chunk_end - chunk_start;
+
+                if !acc.is_zero() {
+                    acc = acc.mul_mod_barrett(&R, &MODULUS_L, &BAR_MU);
+                }
+
+                let mut padded = [0u8; 32];
+                padded[..chunk_len].copy_from_slice(&bytes[chunk_start..chunk_end]);
+                let chunk_val = U256::from_le_slice(&padded);
+                let mut chunk_reduced = chunk_val;
+                let mut j = 16;
+                while j > 0 {
+                    let (diff, borrow) = chunk_reduced.sub_raw(&MODULUS_L);
+                    chunk_reduced = U256::ct_select(&diff, &chunk_reduced, borrow == 0);
+                    j -= 1;
+                }
+
+                acc = acc.add_mod(&chunk_reduced, &MODULUS_L);
+            }
+            Self(acc)
         }
-        Self(acc)
     }
 
     fn to_bytes(self) -> [u8; 32] {
@@ -208,7 +261,7 @@ impl Scalar {
     }
 
     fn mul(self, rhs: Self) -> Self {
-        Self(self.0.mul_mod(&rhs.0, &MODULUS_L))
+        Self(self.0.mul_mod_barrett(&rhs.0, &MODULUS_L, &BAR_MU))
     }
 }
 
@@ -774,6 +827,27 @@ mod tests {
                 pub_key.verify(&message, &signature).is_ok(),
                 "roundtrip failed for message length {len}"
             );
+        }
+    }
+
+    #[test]
+    fn mul_mod_barrett_agrees_with_mul_mod() {
+        for _ in 0..100 {
+            let a = U256::from_limbs([
+                rand::random::<u64>(),
+                rand::random::<u64>(),
+                rand::random::<u64>(),
+                rand::random::<u64>(),
+            ]);
+            let b = U256::from_limbs([
+                rand::random::<u64>(),
+                rand::random::<u64>(),
+                rand::random::<u64>(),
+                rand::random::<u64>(),
+            ]);
+            let slow = a.mul_mod(&b, &MODULUS_L);
+            let fast = a.mul_mod_barrett(&b, &MODULUS_L, &BAR_MU);
+            assert_eq!(slow, fast, "mismatch for a={a:x}, b={b:x}");
         }
     }
 }
