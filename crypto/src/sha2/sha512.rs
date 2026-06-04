@@ -229,15 +229,15 @@ impl Hasher for Sha512 {
             }
         }
 
-        while data.len() >= 128 {
-            let block: &[u8; 128] = data[..128].try_into().unwrap();
-            self.process_block(block);
-            data = &data[128..];
+        let mut chunks = data.chunks_exact(128);
+        for chunk in &mut chunks {
+            self.process_block(chunk.try_into().unwrap());
         }
 
-        if !data.is_empty() {
-            self.buffer[..data.len()].copy_from_slice(data);
-            self.buffer_len = data.len();
+        let remainder = chunks.remainder();
+        if !remainder.is_empty() {
+            self.buffer[..remainder.len()].copy_from_slice(remainder);
+            self.buffer_len = remainder.len();
         }
     }
 

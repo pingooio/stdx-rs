@@ -141,15 +141,15 @@ impl Hasher for Sha256 {
             }
         }
 
-        while data.len() >= 64 {
-            let block: &[u8; 64] = data[..64].try_into().unwrap();
-            self.process_block(block);
-            data = &data[64..];
+        let mut chunks = data.chunks_exact(64);
+        for chunk in &mut chunks {
+            self.process_block(chunk.try_into().unwrap());
         }
 
-        if !data.is_empty() {
-            self.buffer[..data.len()].copy_from_slice(data);
-            self.buffer_len = data.len();
+        let remainder = chunks.remainder();
+        if !remainder.is_empty() {
+            self.buffer[..remainder.len()].copy_from_slice(remainder);
+            self.buffer_len = remainder.len();
         }
     }
 
