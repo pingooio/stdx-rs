@@ -23,6 +23,81 @@ pub struct Sha256 {
     total_len: u64,
 }
 
+impl Hasher for Sha256 {
+    const BLOCK_SIZE: usize = 64;
+    const OUTPUT_SIZE: usize = 32;
+
+    #[inline]
+    fn new() -> Self {
+        return Sha256 {
+            state: [
+                0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+            ],
+            buffer: [0u8; 64],
+            buffer_len: 0,
+            total_len: 0,
+        };
+    }
+
+    #[inline]
+    fn update(&mut self, mut data: &[u8]) {
+        self.total_len = self.total_len.wrapping_add(data.len() as u64);
+
+        if self.buffer_len > 0 {
+            let to_fill = (64 - self.buffer_len).min(data.len());
+            self.buffer[self.buffer_len..self.buffer_len + to_fill].copy_from_slice(&data[..to_fill]);
+            self.buffer_len += to_fill;
+            data = &data[to_fill..];
+
+            if self.buffer_len == 64 {
+                process_block(&mut self.state, &self.buffer);
+                self.buffer_len = 0;
+            }
+        }
+
+        let mut chunks = data.chunks_exact(64);
+        for chunk in &mut chunks {
+            process_block(&mut self.state, chunk.try_into().unwrap());
+        }
+
+        let remainder = chunks.remainder();
+        if !remainder.is_empty() {
+            self.buffer[..remainder.len()].copy_from_slice(remainder);
+            self.buffer_len = remainder.len();
+        }
+    }
+
+    #[inline]
+    fn sum(mut self) -> Hash {
+        let bit_len = self.total_len.wrapping_mul(8);
+
+        let mut tail = [0u8; 128];
+        tail[..self.buffer_len].copy_from_slice(&self.buffer[..self.buffer_len]);
+        tail[self.buffer_len] = 0x80;
+
+        let padding_len = if self.buffer_len < 56 {
+            56 - self.buffer_len
+        } else {
+            120 - self.buffer_len
+        };
+
+        let length_offset = self.buffer_len + padding_len;
+        tail[length_offset..length_offset + 8].copy_from_slice(&bit_len.to_be_bytes());
+
+        let total_tail_len = length_offset + 8;
+        for chunk in tail[..total_tail_len].chunks_exact(64) {
+            process_block(&mut self.state, chunk.try_into().unwrap());
+        }
+
+        let mut hash = Hash::new();
+        for word in self.state.iter() {
+            hash.append(&word.to_be_bytes());
+        }
+
+        return hash;
+    }
+}
+
 #[inline]
 pub(crate) fn process_block_scalar(state: &mut [u32; 8], block: &[u8; 64]) {
     let mut w = [0u32; 64];
@@ -84,105 +159,26 @@ pub(crate) fn process_block_scalar(state: &mut [u32; 8], block: &[u8; 64]) {
     state[7] = state[7].wrapping_add(h);
 }
 
-impl Sha256 {
-    #[inline]
-    #[allow(unreachable_code)]
-    fn process_block(&mut self, block: &[u8; 64]) {
-        #[cfg(target_arch = "x86_64")]
-        {
-            if sha256_amd64::process_block_sha_ni(&mut self.state, block) {
-                return;
-            }
-        }
-
-        #[cfg(target_arch = "aarch64")]
-        {
-            // SAFETY: aarch64 target in this repository assumes SHA2 instructions are present.
-            unsafe {
-                sha256_arm64::process_block(&mut self.state, block);
-            }
+#[inline]
+#[allow(unreachable_code)]
+fn process_block(state: &mut [u32; 8], block: &[u8; 64]) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if sha256_amd64::process_block_sha_ni(state, block) {
             return;
         }
-
-        process_block_scalar(&mut self.state, block);
-    }
-}
-
-impl Hasher for Sha256 {
-    const BLOCK_SIZE: usize = 64;
-    const OUTPUT_SIZE: usize = 32;
-
-    #[inline]
-    fn new() -> Self {
-        return Sha256 {
-            state: [
-                0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
-            ],
-            buffer: [0u8; 64],
-            buffer_len: 0,
-            total_len: 0,
-        };
     }
 
-    #[inline]
-    fn update(&mut self, mut data: &[u8]) {
-        self.total_len = self.total_len.wrapping_add(data.len() as u64);
-
-        if self.buffer_len > 0 {
-            let to_fill = (64 - self.buffer_len).min(data.len());
-            self.buffer[self.buffer_len..self.buffer_len + to_fill].copy_from_slice(&data[..to_fill]);
-            self.buffer_len += to_fill;
-            data = &data[to_fill..];
-
-            if self.buffer_len == 64 {
-                let block = self.buffer;
-                self.process_block(&block);
-                self.buffer_len = 0;
-            }
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: aarch64 target in this repository assumes SHA2 instructions are present.
+        unsafe {
+            sha256_arm64::process_block(state, block);
         }
-
-        let mut chunks = data.chunks_exact(64);
-        for chunk in &mut chunks {
-            self.process_block(chunk.try_into().unwrap());
-        }
-
-        let remainder = chunks.remainder();
-        if !remainder.is_empty() {
-            self.buffer[..remainder.len()].copy_from_slice(remainder);
-            self.buffer_len = remainder.len();
-        }
+        return;
     }
 
-    #[inline]
-    fn sum(mut self) -> Hash {
-        let bit_len = self.total_len.wrapping_mul(8);
-
-        let mut tail = [0u8; 128];
-        tail[..self.buffer_len].copy_from_slice(&self.buffer[..self.buffer_len]);
-        tail[self.buffer_len] = 0x80;
-
-        let padding_len = if self.buffer_len < 56 {
-            56 - self.buffer_len
-        } else {
-            120 - self.buffer_len
-        };
-
-        let length_offset = self.buffer_len + padding_len;
-        tail[length_offset..length_offset + 8].copy_from_slice(&bit_len.to_be_bytes());
-
-        let total_tail_len = length_offset + 8;
-        for chunk in tail[..total_tail_len].chunks_exact(64) {
-            let block: &[u8; 64] = chunk.try_into().unwrap();
-            self.process_block(block);
-        }
-
-        let mut hash = Hash::new();
-        for word in self.state.iter() {
-            hash.append(&word.to_be_bytes());
-        }
-
-        return hash;
-    }
+    process_block_scalar(state, block);
 }
 
 #[cfg(test)]

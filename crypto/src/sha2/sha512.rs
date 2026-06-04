@@ -95,28 +95,108 @@ pub struct Sha512 {
     total_len: u128,
 }
 
-impl Sha512 {
+impl Hasher for Sha512 {
+    const BLOCK_SIZE: usize = 128;
+    const OUTPUT_SIZE: usize = 64;
+
     #[inline]
-    #[allow(unreachable_code)]
-    fn process_block(&mut self, block: &[u8; 128]) {
-        #[cfg(target_arch = "x86_64")]
-        {
-            if sha512_amd64::process_block_if_supported(&mut self.state, block) {
-                return;
+    fn new() -> Self {
+        return Sha512 {
+            state: [
+                0x6a09e667f3bcc908,
+                0xbb67ae8584caa73b,
+                0x3c6ef372fe94f82b,
+                0xa54ff53a5f1d36f1,
+                0x510e527fade682d1,
+                0x9b05688c2b3e6c1f,
+                0x1f83d9abfb41bd6b,
+                0x5be0cd19137e2179,
+            ],
+            buffer: [0u8; 128],
+            buffer_len: 0,
+            total_len: 0,
+        };
+    }
+
+    #[inline]
+    fn update(&mut self, mut data: &[u8]) {
+        self.total_len = self.total_len.wrapping_add(data.len() as u128);
+
+        if self.buffer_len > 0 {
+            let to_fill = (128 - self.buffer_len).min(data.len());
+            self.buffer[self.buffer_len..self.buffer_len + to_fill].copy_from_slice(&data[..to_fill]);
+            self.buffer_len += to_fill;
+            data = &data[to_fill..];
+
+            if self.buffer_len == 128 {
+                process_block(&mut self.state, &self.buffer);
+                self.buffer_len = 0;
             }
         }
 
-        #[cfg(target_arch = "aarch64")]
-        {
-            // SAFETY: aarch64 target in this repository assumes SHA3/SHA512 instructions are present.
-            unsafe {
-                sha512_arm64::process_block(&mut self.state, block);
-            }
+        let mut chunks = data.chunks_exact(128);
+        for chunk in &mut chunks {
+            process_block(&mut self.state, chunk.try_into().unwrap());
+        }
+
+        let remainder = chunks.remainder();
+        if !remainder.is_empty() {
+            self.buffer[..remainder.len()].copy_from_slice(remainder);
+            self.buffer_len = remainder.len();
+        }
+    }
+
+    #[inline]
+    fn sum(mut self) -> Hash {
+        let bit_len = self.total_len.wrapping_mul(8);
+
+        let mut tail = [0u8; 256];
+        tail[..self.buffer_len].copy_from_slice(&self.buffer[..self.buffer_len]);
+        tail[self.buffer_len] = 0x80;
+
+        let padding_len = if self.buffer_len < 112 {
+            112 - self.buffer_len
+        } else {
+            240 - self.buffer_len
+        };
+
+        let length_offset = self.buffer_len + padding_len;
+        tail[length_offset..length_offset + 16].copy_from_slice(&bit_len.to_be_bytes());
+
+        let total_tail_len = length_offset + 16;
+        for chunk in tail[..total_tail_len].chunks_exact(128) {
+            process_block(&mut self.state, chunk.try_into().unwrap());
+        }
+
+        let mut hash = Hash::new();
+        for word in self.state.iter() {
+            hash.append(&word.to_be_bytes());
+        }
+
+        return hash;
+    }
+}
+
+#[inline]
+#[allow(unreachable_code)]
+fn process_block(state: &mut [u64; 8], block: &[u8; 128]) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if sha512_amd64::process_block_if_supported(state, block) {
             return;
         }
-
-        process_block_scalar(&mut self.state, block);
     }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: aarch64 target in this repository assumes SHA3/SHA512 instructions are present.
+        unsafe {
+            sha512_arm64::process_block(state, block);
+        }
+        return;
+    }
+
+    process_block_scalar(state, block);
 }
 
 #[inline]
@@ -187,90 +267,6 @@ pub(crate) fn process_block_scalar(state: &mut [u64; 8], block: &[u8; 128]) {
     state[5] = state[5].wrapping_add(f);
     state[6] = state[6].wrapping_add(g);
     state[7] = state[7].wrapping_add(h);
-}
-
-impl Hasher for Sha512 {
-    const BLOCK_SIZE: usize = 128;
-    const OUTPUT_SIZE: usize = 64;
-
-    #[inline]
-    fn new() -> Self {
-        return Sha512 {
-            state: [
-                0x6a09e667f3bcc908,
-                0xbb67ae8584caa73b,
-                0x3c6ef372fe94f82b,
-                0xa54ff53a5f1d36f1,
-                0x510e527fade682d1,
-                0x9b05688c2b3e6c1f,
-                0x1f83d9abfb41bd6b,
-                0x5be0cd19137e2179,
-            ],
-            buffer: [0u8; 128],
-            buffer_len: 0,
-            total_len: 0,
-        };
-    }
-
-    #[inline]
-    fn update(&mut self, mut data: &[u8]) {
-        self.total_len = self.total_len.wrapping_add(data.len() as u128);
-
-        if self.buffer_len > 0 {
-            let to_fill = (128 - self.buffer_len).min(data.len());
-            self.buffer[self.buffer_len..self.buffer_len + to_fill].copy_from_slice(&data[..to_fill]);
-            self.buffer_len += to_fill;
-            data = &data[to_fill..];
-
-            if self.buffer_len == 128 {
-                let block = self.buffer;
-                self.process_block(&block);
-                self.buffer_len = 0;
-            }
-        }
-
-        let mut chunks = data.chunks_exact(128);
-        for chunk in &mut chunks {
-            self.process_block(chunk.try_into().unwrap());
-        }
-
-        let remainder = chunks.remainder();
-        if !remainder.is_empty() {
-            self.buffer[..remainder.len()].copy_from_slice(remainder);
-            self.buffer_len = remainder.len();
-        }
-    }
-
-    #[inline]
-    fn sum(mut self) -> Hash {
-        let bit_len = self.total_len.wrapping_mul(8);
-
-        let mut tail = [0u8; 256];
-        tail[..self.buffer_len].copy_from_slice(&self.buffer[..self.buffer_len]);
-        tail[self.buffer_len] = 0x80;
-
-        let padding_len = if self.buffer_len < 112 {
-            112 - self.buffer_len
-        } else {
-            240 - self.buffer_len
-        };
-
-        let length_offset = self.buffer_len + padding_len;
-        tail[length_offset..length_offset + 16].copy_from_slice(&bit_len.to_be_bytes());
-
-        let total_tail_len = length_offset + 16;
-        for chunk in tail[..total_tail_len].chunks_exact(128) {
-            let block: &[u8; 128] = chunk.try_into().unwrap();
-            self.process_block(block);
-        }
-
-        let mut hash = Hash::new();
-        for word in self.state.iter() {
-            hash.append(&word.to_be_bytes());
-        }
-
-        return hash;
-    }
 }
 
 #[cfg(test)]
