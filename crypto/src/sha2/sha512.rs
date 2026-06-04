@@ -88,6 +88,7 @@ pub(crate) const SHA512_K: [u64; 80] = [
 ];
 
 #[derive(Clone)]
+#[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
 pub struct Sha512 {
     state: [u64; 8],
     buffer: [u8; 128],

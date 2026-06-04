@@ -1,6 +1,10 @@
+#[cfg(feature = "zeroize")]
+use zeroize::Zeroize;
+
 use crate::{Hash, Hasher, MAX_HASH_BLOCK_SIZE};
 
 #[derive(Clone)]
+#[cfg_attr(feature = "zeroize", derive(Zeroize))]
 pub struct Hmac<H: Hasher> {
     hash: H,
     opad: [u8; MAX_HASH_BLOCK_SIZE],

@@ -27,6 +27,7 @@ const SIGMA: [[u8; 16]; 12] = [
 ];
 
 #[derive(Clone)]
+#[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
 pub struct Blake2b {
     h: [u64; 8],
     buffer: [u8; 128],

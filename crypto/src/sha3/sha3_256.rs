@@ -5,6 +5,7 @@ const SHA3_256_RATE: usize = 136;
 const SHA3_256_DOMAIN_SEPARATOR: u8 = 0x06;
 
 #[derive(Clone)]
+#[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
 pub struct Sha3_256 {
     keccak: Keccak<24>,
 }

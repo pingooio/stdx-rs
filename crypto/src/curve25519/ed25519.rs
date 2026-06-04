@@ -362,30 +362,17 @@ fn hash_to_scalar(parts: &[&[u8]]) -> Scalar {
 }
 
 fn expand_secret(private_key: &[u8; SECRET_KEY_SIZE]) -> (Scalar, [u8; 32]) {
-    let digest = Sha512::hash(private_key);
-    let mut expanded = [0u8; 64];
-    expanded.copy_from_slice(digest.as_ref());
+    let mut digest = Sha512::hash(private_key);
+    let digest: &mut [u8; 64] = digest.as_mut().try_into().unwrap();
 
-    expanded[0] &= 248;
-    expanded[31] &= 63;
-    expanded[31] |= 64;
+    digest[0] &= 248;
+    digest[31] &= 63;
+    digest[31] |= 64;
 
-    let scalar = Scalar::reduce_bytes_mod_l(&expanded[..32]);
+    let scalar = Scalar::reduce_bytes_mod_l(&digest[..32]);
     let mut prefix = [0u8; 32];
-    prefix.copy_from_slice(&expanded[32..]);
+    prefix.copy_from_slice(&digest[32..]);
     (scalar, prefix)
-}
-
-pub fn derive_public_key(private_key: &[u8; SECRET_KEY_SIZE]) -> [u8; PUBLIC_KEY_SIZE] {
-    let (scalar, _) = expand_secret(private_key);
-    scalar_mul_base(&scalar)
-        .to_bytes()
-        .expect("basepoint multiplication must produce a valid point")
-}
-
-pub fn ed25519_sign(private_key: &[u8; SECRET_KEY_SIZE], message: &[u8]) -> [u8; SIGNATURE_SIZE] {
-    let key = SecretKey::from_bytes(private_key);
-    key.sign(message)
 }
 
 fn ed25519_verify(
@@ -413,19 +400,6 @@ fn ed25519_verify(
         (Some(lhs), Some(rhs)) if constant_time_eq(&lhs, &rhs) => Ok(()),
         _ => Err(EllipticCurveError::InvalidSignature),
     }
-}
-
-pub fn ed25519_verify_bytes(
-    public_key: &[u8; PUBLIC_KEY_SIZE],
-    message: &[u8],
-    signature: &[u8; SIGNATURE_SIZE],
-) -> Result<(), EllipticCurveError> {
-    let point = EdwardsPoint::from_bytes(public_key).ok_or(EllipticCurveError::InvalidKey)?;
-    ed25519_verify(&point, message, signature)
-}
-
-pub fn is_valid_public_key(public_key: &[u8; PUBLIC_KEY_SIZE]) -> bool {
-    EdwardsPoint::from_bytes(public_key).is_some()
 }
 
 #[cfg(test)]

@@ -1,5 +1,9 @@
+use constant_time_eq::constant_time_eq;
+
 /// A fixed-capacity, stack-allocated bytes buffer of capacity `N`.
 /// Use [`Self::as_ref`] to get the bytes as a `&[u8]` and [`Self::as_mut`] to get the bytes as a `&mut [u8]`.
+/// Comparing `Bytes` is a constant-time operation.
+#[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
 pub struct Bytes<const N: usize> {
     bytes: [u8; N],
     length: u16,
@@ -41,6 +45,15 @@ impl<const N: usize> Bytes<N> {
         self.length += data.len() as u16;
     }
 }
+
+impl<const N: usize> PartialEq for Bytes<N> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        constant_time_eq(self.as_ref(), other.as_ref())
+    }
+}
+
+impl<const N: usize> Eq for Bytes<N> {}
 
 impl<const N: usize> AsRef<[u8]> for Bytes<N> {
     #[inline]

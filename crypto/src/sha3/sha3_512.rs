@@ -5,6 +5,7 @@ const SHA3_512_RATE: usize = 72;
 const SHA3_512_DOMAIN_SEPARATOR: u8 = 0x06;
 
 #[derive(Clone)]
+#[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
 pub struct Sha3_512 {
     keccak: Keccak<24>,
 }

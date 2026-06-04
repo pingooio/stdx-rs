@@ -16,6 +16,7 @@ pub(crate) const SHA256_K: [u32; 64] = [
 ];
 
 #[derive(Clone)]
+#[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
 pub struct Sha256 {
     state: [u32; 8],
     buffer: [u8; 64],

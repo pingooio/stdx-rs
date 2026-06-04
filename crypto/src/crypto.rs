@@ -132,7 +132,17 @@ pub trait Aead: Sized {
     }
 }
 
-pub trait Hasher: Sized + Clone {
+#[cfg(feature = "zeroize")]
+pub trait Zeroize: zeroize::Zeroize {}
+#[cfg(feature = "zeroize")]
+impl<T: zeroize::Zeroize> Zeroize for T {}
+
+#[cfg(not(feature = "zeroize"))]
+pub trait Zeroize {}
+#[cfg(not(feature = "zeroize"))]
+impl<T> Zeroize for T {}
+
+pub trait Hasher: Sized + Clone + Zeroize {
     /// The internal block size of the hash function
     const BLOCK_SIZE: usize;
     /// The output size of the hash function

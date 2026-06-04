@@ -6,6 +6,7 @@ const CSHAKE256_DOMAIN_SEPARATOR: u8 = 0x04;
 const SHAKE256_DOMAIN_SEPARATOR: u8 = 0x1f;
 
 #[derive(Clone)]
+#[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
 pub struct CShake256 {
     keccak: Keccak<24>,
 }
@@ -52,6 +53,7 @@ impl Xof for CShake256 {
 }
 
 #[derive(Clone)]
+#[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
 pub struct Shake256 {
     keccak: Keccak<24>,
 }
