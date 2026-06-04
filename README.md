@@ -28,7 +28,6 @@ A second, temporary, goal is to reduce supply-chain risks by forking the most-us
 | `embed` | https://github.com/pyrossh/rust-embed | 105fdfebab5820ea0628149ee62b34f6d2df3bb8 | TODO |
 | `derivative` | https://github.com/mcarton/rust-derivative | 5179a968ca6d70792f62dfe6727ab8d5b8b5cf5e | TODO |
 | `form_urlencoded` | https://github.com/servo/rust-url | 54346fa288e16b25b71c45149d7067c752b450e0 | TODO |
-| `hex` | https://github.com/KokaKiwi/rust-hex | c333cf5128b6f5135d8f561b217f68e670275031 | TODO |
 | `httpdate` | https://github.com/pyfisch/httpdate | 63f723c6eae30ec130a6c5625ec38c4b49b0891c | TODO |
 | `ipnetwork` | https://github.com/achanda/ipnetwork | f01575cbf2fc596c0a1761c122aa92525cbb7974 | TODO |
 | `itoa` | https://github.com/dtolnay/itoa | 945f297a243887f66407fcd65088b3713a464851 | TODO |
