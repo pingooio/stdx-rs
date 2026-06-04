@@ -457,7 +457,12 @@ impl Aes256Gcm {
 
         #[cfg(not(feature = "std"))]
         {
-            #[cfg(enable = "aes,pclmulqdq,ssse3,sse4.1,sse2")]
+            #[cfg(all(
+                target_feature = "aes",
+                target_feature = "pclmulqdq",
+                target_feature = "ssse3",
+                target_feature = "sse4.1"
+            ))]
             {
                 use crate::aes::aes256_amd64::encrypt_aesni;
                 unsafe {
@@ -505,7 +510,12 @@ impl Aes256Gcm {
 
         #[cfg(not(feature = "std"))]
         {
-            #[cfg(enable = "aes,pclmulqdq,ssse3,sse4.1,sse2")]
+            #[cfg(all(
+                target_feature = "aes",
+                target_feature = "pclmulqdq",
+                target_feature = "ssse3",
+                target_feature = "sse4.1"
+            ))]
             {
                 use crate::aes::aes256_amd64::decrypt_aesni;
                 unsafe {

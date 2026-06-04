@@ -324,7 +324,7 @@ impl FieldElement {
     #[inline]
     fn sqrt(self) -> Option<Self> {
         let candidate = self.pow(&P_PLUS_ONE_OVER_FOUR);
-        if candidate.square() == self {
+        if U256::ct_eq(&self.0, &candidate.square().0) {
             Some(candidate)
         } else {
             None

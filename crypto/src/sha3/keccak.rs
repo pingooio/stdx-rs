@@ -72,7 +72,7 @@ impl<const ROUNDS: usize> Keccak<ROUNDS> {
 
     #[inline]
     pub(crate) fn absorb(&mut self, data: &[u8]) {
-        assert_eq!(self.mode, SpongeMode::Absorbing, "asbsorb can't be called after squeezing");
+        assert_eq!(self.mode, SpongeMode::Absorbing, "absorb can't be called after squeezing");
 
         // we first need to prevent `data` to overflow into `capacity`
         let rate_remainder = min(self.rate - self.pos, data.len());

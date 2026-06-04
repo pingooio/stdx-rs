@@ -1,3 +1,5 @@
+use constant_time_eq::constant_time_eq;
+
 use super::curve25519::{FieldElement, U256};
 use crate::{EllipticCurveError, Hasher, sha2::Sha512};
 
@@ -392,7 +394,7 @@ fn ed25519_verify(
     signature: &[u8; SIGNATURE_SIZE],
 ) -> Result<(), EllipticCurveError> {
     let r_bytes: &[u8; 32] = &signature[..32].try_into().unwrap();
-    let r = EdwardsPoint::from_bytes(r_bytes).ok_or(EllipticCurveError::InvalidKey)?;
+    let r = EdwardsPoint::from_bytes(r_bytes).ok_or(EllipticCurveError::InvalidSignature)?;
 
     let s =
         Scalar::from_canonical_bytes(&signature[32..].try_into().unwrap()).ok_or(EllipticCurveError::Unspecified)?;
@@ -406,10 +408,10 @@ fn ed25519_verify(
     let lhs = scalar_mul_base(&s).mul_by_cofactor();
     let rhs = r.add(&scalar_mul(point, &k)).mul_by_cofactor();
 
-    if lhs.to_bytes() == rhs.to_bytes() {
-        Ok(())
-    } else {
-        Err(EllipticCurveError::Unspecified)
+    // SAFETY: this is okay to use non-contant time compare because
+    match (lhs.to_bytes(), rhs.to_bytes()) {
+        (Some(lhs), Some(rhs)) if constant_time_eq(&lhs, &rhs) => Ok(()),
+        _ => Err(EllipticCurveError::InvalidSignature),
     }
 }
 

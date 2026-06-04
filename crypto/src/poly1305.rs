@@ -1,9 +1,7 @@
 /// Computes the Poly1305 message authentication code as specified in RFC 8439.
 ///
 /// `key` must be 32 bytes (`r || s`).
-pub fn poly1305_mac(key: &[u8], data: &[u8]) -> [u8; 16] {
-    assert_eq!(key.len(), 32, "Poly1305 key must be 32 bytes");
-
+pub fn poly1305_mac(key: &[u8; 32], data: &[u8]) -> [u8; 16] {
     const MASK26: u64 = 0x3ffffff;
 
     let mut r_bytes = [0u8; 16];
@@ -266,7 +264,7 @@ mod tests {
     #[test]
     fn poly1305_known_vectors() {
         for vector in TEST_VECTORS {
-            let key = decode_hex(vector.key_hex);
+            let key: [u8; 32] = decode_hex(vector.key_hex).try_into().unwrap();
             let data = decode_hex(vector.data_hex);
             let expected = decode_hex(vector.expected_hex);
 
@@ -277,7 +275,9 @@ mod tests {
 
     #[test]
     fn poly1305_chunked_equivalence() {
-        let key = decode_hex("1c9240a5eb55d38af333888604f6b5f0473917c1402b80099dca5cbc207075c0");
+        let key: [u8; 32] = decode_hex("1c9240a5eb55d38af333888604f6b5f0473917c1402b80099dca5cbc207075c0")
+            .try_into()
+            .unwrap();
         let data = decode_hex(
             "2754776173206272696c6c69672c20616e642074686520736c6974687920746f7665730a446964206779726520616e642067696d626c6520696e2074686520776162653a0a416c6c206d696d737920776572652074686520626f726f676f7665732c0a416e6420746865206d6f6d65207261746873206f757467726162652e",
         );
@@ -289,12 +289,6 @@ mod tests {
         }
         let chunked = poly1305_mac(&key, &rebuilt);
         assert_eq!(single, chunked);
-    }
-
-    #[test]
-    #[should_panic(expected = "Poly1305 key must be 32 bytes")]
-    fn poly1305_rejects_invalid_key_length() {
-        let _ = poly1305_mac(&[0u8; 31], b"data");
     }
 
     #[test]
@@ -650,7 +644,7 @@ mod tests {
             },
         ];
         for (i, v) in vectors.iter().enumerate() {
-            let key = decode_hex(v.key_hex);
+            let key: [u8; 32] = decode_hex(v.key_hex).try_into().unwrap();
             let data = decode_hex(v.data_hex);
             let expected = decode_hex(v.expected_hex);
             let mac = poly1305_mac(&key, &data);

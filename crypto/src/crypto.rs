@@ -77,17 +77,21 @@ impl core::fmt::Display for AeadError {
 pub enum EllipticCurveError {
     InvalidKey,
     Unspecified,
+    InvalidSignature,
 }
 
-#[cfg(feature = "alloc")]
 impl core::fmt::Display for EllipticCurveError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             EllipticCurveError::InvalidKey => write!(f, "key is not valid"),
             EllipticCurveError::Unspecified => write!(f, "unknown error"),
+            EllipticCurveError::InvalidSignature => write!(f, "signature is not valid"),
         }
     }
 }
+
+#[cfg(feature = "std")]
+impl std::error::Error for EllipticCurveError {}
 
 pub trait StreamCipher: Sized {
     fn xor_keystream(&mut self, in_out: &mut [u8]);
