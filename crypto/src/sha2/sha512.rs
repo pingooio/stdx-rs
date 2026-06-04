@@ -223,17 +223,15 @@ impl Hasher for Sha512 {
             data = &data[to_fill..];
 
             if self.buffer_len == 128 {
-                let mut block = [0u8; 128];
-                block.copy_from_slice(&self.buffer);
+                let block = self.buffer;
                 self.process_block(&block);
                 self.buffer_len = 0;
             }
         }
 
         while data.len() >= 128 {
-            let mut block = [0u8; 128];
-            block.copy_from_slice(&data[..128]);
-            self.process_block(&block);
+            let block: &[u8; 128] = data[..128].try_into().unwrap();
+            self.process_block(block);
             data = &data[128..];
         }
 
@@ -262,9 +260,8 @@ impl Hasher for Sha512 {
 
         let total_tail_len = length_offset + 16;
         for chunk in tail[..total_tail_len].chunks_exact(128) {
-            let mut block = [0u8; 128];
-            block.copy_from_slice(chunk);
-            self.process_block(&block);
+            let block: &[u8; 128] = chunk.try_into().unwrap();
+            self.process_block(block);
         }
 
         let mut hash = Hash::new();

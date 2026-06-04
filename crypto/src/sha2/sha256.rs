@@ -135,17 +135,15 @@ impl Hasher for Sha256 {
             data = &data[to_fill..];
 
             if self.buffer_len == 64 {
-                let mut block = [0u8; 64];
-                block.copy_from_slice(&self.buffer);
+                let block = self.buffer;
                 self.process_block(&block);
                 self.buffer_len = 0;
             }
         }
 
         while data.len() >= 64 {
-            let mut block = [0u8; 64];
-            block.copy_from_slice(&data[..64]);
-            self.process_block(&block);
+            let block: &[u8; 64] = data[..64].try_into().unwrap();
+            self.process_block(block);
             data = &data[64..];
         }
 
@@ -174,9 +172,8 @@ impl Hasher for Sha256 {
 
         let total_tail_len = length_offset + 8;
         for chunk in tail[..total_tail_len].chunks_exact(64) {
-            let mut block = [0u8; 64];
-            block.copy_from_slice(chunk);
-            self.process_block(&block);
+            let block: &[u8; 64] = chunk.try_into().unwrap();
+            self.process_block(block);
         }
 
         let mut hash = Hash::new();
