@@ -274,51 +274,51 @@ mod tests {
     use super::Sha512;
     use crate::Hasher;
 
-    fn vectors_sha512() -> Vec<(Vec<u8>, &'static str)> {
+    fn vectors_sha512() -> Vec<(Vec<u8>, [u8; 64])> {
         vec![
             // RFC 6234 / common SHA-512 vectors
             (
                 b"".to_vec(),
-                "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
+                hex::decode_array::<64>(b"cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e").unwrap(),
             ),
             (
                 b"a".to_vec(),
-                "1f40fc92da241694750979ee6cf582f2d5d7d28e18335de05abc54d0560e0f5302860c652bf08d560252aa5e74210546f369fbbbce8c12cfc7957b2652fe9a75",
+                hex::decode_array::<64>(b"1f40fc92da241694750979ee6cf582f2d5d7d28e18335de05abc54d0560e0f5302860c652bf08d560252aa5e74210546f369fbbbce8c12cfc7957b2652fe9a75").unwrap(),
             ),
             (
                 b"abc".to_vec(),
-                "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f",
+                hex::decode_array::<64>(b"ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f").unwrap(),
             ),
             (
                 b"message digest".to_vec(),
-                "107dbf389d9e9f71a3a95f6c055b9251bc5268c2be16d6c13492ea45b0199f3309e16455ab1e96118e8a905d5597b72038ddb372a89826046de66687bb420e7c",
+                hex::decode_array::<64>(b"107dbf389d9e9f71a3a95f6c055b9251bc5268c2be16d6c13492ea45b0199f3309e16455ab1e96118e8a905d5597b72038ddb372a89826046de66687bb420e7c").unwrap(),
             ),
             (
                 b"abcdefghijklmnopqrstuvwxyz".to_vec(),
-                "4dbff86cc2ca1bae1e16468a05cb9881c97f1753bce3619034898faa1aabe429955a1bf8ec483d7421fe3c1646613a59ed5441fb0f321389f77f48a879c7b1f1",
+                hex::decode_array::<64>(b"4dbff86cc2ca1bae1e16468a05cb9881c97f1753bce3619034898faa1aabe429955a1bf8ec483d7421fe3c1646613a59ed5441fb0f321389f77f48a879c7b1f1").unwrap(),
             ),
             (
                 b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".to_vec(),
-                "1e07be23c26a86ea37ea810c8ec7809352515a970e9253c26f536cfc7a9996c45c8370583e0a78fa4a90041d71a4ceab7423f19c71b9d5a3e01249f0bebd5894",
+                hex::decode_array::<64>(b"1e07be23c26a86ea37ea810c8ec7809352515a970e9253c26f536cfc7a9996c45c8370583e0a78fa4a90041d71a4ceab7423f19c71b9d5a3e01249f0bebd5894").unwrap(),
             ),
             (
                 b"12345678901234567890123456789012345678901234567890123456789012345678901234567890"
                     .to_vec(),
-                "72ec1ef1124a45b047e8b7c75a932195135bb61de24ec0d1914042246e0aec3a2354e093d76f3048b456764346900cb130d2a4fd5dd16abb5e30bcb850dee843",
+                hex::decode_array::<64>(b"72ec1ef1124a45b047e8b7c75a932195135bb61de24ec0d1914042246e0aec3a2354e093d76f3048b456764346900cb130d2a4fd5dd16abb5e30bcb850dee843").unwrap(),
             ),
             // NIST FIPS 180-4
             (
                 b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".to_vec(),
-                "204a8fc6dda82f0a0ced7beb8e08a41657c16ef468b228a8279be331a703c33596fd15c13b1b07f9aa1d3bea57789ca031ad85c7a71dd70354ec631238ca3445",
+                hex::decode_array::<64>(b"204a8fc6dda82f0a0ced7beb8e08a41657c16ef468b228a8279be331a703c33596fd15c13b1b07f9aa1d3bea57789ca031ad85c7a71dd70354ec631238ca3445").unwrap(),
             ),
             (
                 b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu"
                     .to_vec(),
-                "8e959b75dae313da8cf4f72814fc143f8f7779c6eb9f7fa17299aeadb6889018501d289e4900f7e4331b99dec4b5433ac7d329eeb6dd26545e96e55b874be909",
+                hex::decode_array::<64>(b"8e959b75dae313da8cf4f72814fc143f8f7779c6eb9f7fa17299aeadb6889018501d289e4900f7e4331b99dec4b5433ac7d329eeb6dd26545e96e55b874be909").unwrap(),
             ),
             (
                 vec![b'a'; 1_000_000],
-                "e718483d0ce769644e2e42c7bc15b4638e1f98b13b2044285632a803afa973ebde0ff244877ea60a4cb0432ce577c31beb009c5c2c49aa2e4eadb217ad8cc09b",
+                hex::decode_array::<64>(b"e718483d0ce769644e2e42c7bc15b4638e1f98b13b2044285632a803afa973ebde0ff244877ea60a4cb0432ce577c31beb009c5c2c49aa2e4eadb217ad8cc09b").unwrap(),
             ),
         ]
     }
@@ -329,7 +329,7 @@ mod tests {
             let mut hasher = Sha512::new();
             hasher.update(&input);
             let digest = hasher.sum();
-            assert_eq!(hex::encode(digest.as_ref()), expected);
+            assert_eq!(digest.as_ref(), expected);
         }
     }
 
@@ -341,7 +341,7 @@ mod tests {
                 hasher.update(chunk);
             }
             let digest = hasher.sum();
-            assert_eq!(hex::encode(digest.as_ref()), expected);
+            assert_eq!(digest.as_ref(), expected);
         }
     }
 
@@ -365,14 +365,7 @@ mod tests {
     }
 
     #[test]
-    fn sha256_generated_vectors() {
-        fn decode_hex(s: &str) -> Vec<u8> {
-            (0..s.len())
-                .step_by(2)
-                .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
-                .collect()
-        }
-
+    fn sha512_generated_vectors() {
         let test_cases: &[(&str, &str)] = &[
             (
                 "e0c86be8b36dcaf990030f138e8dc6b8cdd2cc7e2bea08abb44ba72b2145b0cb01be4598456dde48b5d0",
@@ -1177,9 +1170,14 @@ mod tests {
         ];
 
         for &(input_hex, expected) in test_cases {
-            let input = decode_hex(input_hex);
+            let input = hex::decode(input_hex).unwrap();
             let hash = Sha512::hash(&input);
-            assert_eq!(hex::encode(hash.as_ref()), expected, "mismatch for input \"{}\"", input_hex);
+            assert_eq!(
+                hash.as_ref(),
+                hex::decode_array::<64>(expected.as_bytes()).unwrap(),
+                "mismatch for input \"{}\"",
+                input_hex
+            );
         }
     }
 }

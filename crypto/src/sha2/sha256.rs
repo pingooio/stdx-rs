@@ -99,6 +99,28 @@ impl Hasher for Sha256 {
 }
 
 #[inline]
+#[allow(unreachable_code)]
+fn process_block(state: &mut [u32; 8], block: &[u8; 64]) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if sha256_amd64::process_block_sha_ni(state, block) {
+            return;
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: aarch64 target in this repository assumes SHA2 instructions are present.
+        unsafe {
+            sha256_arm64::process_block(state, block);
+        }
+        return;
+    }
+
+    process_block_scalar(state, block);
+}
+
+#[inline]
 pub(crate) fn process_block_scalar(state: &mut [u32; 8], block: &[u8; 64]) {
     let mut w = [0u32; 64];
     let mut i = 0usize;
@@ -159,76 +181,54 @@ pub(crate) fn process_block_scalar(state: &mut [u32; 8], block: &[u8; 64]) {
     state[7] = state[7].wrapping_add(h);
 }
 
-#[inline]
-#[allow(unreachable_code)]
-fn process_block(state: &mut [u32; 8], block: &[u8; 64]) {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if sha256_amd64::process_block_sha_ni(state, block) {
-            return;
-        }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        // SAFETY: aarch64 target in this repository assumes SHA2 instructions are present.
-        unsafe {
-            sha256_arm64::process_block(state, block);
-        }
-        return;
-    }
-
-    process_block_scalar(state, block);
-}
-
 #[cfg(test)]
 mod tests {
     use super::Sha256;
     use crate::Hasher;
 
-    fn vectors_sha256() -> Vec<(Vec<u8>, &'static str)> {
+    fn vectors_sha256() -> Vec<(Vec<u8>, [u8; 32])> {
         vec![
             // RFC 6234 / common SHA-256 vectors
             (
                 b"".to_vec(),
-                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                hex::decode_array::<32>(b"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855").unwrap(),
             ),
             (
                 b"a".to_vec(),
-                "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+                hex::decode_array::<32>(b"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb").unwrap(),
             ),
             (
                 b"abc".to_vec(),
-                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                hex::decode_array::<32>(b"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad").unwrap(),
             ),
             (
                 b"message digest".to_vec(),
-                "f7846f55cf23e14eebeab5b4e1550cad5b509e3348fbc4efa3a1413d393cb650",
+                hex::decode_array::<32>(b"f7846f55cf23e14eebeab5b4e1550cad5b509e3348fbc4efa3a1413d393cb650").unwrap(),
             ),
             (
                 b"abcdefghijklmnopqrstuvwxyz".to_vec(),
-                "71c480df93d6ae2f1efad1447c66c9525e316218cf51fc8d9ed832f2daf18b73",
+                hex::decode_array::<32>(b"71c480df93d6ae2f1efad1447c66c9525e316218cf51fc8d9ed832f2daf18b73").unwrap(),
             ),
             (
                 b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".to_vec(),
-                "db4bfcbd4da0cd85a60c3c37d3fbd8805c77f15fc6b1fdfe614ee0a7c8fdb4c0",
+                hex::decode_array::<32>(b"db4bfcbd4da0cd85a60c3c37d3fbd8805c77f15fc6b1fdfe614ee0a7c8fdb4c0").unwrap(),
             ),
             (
                 b"12345678901234567890123456789012345678901234567890123456789012345678901234567890"
                     .to_vec(),
-                "f371bc4a311f2b009eef952dd83ca80e2b60026c8e935592d0f9c308453c813e",
+                hex::decode_array::<32>(b"f371bc4a311f2b009eef952dd83ca80e2b60026c8e935592d0f9c308453c813e").unwrap(),
             ),
             // NIST FIPS 180-4
             (
                 b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".to_vec(),
-                "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+                hex::decode_array::<32>(b"248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1").unwrap(),
             ),
             (
                 b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu"
                     .to_vec(),
-                "cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1",
+                hex::decode_array::<32>(b"cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1").unwrap(),
             ),
-            (vec![b'a'; 1_000_000], "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"),
+            (vec![b'a'; 1_000_000], hex::decode_array::<32>(b"cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0").unwrap()),
         ]
     }
 
@@ -238,7 +238,7 @@ mod tests {
             let mut hasher = Sha256::new();
             hasher.update(&input);
             let digest = hasher.sum();
-            assert_eq!(hex::encode(digest.as_ref()), expected);
+            assert_eq!(digest.as_ref(), expected);
         }
     }
 
@@ -250,7 +250,7 @@ mod tests {
                 hasher.update(chunk);
             }
             let digest = hasher.sum();
-            assert_eq!(hex::encode(digest.as_ref()), expected);
+            assert_eq!(digest.as_ref(), expected);
         }
     }
 
@@ -275,13 +275,6 @@ mod tests {
 
     #[test]
     fn sha256_generated_vectors() {
-        fn decode_hex(s: &str) -> Vec<u8> {
-            (0..s.len())
-                .step_by(2)
-                .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
-                .collect()
-        }
-
         let test_cases: &[(&str, &str)] = &[
             (
                 "dbb2f8949e06d7e52a47c0bfd9",
@@ -1032,11 +1025,16 @@ mod tests {
         ];
 
         for &(input_hex, expected) in test_cases {
-            let input = decode_hex(input_hex);
+            let input = hex::decode(input_hex).unwrap();
             let mut h = Sha256::new();
             h.update(&input);
             let digest = h.sum();
-            assert_eq!(hex::encode(digest.as_ref()), expected, "mismatch for input \"{}\"", input_hex);
+            assert_eq!(
+                digest.as_ref(),
+                hex::decode_array::<32>(expected.as_bytes()).unwrap(),
+                "mismatch for input \"{}\"",
+                input_hex
+            );
         }
     }
 }
