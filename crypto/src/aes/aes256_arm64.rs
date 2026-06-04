@@ -143,7 +143,13 @@ unsafe fn compute_tag_hardware(h: &[u8; 16], aad: &[u8], ciphertext: &[u8], ej0:
     out
 }
 
+const MAX_GCM_LEN: usize = (u32::MAX as usize - 1) * 16;
+
 pub(crate) unsafe fn encrypt_armv8(key: &[u8; 32], in_out: &mut [u8], nonce: &[u8; 12], aad: &[u8]) -> [u8; 16] {
+    assert!(
+        in_out.len() <= MAX_GCM_LEN,
+        "GCM plaintext exceeds maximum allowed length (2^32 - 2 blocks)"
+    );
     let rk = key_expand_armv8(key);
 
     let h = {
@@ -179,6 +185,9 @@ pub(crate) unsafe fn decrypt_armv8(
     nonce: &[u8; 12],
     aad: &[u8],
 ) -> Result<(), AeadError> {
+    if in_out.len() > MAX_GCM_LEN {
+        return Err(AeadError::InvalidCiphertext);
+    }
     let rk = key_expand_armv8(key);
 
     let h = {

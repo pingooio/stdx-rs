@@ -14,6 +14,7 @@ pub const SIMD_LANES: usize = 4;
 // [ block1 (32-bits) || block2 (32-bits) || block3 (32-bits) || block4 (32-bits) ]
 // then we perform the normal ChaCha operations on these vectors, meaning that we compute
 // 4 ChaCha blocks in parallel for every operation on these vectors.
+#[target_feature(enable = "neon")]
 pub fn chacha_neon<const ROUNDS: usize>(
     state: &mut [u32; STATE_WORDS],
     input: &mut [u8],

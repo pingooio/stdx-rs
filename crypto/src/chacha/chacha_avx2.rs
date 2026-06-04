@@ -23,6 +23,7 @@ struct AlignedU32x8([u32; SIMD_LANES]);
 // [ block1 (32-bits) || block2 (32-bits) || block3 (32-bits) || block4 (32-bits) || block5 (32-bits) ... ]
 // then we perform the normal ChaCha operations on these vectors, meaning that we compute
 // 8 ChaCha blocks in parallel for every operation on these vectors.
+#[target_feature(enable = "avx2")]
 pub fn chacha_avx2<const ROUNDS: usize>(
     state: &mut [u32; STATE_WORDS],
     input: &mut [u8],
@@ -99,6 +100,7 @@ pub fn chacha_avx2<const ROUNDS: usize>(
 /// The keystream is the 8 64-byte blocks computed in parallel.
 /// [ block1 (64 bytes) || block2 (64 bytes) || block3 (64 bytes) || block4 (64 bytes) ... ]
 #[inline(always)]
+#[target_feature(enable = "avx2")]
 fn chacha20_avx2_8blocks<const ROUNDS: usize>(
     initial_state: [__m256i; STATE_WORDS],
     keystream: &mut [u8; SIMD_LANES * 64],

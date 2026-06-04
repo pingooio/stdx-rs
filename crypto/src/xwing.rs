@@ -22,7 +22,6 @@ impl From<MlKemError> for XWingError {
     }
 }
 
-#[cfg(feature = "alloc")]
 impl core::fmt::Display for XWingError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {

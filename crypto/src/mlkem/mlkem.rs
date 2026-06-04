@@ -42,7 +42,6 @@ pub enum MlKemError {
     InvalidKey,
 }
 
-#[cfg(feature = "alloc")]
 impl core::fmt::Display for MlKemError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {

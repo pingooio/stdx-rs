@@ -416,6 +416,7 @@ impl Aes256Gcm {
     pub const KEY_SIZE: usize = 32;
     pub const TAG_SIZE: usize = 16;
     pub const NONCE_SIZE: usize = 12;
+    const MAX_GCM_LEN: usize = (u32::MAX as usize - 1) * 16;
 
     /// Create a new `Aes256Gcm` instance from a 32-byte key.
     pub fn new(key: &[u8; 32]) -> Self {
@@ -529,6 +530,10 @@ impl Aes256Gcm {
 
     /// Pure-Rust encrypt implementation.
     pub(crate) fn encrypt_in_place_soft(&self, in_out: &mut [u8], nonce: &[u8; 12], aad: &[u8]) -> [u8; 16] {
+        assert!(
+            in_out.len() <= Self::MAX_GCM_LEN,
+            "GCM plaintext exceeds maximum allowed length (2^32 - 2 blocks)"
+        );
         let rk = &self.round_keys;
         let h = encrypt_block(rk, &[0u8; 16]);
 
@@ -555,6 +560,9 @@ impl Aes256Gcm {
         nonce: &[u8; 12],
         aad: &[u8],
     ) -> Result<(), AeadError> {
+        if in_out.len() > Self::MAX_GCM_LEN {
+            return Err(AeadError::InvalidCiphertext);
+        }
         let rk = &self.round_keys;
         let h = encrypt_block(rk, &[0u8; 16]);
 

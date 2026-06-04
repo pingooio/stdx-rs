@@ -1,5 +1,5 @@
 // aarch64 assumes that NEON instructions are always present
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 mod chacha_neon;
 
 // import if the target runtime supports the feature
@@ -130,10 +130,13 @@ impl<const ROUNDS: usize> StreamCipher for ChaChaDjb<ROUNDS> {
         self.last_keystream_block_index = in_out.len() % BLOCK_SIZE;
 
         // aarch64 assumes that NEON is always available
-        #[cfg(target_arch = "aarch64")]
+        #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
         if in_out.len() >= 128 {
             use chacha_neon::chacha_neon;
-            chacha_neon::<ROUNDS>(&mut self.state, in_out, &mut self.last_keystream_block);
+            // SAFETY: the cfg attribute above ensures that the required CPU feature(s) are available
+            unsafe {
+                chacha_neon::<ROUNDS>(&mut self.state, in_out, &mut self.last_keystream_block);
+            }
             return;
         }
 

@@ -12,7 +12,7 @@ pub struct Bytes<const N: usize> {
 impl<const N: usize> Bytes<N> {
     #[inline]
     pub(crate) fn new() -> Bytes<N> {
-        debug_assert!(N <= u16::MAX as usize);
+        assert!(N <= u16::MAX as usize);
         return Bytes {
             bytes: [0u8; N],
             length: 0,
@@ -21,7 +21,8 @@ impl<const N: usize> Bytes<N> {
 
     #[inline]
     pub(crate) fn with_length(length: usize) -> Bytes<N> {
-        debug_assert!(N <= u16::MAX as usize && length <= u16::MAX as usize);
+        assert!(N <= u16::MAX as usize && length <= u16::MAX as usize);
+        assert!(length <= N, "length exceeds capacity");
         return Bytes {
             bytes: [0u8; N],
             length: length as u16,

@@ -288,8 +288,14 @@ unsafe fn ctr_inc(ctr: __m128i) -> __m128i {
 
 // ── AES-256-GCM encrypt ───────────────────────────────────────────────────────
 
+const MAX_GCM_LEN: usize = (u32::MAX as usize - 1) * 16;
+
 #[target_feature(enable = "aes,pclmulqdq,ssse3,sse4.1,sse2")]
 pub(crate) unsafe fn encrypt_aesni(key: &[u8; 32], in_out: &mut [u8], nonce: &[u8; 12], aad: &[u8]) -> [u8; 16] {
+    assert!(
+        in_out.len() <= MAX_GCM_LEN,
+        "GCM plaintext exceeds maximum allowed length (2^32 - 2 blocks)"
+    );
     let rk = key_expand_aesni(key);
 
     // H = AES_K(0^128) in natural byte order.
@@ -341,6 +347,9 @@ pub(crate) unsafe fn decrypt_aesni(
     nonce: &[u8; 12],
     aad: &[u8],
 ) -> Result<(), AeadError> {
+    if in_out.len() > MAX_GCM_LEN {
+        return Err(AeadError::InvalidCiphertext);
+    }
     let rk = key_expand_aesni(key);
 
     let h_xmm = aes256_enc(&rk, _mm_setzero_si128());

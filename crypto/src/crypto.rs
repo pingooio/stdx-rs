@@ -41,7 +41,6 @@ pub enum Error {
     EllipticCurve(EllipticCurveError),
 }
 
-#[cfg(feature = "alloc")]
 impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -62,7 +61,6 @@ pub enum AeadError {
     InvalidCiphertext,
 }
 
-#[cfg(feature = "alloc")]
 impl core::fmt::Display for AeadError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
