@@ -359,8 +359,7 @@ mod tests {
                 let expected_dk_hex = test["dk"].as_str().unwrap();
                 let result = test["result"].as_str().unwrap();
 
-                let mut seed = [0u8; 64];
-                hex::decode_into(&mut seed, seed_hex.as_bytes(), hex::Alphabet::Lower).unwrap();
+                let seed = hex::decode_array::<64>(seed_hex.as_bytes()).unwrap();
 
                 let (dk, ek) =
                     crypto_kem_keypair_derand::<4, SECRET_KEY_SIZE_1024, PUBLIC_KEY_SIZE_1024>(&ML_KEM_1024, &seed);
@@ -411,8 +410,7 @@ mod tests {
                     continue;
                 }
 
-                let mut seed = [0u8; 64];
-                hex::decode_into(&mut seed, seed_hex.as_bytes(), hex::Alphabet::Lower).unwrap();
+                let seed = hex::decode_array::<64>(seed_hex.as_bytes()).unwrap();
 
                 let (dk, ek) =
                     crypto_kem_keypair_derand::<4, SECRET_KEY_SIZE_1024, PUBLIC_KEY_SIZE_1024>(&ML_KEM_1024, &seed);

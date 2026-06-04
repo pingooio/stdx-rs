@@ -1165,8 +1165,7 @@ mod tests {
                 let seed_hex = test["seed"].as_str().unwrap();
                 let expected_pk_hex = test["pk"].as_str().unwrap();
 
-                let mut seed = [0u8; 32];
-                hex::decode_into(&mut seed, seed_hex.as_bytes(), hex::Alphabet::Lower).unwrap();
+                let seed = hex::decode_array::<32>(seed_hex.as_bytes()).unwrap();
 
                 let (_, pk) = ml_dsa_65_keypair_derand(&seed);
                 let pk_hex = hex::encode(pk);
@@ -1199,8 +1198,7 @@ mod tests {
             }
             for t in g["tests"].as_array().unwrap() {
                 let tc = t["tcId"].as_u64().unwrap();
-                let mut seed = [0u8; 32];
-                hex::decode_into(&mut seed, t["seed"].as_str().unwrap().as_bytes(), hex::Alphabet::Lower).unwrap();
+                let seed = hex::decode_array::<32>(t["seed"].as_str().unwrap().as_bytes()).unwrap();
                 seed_map.insert(tc, seed);
             }
         }
@@ -1264,10 +1262,8 @@ mod tests {
 
         let mut tested = 0;
         for record in &records {
-            let mut seed = [0u8; 32];
-            hex::decode_into(&mut seed, record.key_generation_seed.as_bytes(), hex::Alphabet::Lower).unwrap();
-            let mut rnd = [0u8; 32];
-            hex::decode_into(&mut rnd, record.signing_randomness.as_bytes(), hex::Alphabet::Lower).unwrap();
+            let seed = hex::decode_array::<32>(record.key_generation_seed.as_bytes()).unwrap();
+            let rnd = hex::decode_array::<32>(record.signing_randomness.as_bytes()).unwrap();
             let msg = hex::decode(&record.message).unwrap();
             let expected_vk_hash = record.sha3_256_hash_of_verification_key.to_lowercase();
             let expected_sig_hash = record.sha3_256_hash_of_signature.to_lowercase();
