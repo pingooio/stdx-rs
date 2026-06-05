@@ -9,6 +9,31 @@ mod serde;
 
 use core::fmt;
 
+#[cfg(target_arch = "aarch64")]
+mod hex_neon;
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+mod hex_avx2;
+
+const ALPHABET_LOWER: [u8; 16] = *b"0123456789abcdef";
+const ALPHABET_UPPER: [u8; 16] = *b"0123456789ABCDEF";
+
+const DECODE_TABLE: [u8; 256] = {
+    let mut table = [0x10u8; 256];
+    let mut i: usize = 0;
+    while i < 10 {
+        table[b'0' as usize + i] = i as u8;
+        i += 1;
+    }
+    i = 0;
+    while i < 6 {
+        table[b'a' as usize + i] = 10 + i as u8;
+        table[b'A' as usize + i] = 10 + i as u8;
+        i += 1;
+    }
+    table
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Alphabet {
     Lower,
@@ -33,25 +58,6 @@ impl fmt::Display for Error {
 
 #[cfg(feature = "std")]
 impl std::error::Error for Error {}
-
-const ALPHABET_LOWER: [u8; 16] = *b"0123456789abcdef";
-const ALPHABET_UPPER: [u8; 16] = *b"0123456789ABCDEF";
-
-const DECODE_TABLE: [u8; 256] = {
-    let mut table = [0x10u8; 256];
-    let mut i: usize = 0;
-    while i < 10 {
-        table[b'0' as usize + i] = i as u8;
-        i += 1;
-    }
-    i = 0;
-    while i < 6 {
-        table[b'a' as usize + i] = 10 + i as u8;
-        table[b'A' as usize + i] = 10 + i as u8;
-        i += 1;
-    }
-    table
-};
 
 #[cfg(any(feature = "alloc", test))]
 pub fn encode(data: impl AsRef<[u8]>) -> alloc::string::String {
@@ -83,11 +89,31 @@ pub const fn encode_array<const OUT: usize>(data: &[u8], alphabet: Alphabet) -> 
         panic!("encode_array: output array too small");
     }
     let mut result = [0u8; OUT];
-    encode_into(&mut result, data, alphabet);
+    encode_into_scalar(&mut result, data, alphabet);
     result
 }
 
-pub const fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) {
+pub fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) {
+    assert!(output.len() >= data.len() * 2, "output buffer is too small");
+
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    if data.len() >= 32 {
+        return unsafe { hex_neon::encode_into(output, data, alphabet) };
+    }
+
+    #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
+    if data.len() >= 32 {
+        return unsafe { hex_avx2::encode_into(output, data, alphabet) };
+    }
+
+    encode_into_scalar(output, data, alphabet);
+}
+
+/// Pure-scalar hex encoding. Exposed publicly for benchmarking only.
+/// Consumers should use [`encode_into`] instead, which dispatches to
+/// a SIMD-accelerated path when available.
+#[doc(hidden)]
+pub const fn encode_into_scalar(output: &mut [u8], data: &[u8], alphabet: Alphabet) {
     assert!(output.len() >= data.len() * 2, "output buffer is too small");
 
     let table = match alphabet {
@@ -162,6 +188,10 @@ pub const fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) {
     }
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+/// Decode
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 #[cfg(any(feature = "alloc", test))]
 pub fn decode(data: impl AsRef<[u8]>) -> Result<alloc::vec::Vec<u8>, Error> {
     let data = data.as_ref();
@@ -188,14 +218,40 @@ pub const fn decode_array<const OUT: usize>(encoded_data: &[u8]) -> Result<[u8; 
     }
 
     let mut result = [0u8; OUT];
-    match decode_into(&mut result, encoded_data) {
+    match decode_into_scalar(&mut result, encoded_data) {
         Ok(_) => {}
         Err(err) => return Err(err),
     }
     Ok(result)
 }
 
-pub const fn decode_into(output: &mut [u8], encoded_data: &[u8]) -> Result<(), Error> {
+pub fn decode_into(output: &mut [u8], encoded_data: &[u8]) -> Result<(), Error> {
+    let in_len = encoded_data.len();
+    if in_len % 2 != 0 {
+        return Err(Error::InvalidLength);
+    }
+    if output.len() < in_len / 2 {
+        return Err(Error::InvalidLength);
+    }
+
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    if in_len >= 32 {
+        return unsafe { hex_neon::decode_into(output, encoded_data) };
+    }
+
+    #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
+    if in_len >= 32 {
+        return unsafe { hex_avx2::decode_into(output, encoded_data) };
+    }
+
+    decode_into_scalar(output, encoded_data)
+}
+
+/// Pure-scalar hex decoding. Exposed publicly for benchmarking only.
+/// Consumers should use [`decode_into`] instead, which dispatches to
+/// a SIMD-accelerated path when available.
+#[doc(hidden)]
+pub const fn decode_into_scalar(output: &mut [u8], encoded_data: &[u8]) -> Result<(), Error> {
     let in_len = encoded_data.len();
     if in_len % 2 != 0 {
         return Err(Error::InvalidLength);
