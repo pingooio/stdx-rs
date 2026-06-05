@@ -22,7 +22,7 @@ pub struct SecretKey {
 }
 
 impl SecretKey {
-    /// Generate a new random `SecretKey`.
+    #[cfg(feature = "std")]
     pub fn generate() -> SecretKey {
         let bytes: [u8; KEY_SIZE] = rand::random();
         SecretKey::from_bytes(&bytes)

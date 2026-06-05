@@ -14,12 +14,12 @@ const MODULUS_L: U256 = U256::from_limbs([
     0x1000_0000_0000_0000,
 ]);
 
-const P_PLUS_THREE_OVER_EIGHT: U256 = U256::from_limbs([
-    0xffff_ffff_ffff_fffe,
-    0xffff_ffff_ffff_ffff,
-    0xffff_ffff_ffff_ffff,
-    0x0fff_ffff_ffff_ffff,
-]);
+// const P_PLUS_THREE_OVER_EIGHT: U256 = U256::from_limbs([
+//     0xffff_ffff_ffff_fffe,
+//     0xffff_ffff_ffff_ffff,
+//     0xffff_ffff_ffff_ffff,
+//     0x0fff_ffff_ffff_ffff,
+// ]);
 
 const EDWARDS_D: FieldElement = FieldElement(U256::from_limbs([
     0x75eb_4dca_1359_78a3,
@@ -59,10 +59,32 @@ const SQRT_M1: FieldElement = FieldElement(U256::from_limbs([
     0x2b83_2480_4fc1_df0b,
 ]));
 
-const BASEPOINT_COMPRESSED: [u8; 32] = [
-    0x58, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
-    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
-];
+const BASEPOINT: EdwardsPoint = EdwardsPoint {
+    x: FieldElement(U256::from_limbs([
+        0xc9562d608f25d51a,
+        0x692cc7609525a7b2,
+        0xc0a4e231fdd6dc5c,
+        0x216936d3cd6e53fe,
+    ])),
+    y: FieldElement(U256::from_limbs([
+        0x6666666666666658,
+        0x6666666666666666,
+        0x6666666666666666,
+        0x6666666666666666,
+    ])),
+    z: FieldElement(U256::from_limbs([
+        0x0000000000000001,
+        0x0000000000000000,
+        0x0000000000000000,
+        0x0000000000000000,
+    ])),
+    t: FieldElement(U256::from_limbs([
+        0x6dde8ab3a5b7dda3,
+        0x20f09f80775152f5,
+        0x66ea4e8e64abe37d,
+        0x67875f0fd78b7665,
+    ])),
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SecretKey {
@@ -74,6 +96,7 @@ pub struct SecretKey {
 }
 
 impl SecretKey {
+    #[cfg(feature = "std")]
     pub fn generate() -> SecretKey {
         let seed: [u8; SECRET_KEY_SIZE] = rand::random();
         SecretKey::from_bytes(&seed)
@@ -233,8 +256,7 @@ impl Scalar {
 
                 let mut padded = [0u8; 32];
                 padded[..chunk_len].copy_from_slice(&bytes[chunk_start..chunk_end]);
-                let chunk_val = U256::from_le_slice(&padded);
-                let mut chunk_reduced = chunk_val;
+                let mut chunk_reduced = U256::from_le_slice(&padded);
                 let mut j = 16;
                 while j > 0 {
                     let (diff, borrow) = chunk_reduced.sub_raw(&MODULUS_L);
@@ -248,18 +270,17 @@ impl Scalar {
         }
     }
 
+    #[inline]
     fn to_bytes(self) -> [u8; 32] {
         self.0.to_le_bytes_fixed::<32>()
     }
 
-    fn bit(&self, index: usize) -> bool {
-        self.0.bit(index)
-    }
-
+    #[inline]
     fn add(self, rhs: Self) -> Self {
         Self(self.0.add_mod(&rhs.0, &MODULUS_L))
     }
 
+    #[inline]
     fn mul(self, rhs: Self) -> Self {
         Self(self.0.mul_mod_barrett(&rhs.0, &MODULUS_L, &BAR_MU))
     }
@@ -274,6 +295,7 @@ struct EdwardsPoint {
 }
 
 impl EdwardsPoint {
+    #[inline]
     fn identity() -> Self {
         Self {
             x: FieldElement::ZERO,
@@ -283,6 +305,7 @@ impl EdwardsPoint {
         }
     }
 
+    #[inline]
     fn from_affine(x: FieldElement, y: FieldElement) -> Self {
         Self {
             x,
@@ -322,11 +345,13 @@ impl EdwardsPoint {
         Some(out)
     }
 
+    #[inline]
     fn add(&self, rhs: &Self) -> Self {
         let a = self.y.sub(self.x).mul(rhs.y.sub(rhs.x));
         let b = self.y.add(self.x).mul(rhs.y.add(rhs.x));
         let c = self.t.mul(rhs.t).mul(EDWARDS_2D);
-        let d = self.z.mul(rhs.z).add(self.z.mul(rhs.z));
+        let z1z2 = self.z.mul(rhs.z);
+        let d = z1z2.add(z1z2);
         let e = b.sub(a);
         let f = d.sub(c);
         let g = d.add(c);
@@ -339,10 +364,12 @@ impl EdwardsPoint {
         }
     }
 
+    #[inline]
     fn double(&self) -> Self {
         let a = self.x.square();
         let b = self.y.square();
-        let c = self.z.square().add(self.z.square());
+        let z2 = self.z.square();
+        let c = z2.add(z2);
         let d = a.negate();
         let e = self.x.add(self.y).square().sub(a).sub(b);
         let g = d.add(b);
@@ -356,6 +383,7 @@ impl EdwardsPoint {
         }
     }
 
+    #[inline]
     fn select(a: &Self, b: &Self, choice: bool) -> Self {
         Self {
             x: FieldElement::select(&a.x, &b.x, choice),
@@ -365,13 +393,15 @@ impl EdwardsPoint {
         }
     }
 
+    #[inline]
     fn mul_by_cofactor(&self) -> Self {
         self.double().double().double()
     }
 }
 
+#[inline]
 fn sqrt(a: &FieldElement) -> Option<FieldElement> {
-    let mut candidate = a.pow(&P_PLUS_THREE_OVER_EIGHT);
+    let mut candidate = a.pow_sqrt_exponent();
     if !candidate.square().ct_eq(a) {
         candidate = candidate.mul(SQRT_M1);
     }
@@ -382,25 +412,78 @@ fn sqrt(a: &FieldElement) -> Option<FieldElement> {
     }
 }
 
-fn basepoint() -> EdwardsPoint {
-    EdwardsPoint::from_bytes(&BASEPOINT_COMPRESSED).expect("ed25519 basepoint must be valid")
+fn scalar_mul(point: &EdwardsPoint, scalar: &Scalar) -> EdwardsPoint {
+    let mut table = [EdwardsPoint::identity(); 16];
+    table[1] = *point;
+    let mut i = 2;
+    while i < 16 {
+        table[i] = table[i - 1].add(point);
+        i += 1;
+    }
+
+    scalar_mul_table(&table, scalar)
 }
 
-fn scalar_mul(point: &EdwardsPoint, scalar: &Scalar) -> EdwardsPoint {
+/// Optimized version of `scalar_mul` for `BASEPOINT` using a pre-computed table.
+#[cfg(feature = "std")]
+fn scalar_mul_base(scalar: &Scalar) -> EdwardsPoint {
+    use std::sync::LazyLock;
+    static TABLE: LazyLock<[EdwardsPoint; 16]> = LazyLock::new(|| {
+        let mut t = [EdwardsPoint::identity(); 16];
+        t[1] = BASEPOINT;
+        let mut i = 2;
+        while i < 16 {
+            t[i] = t[i - 1].add(&BASEPOINT);
+            i += 1;
+        }
+        t
+    });
+
+    scalar_mul_table(&TABLE, scalar)
+}
+
+#[cfg(not(feature = "std"))]
+#[inline]
+fn scalar_mul_base(scalar: &Scalar) -> EdwardsPoint {
+    scalar_mul(&BASEPOINT, scalar)
+}
+
+#[inline]
+fn scalar_mul_table(table: &[EdwardsPoint; 16], scalar: &Scalar) -> EdwardsPoint {
     let mut result = EdwardsPoint::identity();
-    let mut addend = *point;
-    let mut i = 0usize;
-    while i < 256 {
-        let candidate = result.add(&addend);
-        result = EdwardsPoint::select(&candidate, &result, scalar.bit(i));
-        addend = addend.double();
+    let mut win = 63;
+    loop {
+        let idx = scalar_window(scalar, win);
+        let selected = ct_select_from_table(&table, idx);
+        result = result.add(&selected);
+        if win == 0 {
+            break;
+        }
+        result = result.double().double().double().double();
+        win -= 1;
+    }
+    result
+}
+
+#[inline]
+fn ct_select_from_table(table: &[EdwardsPoint; 16], index: usize) -> EdwardsPoint {
+    let mut result = table[0];
+    let mut i = 1;
+    while i < 16 {
+        let diff = i ^ index;
+        let choice = ((diff.wrapping_sub(1) >> (usize::BITS - 1)) & 1) != 0;
+        result = EdwardsPoint::select(&table[i], &result, choice);
         i += 1;
     }
     result
 }
 
-fn scalar_mul_base(scalar: &Scalar) -> EdwardsPoint {
-    scalar_mul(&basepoint(), scalar)
+#[inline]
+fn scalar_window(scalar: &Scalar, window: usize) -> usize {
+    let bit_pos = window * 4;
+    let limb_idx = bit_pos / 64;
+    let limb = scalar.0.limbs[limb_idx];
+    ((limb >> (bit_pos % 64)) & 0xf) as usize
 }
 
 fn hash_to_scalar(parts: &[&[u8]]) -> Scalar {
@@ -459,6 +542,11 @@ fn ed25519_verify(
 mod tests {
     use super::*;
     use crate::curve25519::x25519;
+
+    const BASEPOINT_COMPRESSED: [u8; 32] = [
+        0x58, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+        0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+    ];
 
     fn decode_hex<const N: usize>(hex_bytes: &str) -> [u8; N] {
         let bytes = hex::decode(hex_bytes).unwrap();
@@ -831,6 +919,22 @@ mod tests {
     }
 
     #[test]
+    fn fixed_window_matches_scalar_mul() {
+        for _ in 0..100 {
+            let s = Scalar(U256::from_limbs([
+                rand::random::<u64>(),
+                rand::random::<u64>(),
+                rand::random::<u64>(),
+                rand::random::<u64>(),
+            ]));
+            let s = Scalar(s.0.add_mod(&U256::ZERO, &MODULUS_L));
+            let old_result = scalar_mul(&BASEPOINT, &s);
+            let new_result = scalar_mul_base(&s);
+            assert_eq!(old_result.to_bytes(), new_result.to_bytes(), "mismatch for scalar={:x}", s.0,);
+        }
+    }
+
+    #[test]
     fn mul_mod_barrett_agrees_with_mul_mod() {
         for _ in 0..100 {
             let a = U256::from_limbs([
@@ -849,5 +953,10 @@ mod tests {
             let fast = a.mul_mod_barrett(&b, &MODULUS_L, &BAR_MU);
             assert_eq!(slow, fast, "mismatch for a={a:x}, b={b:x}");
         }
+    }
+
+    #[test]
+    fn basepoint() {
+        assert_eq!(BASEPOINT, EdwardsPoint::from_bytes(&BASEPOINT_COMPRESSED).unwrap())
     }
 }
