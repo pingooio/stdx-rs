@@ -561,7 +561,7 @@ mod tests {
     }
 
     #[test]
-    fn new_api_sign_verify_roundtrip() {
+    fn sign_verify_roundtrip() {
         let seed = decode_hex::<32>("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
         let priv_key = SecretKey::from_bytes(&seed);
         let pub_key = priv_key.public_key();
@@ -575,7 +575,7 @@ mod tests {
     }
 
     #[test]
-    fn new_api_public_key_bytes_roundtrip() {
+    fn public_key_bytes_roundtrip() {
         let seed = decode_hex::<32>("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
         let priv_key = SecretKey::from_bytes(&seed);
         let pub_key = priv_key.public_key();
@@ -585,14 +585,14 @@ mod tests {
     }
 
     #[test]
-    fn new_api_private_key_bytes_roundtrip() {
+    fn private_key_bytes_roundtrip() {
         let seed = decode_hex::<32>("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
         let priv_key = SecretKey::from_bytes(&seed);
         assert_eq!(priv_key.to_bytes(), seed);
     }
 
     #[test]
-    fn new_api_generate_produces_valid_keys() {
+    fn generate_produces_valid_keys() {
         let priv_key = SecretKey::generate();
         let pub_key = priv_key.public_key();
         let sig = priv_key.sign(b"hello");
@@ -600,7 +600,7 @@ mod tests {
     }
 
     #[test]
-    fn new_api_rejects_invalid_public_key() {
+    fn rejects_invalid_public_key() {
         assert!(PublicKey::from_bytes(&[0xffu8; 32]).is_err());
         let p_enc = decode_hex::<32>("edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f");
         assert!(PublicKey::from_bytes(&p_enc).is_err());

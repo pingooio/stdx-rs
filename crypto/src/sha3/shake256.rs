@@ -288,14 +288,12 @@ mod tests {
     }
 
     #[test]
-    fn cshake256_empty_name_and_customization_matches_shake256() {
-        let input = b"The quick brown fox jumps over the lazy dog";
-        let mut cshake_out = [0u8; 64];
-        CShake256::hash(input, b"", b"", &mut cshake_out);
-
-        let mut shake_out = [0u8; 64];
-        Shake256::hash(input, &mut shake_out);
-        assert_eq!(cshake_out, shake_out);
+    fn cshake256_empty_params_passes_shake256_vectors() {
+        for (input, output_len, expected) in vectors_shake256() {
+            let mut cshake_out = vec![0u8; output_len];
+            CShake256::hash(&input, b"", b"", &mut cshake_out);
+            assert_eq!(hex::encode(cshake_out), expected);
+        }
     }
 
     #[test]
