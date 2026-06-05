@@ -157,6 +157,29 @@ pub(crate) fn right_encode(x: usize) -> EncodedBytes {
     return bytes;
 }
 
+// #[inline]
+// pub(crate) fn encode_string(s: &[u8]) -> Vec<u8> {
+//     let encoded = left_encode(s.len() * 8);
+//     let mut out = Vec::with_capacity(s.len() + encoded.len());
+//     out.extend_from_slice(encoded.as_ref());
+//     out.extend_from_slice(s);
+//     return out;
+// }
+
+// #[inline]
+// pub(crate) fn bytepad(x: &[u8], w: usize) -> Vec<u8> {
+//     let encoded = left_encode(w);
+//     // the length of left_encode(w) || X
+//     let wx_length = encoded.len() + x.len();
+//     let pad_length = (w - (wx_length % w)) % w;
+
+//     let mut out = Vec::with_capacity(wx_length + pad_length);
+//     out.extend_from_slice(encoded.as_ref());
+//     out.extend_from_slice(x);
+//     out.resize(out.len() + pad_length, 0);
+//     return out;
+// }
+
 #[cfg(test)]
 mod tests {
     use super::{CShake256, Shake256};
