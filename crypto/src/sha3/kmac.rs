@@ -1,4 +1,4 @@
-use super::shake256::{CShake256, bytepad, encode_string, right_encode};
+use super::shake256::{CShake256, left_encode, right_encode};
 use crate::Xof;
 
 const KMAC256_RATE: usize = 136;
@@ -19,8 +19,24 @@ impl Kmac256 {
     #[inline]
     pub fn new(key: &[u8], customization: &[u8]) -> Self {
         let mut cshake = CShake256::new(b"KMAC", customization);
-        let key_padded = bytepad(&encode_string(key), KMAC256_RATE);
-        cshake.absorb(&key_padded);
+
+        // absorb bytepad(encode_string(key), KMAC256_RATE)
+
+        // bytepad(encode_string(key), w)
+        let enc_w = left_encode(KMAC256_RATE);
+        cshake.absorb(enc_w.as_ref());
+
+        let enc_key = left_encode(key.len() * 8);
+        cshake.absorb(enc_key.as_ref());
+        cshake.absorb(key);
+
+        let total = enc_w.len() + enc_key.len() + key.len();
+        let pad = (KMAC256_RATE - (total % KMAC256_RATE)) % KMAC256_RATE;
+        if pad > 0 {
+            let zeros = [0u8; KMAC256_RATE];
+            cshake.absorb(&zeros[..pad]);
+        }
+
         return Kmac256 {
             cshake,
         };

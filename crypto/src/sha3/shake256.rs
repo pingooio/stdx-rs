@@ -5,52 +5,8 @@ pub(crate) const SHAKE256_RATE: usize = 136;
 const CSHAKE256_DOMAIN_SEPARATOR: u8 = 0x04;
 const SHAKE256_DOMAIN_SEPARATOR: u8 = 0x1f;
 
-#[derive(Clone)]
-#[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
-pub struct CShake256 {
-    keccak: Keccak<24>,
-}
-
-impl CShake256 {
-    #[inline]
-    pub fn hash(data: &[u8], function_name: &[u8], customization: &[u8], output: &mut [u8]) {
-        let mut xof = CShake256::new(function_name, customization);
-        xof.absorb(data);
-        xof.squeeze(output);
-    }
-
-    #[inline]
-    pub fn new(function_name: &[u8], customization: &[u8]) -> Self {
-        if function_name.is_empty() && customization.is_empty() {
-            return CShake256 {
-                keccak: Keccak::new(SHAKE256_RATE, SHAKE256_DOMAIN_SEPARATOR),
-            };
-        }
-
-        let mut keccak = Keccak::new(SHAKE256_RATE, CSHAKE256_DOMAIN_SEPARATOR);
-        let mut encoded = Vec::new();
-        encoded.extend_from_slice(&encode_string(function_name));
-        encoded.extend_from_slice(&encode_string(customization));
-        let prefix = bytepad(&encoded, SHAKE256_RATE);
-        keccak.absorb(&prefix);
-
-        return CShake256 {
-            keccak,
-        };
-    }
-}
-
-impl Xof for CShake256 {
-    #[inline]
-    fn absorb(&mut self, data: &[u8]) {
-        self.keccak.absorb(data);
-    }
-
-    #[inline]
-    fn squeeze(&mut self, out: &mut [u8]) {
-        self.keccak.squeeze(out);
-    }
-}
+// fixed-size buffer to avoid allocations when encoding inputs
+type EncodedBytes = Bytes<9>;
 
 #[derive(Clone)]
 #[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
@@ -108,9 +64,73 @@ impl Hasher for Shake256 {
     }
 }
 
-// SP 800-185 encoding helpers
+#[derive(Clone)]
+#[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
+pub struct CShake256 {
+    keccak: Keccak<24>,
+}
 
-type EncodedBytes = Bytes<9>;
+impl CShake256 {
+    #[inline]
+    pub fn hash(data: &[u8], function_name: &[u8], customization: &[u8], output: &mut [u8]) {
+        let mut xof = CShake256::new(function_name, customization);
+        xof.absorb(data);
+        xof.squeeze(output);
+    }
+
+    #[inline]
+    pub fn new(function_name: &[u8], customization: &[u8]) -> Self {
+        if function_name.is_empty() && customization.is_empty() {
+            return CShake256 {
+                keccak: Keccak::new(SHAKE256_RATE, SHAKE256_DOMAIN_SEPARATOR),
+            };
+        }
+
+        let mut keccak = Keccak::new(SHAKE256_RATE, CSHAKE256_DOMAIN_SEPARATOR);
+
+        // absorb bytepad(encode_string(N) || encode_string(S), w)
+
+        // bytepad: left_encode(w)
+        let enc_w = left_encode(SHAKE256_RATE);
+        keccak.absorb(enc_w.as_ref());
+
+        // encode_string(N): left_encode(bitlen(N)) || N
+        let enc_n = left_encode(function_name.len() * 8);
+        keccak.absorb(enc_n.as_ref());
+        keccak.absorb(function_name);
+
+        // encode_string(S): left_encode(bitlen(S)) || S
+        let enc_s = left_encode(customization.len() * 8);
+        keccak.absorb(enc_s.as_ref());
+        keccak.absorb(customization);
+
+        // bytepad: zero-pad to block boundary
+        let total = enc_w.len() + enc_n.len() + function_name.len() + enc_s.len() + customization.len();
+        let pad = (SHAKE256_RATE - (total % SHAKE256_RATE)) % SHAKE256_RATE;
+        if pad > 0 {
+            let zeros = [0u8; SHAKE256_RATE];
+            keccak.absorb(&zeros[..pad]);
+        }
+
+        return CShake256 {
+            keccak,
+        };
+    }
+}
+
+impl Xof for CShake256 {
+    #[inline]
+    fn absorb(&mut self, data: &[u8]) {
+        self.keccak.absorb(data);
+    }
+
+    #[inline]
+    fn squeeze(&mut self, out: &mut [u8]) {
+        self.keccak.squeeze(out);
+    }
+}
+
+// SP 800-185 encoding helpers
 
 #[inline]
 pub(crate) fn left_encode(x: usize) -> EncodedBytes {
@@ -135,29 +155,6 @@ pub(crate) fn right_encode(x: usize) -> EncodedBytes {
     }
     out[n as usize] = n;
     return bytes;
-}
-
-#[inline]
-pub(crate) fn encode_string(s: &[u8]) -> Vec<u8> {
-    let encoded = left_encode(s.len() * 8);
-    let mut out = Vec::with_capacity(s.len() + encoded.len());
-    out.extend_from_slice(encoded.as_ref());
-    out.extend_from_slice(s);
-    return out;
-}
-
-#[inline]
-pub(crate) fn bytepad(x: &[u8], w: usize) -> Vec<u8> {
-    let encoded = left_encode(w);
-    // the length of left_encode(w) || X
-    let wx_length = encoded.len() + x.len();
-    let pad_length = (w - (wx_length % w)) % w;
-
-    let mut out = Vec::with_capacity(wx_length + pad_length);
-    out.extend_from_slice(encoded.as_ref());
-    out.extend_from_slice(x);
-    out.resize(out.len() + pad_length, 0);
-    return out;
 }
 
 #[cfg(test)]
