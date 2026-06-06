@@ -20,7 +20,6 @@ members = [
     "anyerr",
     "async-trait",
     "base32",
-    "base32_2",
     "base64",
     "big_number",
     "cfg-if",

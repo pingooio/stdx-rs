@@ -242,13 +242,6 @@ dependencies = [
 name = "base32"
 version = "0.1.0"
 dependencies = [
- "thiserror 1.0.61",
-]
-
-[[package]]
-name = "base32_2"
-version = "0.1.0"
-dependencies = [
  "criterion",
  "rand",
  "serde",

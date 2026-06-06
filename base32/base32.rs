@@ -1,803 +1,1217 @@
-use core::cmp::min;
+#![cfg_attr(not(any(feature = "std", test)), no_std)]
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
-#[derive(Copy, Clone)]
+#[cfg(any(feature = "alloc", test))]
+extern crate alloc;
+
+#[cfg(all(feature = "serde", any(feature = "alloc", test)))]
+mod serde;
+
+#[cfg(target_arch = "aarch64")]
+mod base32_neon;
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+mod base32_avx2;
+
+const PAD: u8 = b'=';
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Alphabet {
     Crockford,
-    Rfc4648 { padding: bool },
-    Rfc4648Lower { padding: bool },
-    Rfc4648Hex { padding: bool },
-    Rfc4648HexLower { padding: bool },
-    Z,
+    Rfc4648,
+    Rfc4648NoPadding,
+    Rfc4648Lower,
+    Rfc4648LowerNoPadding,
+    Rfc4648Hex,
+    Rfc4648HexNoPadding,
+    Rfc4648HexLower,
+    Rfc4648HexLowerNoPadding,
 }
 
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum Error {
-    #[error("input is not valid")]
+impl Alphabet {
+    #[inline]
+    const fn is_padded(&self) -> bool {
+        match self {
+            Alphabet::Crockford => false,
+            Alphabet::Rfc4648 => true,
+            Alphabet::Rfc4648NoPadding => false,
+            Alphabet::Rfc4648Lower => true,
+            Alphabet::Rfc4648LowerNoPadding => false,
+            Alphabet::Rfc4648Hex => true,
+            Alphabet::Rfc4648HexNoPadding => false,
+            Alphabet::Rfc4648HexLower => true,
+            Alphabet::Rfc4648HexLowerNoPadding => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EncodeError {
+    InvalidOutputLength,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecodeError {
     InvalidInput,
+    InvalidLength,
+    InvalidPadding,
 }
 
-const CROCKFORD: &'static [u8] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-const RFC4648: &'static [u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-const RFC4648_LOWER: &'static [u8] = b"abcdefghijklmnopqrstuvwxyz234567";
-const RFC4648_HEX: &'static [u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUV";
-const RFC4648_HEX_LOWER: &'static [u8] = b"0123456789abcdefghijklmnopqrstuv";
-const Z: &'static [u8] = b"ybndrfg8ejkmcpqxot1uwisza345h769";
-
-pub fn encode(data: &[u8]) -> String {
-    return encode_private(
-        Alphabet::Rfc4648 {
-            padding: true,
-        },
-        data,
-    );
-}
-
-pub fn encode_with_alphabet(data: &[u8], alphabet: Alphabet) -> String {
-    return encode_private(alphabet, data);
-}
-
-pub fn decode(data: &str) -> Result<Vec<u8>, Error> {
-    return decode_with_alphabet(
-        data,
-        Alphabet::Rfc4648 {
-            padding: true,
-        },
-    );
-}
-
-pub fn decode_with_alphabet(data: &str, alphabet: Alphabet) -> Result<Vec<u8>, Error> {
-    match decode_private(alphabet, data) {
-        Some(data) => Ok(data),
-        None => Err(Error::InvalidInput),
+impl core::fmt::Display for EncodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidOutputLength => f.write_str("output buffer size is not valid"),
+        }
     }
 }
 
-fn encode_private(alphabet: Alphabet, data: &[u8]) -> String {
-    let (alphabet, padding) = match alphabet {
-        Alphabet::Crockford => (CROCKFORD, false),
-        Alphabet::Rfc4648 {
-            padding,
-        } => (RFC4648, padding),
-        Alphabet::Rfc4648Lower {
-            padding,
-        } => (RFC4648_LOWER, padding),
-        Alphabet::Rfc4648Hex {
-            padding,
-        } => (RFC4648_HEX, padding),
-        Alphabet::Rfc4648HexLower {
-            padding,
-        } => (RFC4648_HEX_LOWER, padding),
-        Alphabet::Z => (Z, false),
+impl core::fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidInput => f.write_str("invalid base32 character"),
+            Self::InvalidLength => f.write_str("invalid base32 length"),
+            Self::InvalidPadding => f.write_str("invalid base32 padding"),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for EncodeError {}
+
+#[cfg(feature = "std")]
+impl std::error::Error for DecodeError {}
+
+pub const fn encoded_length(bytes_len: usize, padding: bool) -> Option<usize> {
+    if bytes_len == 0 {
+        return Some(0);
+    }
+    let complete_chunks = bytes_len / 5;
+    let base = match complete_chunks.checked_mul(8) {
+        Some(v) => v,
+        None => return None,
     };
-    let mut ret = Vec::with_capacity((data.len() + 3) / 4 * 5);
-
-    for chunk in data.chunks(5) {
-        let buf = {
-            let mut buf = [0u8; 5];
-            for (i, &b) in chunk.iter().enumerate() {
-                buf[i] = b;
-            }
-            buf
+    let rem = bytes_len % 5;
+    if rem == 0 {
+        Some(base)
+    } else if padding {
+        base.checked_add(8)
+    } else {
+        let bits = match bytes_len.checked_mul(8) {
+            Some(v) => v,
+            None => return None,
         };
-        ret.push(alphabet[((buf[0] & 0xF8) >> 3) as usize]);
-        ret.push(alphabet[(((buf[0] & 0x07) << 2) | ((buf[1] & 0xC0) >> 6)) as usize]);
-        ret.push(alphabet[((buf[1] & 0x3E) >> 1) as usize]);
-        ret.push(alphabet[(((buf[1] & 0x01) << 4) | ((buf[2] & 0xF0) >> 4)) as usize]);
-        ret.push(alphabet[(((buf[2] & 0x0F) << 1) | (buf[3] >> 7)) as usize]);
-        ret.push(alphabet[((buf[3] & 0x7C) >> 2) as usize]);
-        ret.push(alphabet[(((buf[3] & 0x03) << 3) | ((buf[4] & 0xE0) >> 5)) as usize]);
-        ret.push(alphabet[(buf[4] & 0x1F) as usize]);
+        match bits.checked_add(4) {
+            Some(v) => Some(v / 5),
+            None => None,
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+/// Encode
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#[cfg(feature = "alloc")]
+pub fn encode(data: impl AsRef<[u8]>, alphabet: Alphabet) -> alloc::string::String {
+    let data = data.as_ref();
+    let padding = alphabet.is_padded();
+    let len = encoded_length(data.len(), padding).expect("encoded length overflow");
+    let mut output = alloc::vec![0u8; len];
+    encode_into(&mut output, data, alphabet).expect("output buffer sized correctly");
+    unsafe { alloc::string::String::from_utf8_unchecked(output) }
+}
+
+pub const fn encode_array<const OUT: usize>(data: &[u8], alphabet: Alphabet) -> [u8; OUT] {
+    match encoded_length(data.len(), alphabet.is_padded()) {
+        Some(len) if len == OUT => {}
+        _ => panic!("encode_array: output array length is invalid"),
+    }
+    let mut result = [0u8; OUT];
+    match encode_into_constant_time(&mut result, data, alphabet) {
+        Ok(()) => result,
+        Err(_) => panic!("encode_array: output array length is invalid"),
+    }
+}
+
+pub fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), EncodeError> {
+    let padding = alphabet.is_padded();
+    let expected = encoded_length(data.len(), padding).expect("encoded length overflow");
+    if output.len() < expected {
+        return Err(EncodeError::InvalidOutputLength);
     }
 
-    if data.len() % 5 != 0 {
-        let len = ret.len();
-        let num_extra = 8 - (data.len() % 5 * 8 + 4) / 5;
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    if data.len() >= 40 {
+        return unsafe { base32_neon::encode_into(output, data, alphabet) };
+    }
+
+    #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
+    if data.len() >= 40 {
+        return unsafe { base32_avx2::encode_into(output, data, alphabet) };
+    }
+
+    encode_into_constant_time(output, data, alphabet)
+}
+
+pub const fn encode_into_constant_time(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), EncodeError> {
+    let padding = alphabet.is_padded();
+    let expected = encoded_length(data.len(), padding).expect("encoded length overflow");
+    if output.len() < expected {
+        return Err(EncodeError::InvalidOutputLength);
+    }
+
+    let len = data.len();
+    let mut i = 0;
+
+    while i + 40 <= len {
+        encode_8blocks(output, alphabet, data, i);
+        i += 40;
+    }
+
+    while i + 5 <= len {
+        let b0 = data[i];
+        let b1 = data[i + 1];
+        let b2 = data[i + 2];
+        let b3 = data[i + 3];
+        let b4 = data[i + 4];
+
+        let q0 = b0 >> 3;
+        let q1 = ((b0 & 0x07) << 2) | (b1 >> 6);
+        let q2 = (b1 >> 1) & 0x1F;
+        let q3 = ((b1 & 0x01) << 4) | (b2 >> 4);
+        let q4 = ((b2 & 0x0F) << 1) | (b3 >> 7);
+        let q5 = (b3 >> 2) & 0x1F;
+        let q6 = ((b3 & 0x03) << 3) | (b4 >> 5);
+        let q7 = b4 & 0x1F;
+
+        let o = (i / 5) * 8;
+        output[o] = quintet_to_char(q0, alphabet);
+        output[o + 1] = quintet_to_char(q1, alphabet);
+        output[o + 2] = quintet_to_char(q2, alphabet);
+        output[o + 3] = quintet_to_char(q3, alphabet);
+        output[o + 4] = quintet_to_char(q4, alphabet);
+        output[o + 5] = quintet_to_char(q5, alphabet);
+        output[o + 6] = quintet_to_char(q6, alphabet);
+        output[o + 7] = quintet_to_char(q7, alphabet);
+
+        i += 5;
+    }
+
+    let rem = len - i;
+    if rem > 0 {
+        let o = (i / 5) * 8;
+        let b0 = data[i];
+        let q0 = b0 >> 3;
+        let q1 = (b0 & 0x07) << 2;
+        output[o] = quintet_to_char(q0, alphabet);
+        output[o + 1] = quintet_to_char(q1, alphabet);
+
+        if rem >= 2 {
+            let b1 = data[i + 1];
+            let q1 = ((b0 & 0x07) << 2) | (b1 >> 6);
+            let q2 = (b1 >> 1) & 0x1F;
+            let q3 = (b1 & 0x01) << 4;
+            output[o + 1] = quintet_to_char(q1, alphabet);
+            output[o + 2] = quintet_to_char(q2, alphabet);
+            output[o + 3] = quintet_to_char(q3, alphabet);
+
+            if rem >= 3 {
+                let b2 = data[i + 2];
+                let q3 = ((b1 & 0x01) << 4) | (b2 >> 4);
+                let q4 = (b2 & 0x0F) << 1;
+                output[o + 3] = quintet_to_char(q3, alphabet);
+                output[o + 4] = quintet_to_char(q4, alphabet);
+
+                if rem == 4 {
+                    let b3 = data[i + 3];
+                    let q4 = ((b2 & 0x0F) << 1) | (b3 >> 7);
+                    let q5 = (b3 >> 2) & 0x1F;
+                    let q6 = (b3 & 0x03) << 3;
+                    output[o + 4] = quintet_to_char(q4, alphabet);
+                    output[o + 5] = quintet_to_char(q5, alphabet);
+                    output[o + 6] = quintet_to_char(q6, alphabet);
+                }
+            }
+        }
+
         if padding {
-            for i in 1..num_extra + 1 {
-                ret[len - i] = b'=';
+            let pad_start = match rem {
+                1 => o + 2,
+                2 => o + 4,
+                3 => o + 5,
+                4 => o + 7,
+                _ => unreachable!(),
+            };
+            let pad_end = o + 8;
+            let mut p = pad_start;
+            while p < pad_end {
+                output[p] = PAD;
+                p += 1;
             }
-        } else {
-            ret.truncate(len - num_extra);
         }
     }
-
-    String::from_utf8(ret).unwrap()
+    Ok(())
 }
 
-/*
-     0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  :,  ;,  <,  =,  >,  ?,  @,  A,  B,  C,
-     D,  E,  F,  G,  H,  I,  J,  K,  L,  M,  N,  O,  P,  Q,  R,  S,  T,  U,  V,  W,
-     X,  Y,  Z,  [,  \,  ],  ^,  _,  `,  a,  b,  c,  d,  e,  f,  g,  h,  i,  j,  k,
-     l,  m,  n,  o,  p,  q,  r,  s,  t,  u,  v,  w,  x,  y,  z,
-*/
-
-const CROCKFORD_INV: [i8; 75] = [
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, -1, -1, -1, -1, -1, -1, -1, 10, 11, 12, 13, 14, 15, 16, 17, 1, 18, 19, 1, 20, 21, 0,
-    22, 23, 24, 25, 26, -1, 27, 28, 29, 30, 31, -1, -1, -1, -1, -1, -1, 10, 11, 12, 13, 14, 15, 16, 17, 1, 18, 19, 1,
-    20, 21, 0, 22, 23, 24, 25, 26, -1, 27, 28, 29, 30, 31,
-];
-const RFC4648_INV: [i8; 75] = [
-    -1, -1, 26, 27, 28, 29, 30, 31, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
-    14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-];
-const RFC4648_INV_PAD: [i8; 75] = [
-    -1, -1, 26, 27, 28, 29, 30, 31, -1, -1, -1, -1, -1, 0, -1, -1, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
-    14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-];
-const RFC4648_INV_LOWER: [i8; 75] = [
-    -1, -1, 26, 27, 28, 29, 30, 31, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
-    11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-];
-const RFC4648_INV_LOWER_PAD: [i8; 75] = [
-    -1, -1, 26, 27, 28, 29, 30, 31, -1, -1, -1, -1, -1, 0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
-    11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-];
-const RFC4648_INV_HEX: [i8; 75] = [
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, -1, -1, -1, -1, -1, -1, -1, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-    24, 25, 26, 27, 28, 29, 30, 31, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-];
-const RFC4648_INV_HEX_PAD: [i8; 75] = [
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, -1, -1, -1, 0, -1, -1, -1, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-    24, 25, 26, 27, 28, 29, 30, 31, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-];
-const RFC4648_INV_HEX_LOWER: [i8; 75] = [
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, -1, -1, -1, -1,
-];
-const RFC4648_INV_HEX_LOWER_PAD: [i8; 75] = [
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, -1, -1, -1, 0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-    21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, -1, -1, -1, -1,
-];
-const Z_INV: [i8; 75] = [
-    -1, 18, -1, 25, 26, 27, 30, 29, 7, 31, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 24, 1, 12, 3, 8, 5, 6, 28, 21, 9,
-    10, -1, 11, 2, 16, 13, 14, 4, 22, 17, 19, -1, 20, 15, 0, 23,
-];
-
-fn decode_private(alphabet: Alphabet, data: &str) -> Option<Vec<u8>> {
-    if !data.is_ascii() {
-        return None;
+/// Helper function that appends the encoded data to a `String`.
+#[cfg(feature = "alloc")]
+pub fn encode_into_string(output: &mut alloc::string::String, data: &[u8], alphabet: Alphabet) {
+    let encoded_length = encoded_length(data.len(), alphabet.is_padded()).expect("output length overflow");
+    if encoded_length <= 256 {
+        // zero-alloc version for small data
+        let mut buf = [0u8; 256];
+        let mut buf = &mut buf[..encoded_length];
+        encode_into(&mut buf, data, alphabet).unwrap();
+        // SAFETY: base64 only produces ASCII characters, which are valid UTF-8.
+        output.push_str(unsafe { core::str::from_utf8_unchecked(&buf) });
+    } else {
+        let mut buf = alloc::vec![0u8; encoded_length];
+        encode_into(&mut buf, data, alphabet).unwrap();
+        // SAFETY: base64 only produces ASCII characters, which are valid UTF-8.
+        output.push_str(unsafe { core::str::from_utf8_unchecked(&buf) });
     }
-    let data = data.as_bytes();
-    let alphabet = match alphabet {
-        Alphabet::Crockford => CROCKFORD_INV, // supports both upper and lower case
-        Alphabet::Rfc4648 {
-            padding,
-        } => {
-            if padding {
-                RFC4648_INV_PAD
-            } else {
-                RFC4648_INV
-            }
+}
+
+/// Returns 0x00 if lo <= v <= hi, 0xFF otherwise.
+/// Uses sign-bit propagation for branchless range checking.
+#[inline]
+const fn not_in_range(v: u8, lo: u8, hi: u8) -> u8 {
+    (((v.wrapping_sub(lo) as i8) | (hi.wrapping_sub(v) as i8)) >> 7) as u8
+}
+
+/// Returns 0x20 if the lower `max_pad` bits of `value` are non-zero (invalid trailing bits),
+/// 0x00 otherwise. Used for branchless non-canonical encoding rejection.
+#[inline]
+const fn check_trailing_bits(value: u8, max_pad: u8) -> u8 {
+    let mask = (1u8 << max_pad).wrapping_sub(1);
+    let pad_bits = value & mask;
+    (!not_in_range(pad_bits, 1, mask)) & 0x20
+}
+
+#[inline]
+const fn encode_8blocks(output: &mut [u8], alphabet: Alphabet, data: &[u8], start: usize) {
+    let mut n = 0;
+    while n < 8 {
+        let i = start + n * 5;
+        let b0 = data[i];
+        let b1 = data[i + 1];
+        let b2 = data[i + 2];
+        let b3 = data[i + 3];
+        let b4 = data[i + 4];
+
+        let q0 = b0 >> 3;
+        let q1 = ((b0 & 0x07) << 2) | (b1 >> 6);
+        let q2 = (b1 >> 1) & 0x1F;
+        let q3 = ((b1 & 0x01) << 4) | (b2 >> 4);
+        let q4 = ((b2 & 0x0F) << 1) | (b3 >> 7);
+        let q5 = (b3 >> 2) & 0x1F;
+        let q6 = ((b3 & 0x03) << 3) | (b4 >> 5);
+        let q7 = b4 & 0x1F;
+
+        let o = (start / 5) * 8 + n * 8;
+        output[o] = quintet_to_char(q0, alphabet);
+        output[o + 1] = quintet_to_char(q1, alphabet);
+        output[o + 2] = quintet_to_char(q2, alphabet);
+        output[o + 3] = quintet_to_char(q3, alphabet);
+        output[o + 4] = quintet_to_char(q4, alphabet);
+        output[o + 5] = quintet_to_char(q5, alphabet);
+        output[o + 6] = quintet_to_char(q6, alphabet);
+        output[o + 7] = quintet_to_char(q7, alphabet);
+
+        n += 1;
+    }
+}
+
+/// Constant-time mapping: 5-bit value (0-31) to base32 character.
+/// No secret-dependent branches or memory accesses.
+#[inline]
+const fn quintet_to_char(v: u8, alphabet: Alphabet) -> u8 {
+    match alphabet {
+        Alphabet::Crockford => quintet_to_crockford(v),
+        Alphabet::Rfc4648 | Alphabet::Rfc4648NoPadding => {
+            let not_upper = not_in_range(v, 0, 25);
+            let not_digit = not_in_range(v, 26, 31);
+            (v + b'A') & !not_upper | (v.wrapping_sub(26).wrapping_add(b'2')) & !not_digit
         }
-        Alphabet::Rfc4648Lower {
-            padding,
-        } => {
-            if padding {
-                RFC4648_INV_LOWER_PAD
-            } else {
-                RFC4648_INV_LOWER
-            }
+        Alphabet::Rfc4648Lower | Alphabet::Rfc4648LowerNoPadding => {
+            let not_lower = not_in_range(v, 0, 25);
+            let not_digit = not_in_range(v, 26, 31);
+            (v + b'a') & !not_lower | (v.wrapping_sub(26).wrapping_add(b'2')) & !not_digit
         }
-        Alphabet::Rfc4648Hex {
-            padding,
-        } => {
-            if padding {
-                RFC4648_INV_HEX_PAD
-            } else {
-                RFC4648_INV_HEX
-            }
+        Alphabet::Rfc4648Hex | Alphabet::Rfc4648HexNoPadding => {
+            let not_digit = not_in_range(v, 0, 9);
+            let not_upper = not_in_range(v, 10, 31);
+            (v + b'0') & !not_digit | (v.wrapping_sub(10).wrapping_add(b'A')) & !not_upper
         }
-        Alphabet::Rfc4648HexLower {
-            padding,
-        } => {
-            if padding {
-                RFC4648_INV_HEX_LOWER_PAD
-            } else {
-                RFC4648_INV_HEX_LOWER
-            }
+        Alphabet::Rfc4648HexLower | Alphabet::Rfc4648HexLowerNoPadding => {
+            let not_digit = not_in_range(v, 0, 9);
+            let not_lower = not_in_range(v, 10, 31);
+            (v + b'0') & !not_digit | (v.wrapping_sub(10).wrapping_add(b'a')) & !not_lower
         }
-        Alphabet::Z => Z_INV,
+    }
+}
+
+/// Crockford quintet-to-character: 6 non-contiguous ranges.
+#[inline]
+const fn quintet_to_crockford(v: u8) -> u8 {
+    let not_0_9 = not_in_range(v, 0, 9);
+    let not_10_17 = not_in_range(v, 10, 17);
+    let not_18_19 = not_in_range(v, 18, 19);
+    let not_20_21 = not_in_range(v, 20, 21);
+    let not_22_26 = not_in_range(v, 22, 26);
+    let not_27_31 = not_in_range(v, 27, 31);
+    (v + b'0') & !not_0_9
+        | (v + 55) & !not_10_17
+        | (v + 56) & !not_18_19
+        | (v + 57) & !not_20_21
+        | (v + 58) & !not_22_26
+        | (v + 59) & !not_27_31
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+/// Decode
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#[inline]
+const fn decoded_length(encoded_content_len: usize) -> Result<usize, DecodeError> {
+    let full_blocks = encoded_content_len / 8;
+    let rem = encoded_content_len % 8;
+
+    let base = full_blocks * 5;
+
+    match rem {
+        0 => Ok(base),
+        2 => Ok(base + 1),
+        4 => Ok(base + 2),
+        5 => Ok(base + 3),
+        7 => Ok(base + 4),
+        _ => Err(DecodeError::InvalidLength),
+    }
+}
+
+#[cfg(feature = "alloc")]
+pub fn decode(data: impl AsRef<[u8]>, alphabet: Alphabet) -> Result<alloc::vec::Vec<u8>, DecodeError> {
+    let data = data.as_ref();
+    let padding = alphabet.is_padded();
+    let (content_len, _) = strip_padding_info(data, padding)?;
+    let output_len = decoded_length(content_len)?;
+    let mut output = alloc::vec![0u8; output_len];
+    decode_into(&mut output, data, alphabet)?;
+    Ok(output)
+}
+
+pub const fn decode_array<const OUT: usize>(encoded_data: &[u8], alphabet: Alphabet) -> Result<[u8; OUT], DecodeError> {
+    let mut result = [0u8; OUT];
+    match decode_into_constant_time(&mut result, encoded_data, alphabet) {
+        Ok(()) => Ok(result),
+        Err(err) => Err(err),
+    }
+}
+
+pub fn decode_into(output: &mut [u8], encoded_data: &[u8], alphabet: Alphabet) -> Result<(), DecodeError> {
+    let padding = alphabet.is_padded();
+    let (content_len, _) = strip_padding_info(encoded_data, padding)?;
+    let computed_output = decoded_length(content_len)?;
+    if output.len() < computed_output {
+        return Err(DecodeError::InvalidLength);
+    }
+
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    if content_len >= 64 {
+        let content = &encoded_data[..content_len];
+        return unsafe { base32_neon::decode_into(output, content, alphabet) };
+    }
+
+    #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
+    if content_len >= 32 {
+        let content = &encoded_data[..content_len];
+        return unsafe { base32_avx2::decode_into(output, content, alphabet) };
+    }
+
+    decode_into_constant_time(output, encoded_data, alphabet)
+}
+
+pub const fn decode_into_constant_time(
+    output: &mut [u8],
+    encoded_data: &[u8],
+    alphabet: Alphabet,
+) -> Result<(), DecodeError> {
+    let in_len = encoded_data.len();
+    let padding = alphabet.is_padded();
+
+    if in_len == 0 {
+        return Ok(());
+    }
+
+    let (content_len, _padding_len) = match strip_padding_info(encoded_data, padding) {
+        Ok(info) => info,
+        Err(e) => return Err(e),
     };
-    let mut unpadded_data_length = data.len();
-    for i in 1..min(6, data.len()) + 1 {
-        if data[data.len() - i] != b'=' {
-            break;
-        }
-        unpadded_data_length -= 1;
+
+    if content_len == 0 {
+        return Ok(());
     }
-    let output_length = unpadded_data_length * 5 / 8;
-    let mut ret = Vec::with_capacity((output_length + 4) / 5 * 5);
-    for chunk in data.chunks(8) {
-        let buf = {
-            let mut buf = [0u8; 8];
-            for (i, &c) in chunk.iter().enumerate() {
-                match alphabet.get(c.wrapping_sub(b'0') as usize) {
-                    Some(&-1) | None => return None,
-                    Some(&value) => buf[i] = value as u8,
-                };
+
+    let computed_output = match decoded_length(content_len) {
+        Ok(len) => len,
+        Err(e) => return Err(e),
+    };
+
+    if output.len() < computed_output {
+        return Err(DecodeError::InvalidLength);
+    }
+
+    let mut err: u8 = 0;
+    let mut i = 0;
+    let mut o = 0;
+
+    while i + 64 <= content_len {
+        decode_8quads(output, alphabet, encoded_data, &mut i, &mut o, &mut err);
+    }
+
+    while i + 8 <= content_len {
+        decode_1quad(output, alphabet, encoded_data, &mut i, &mut o, &mut err);
+    }
+
+    if i < content_len {
+        let remaining = content_len - i;
+        match remaining {
+            2 => {
+                let v0 = char_to_quintet(encoded_data[i], alphabet);
+                let v1 = char_to_quintet(encoded_data[i + 1], alphabet);
+                err |= v0 | v1;
+                err |= check_trailing_bits(v1, 2);
+                output[o] = (v0 << 3) | (v1 >> 2);
             }
-            buf
-        };
-        ret.push((buf[0] << 3) | (buf[1] >> 2));
-        ret.push((buf[1] << 6) | (buf[2] << 1) | (buf[3] >> 4));
-        ret.push((buf[3] << 4) | (buf[4] >> 1));
-        ret.push((buf[4] << 7) | (buf[5] << 2) | (buf[6] >> 3));
-        ret.push((buf[6] << 5) | buf[7]);
+            4 => {
+                let v0 = char_to_quintet(encoded_data[i], alphabet);
+                let v1 = char_to_quintet(encoded_data[i + 1], alphabet);
+                let v2 = char_to_quintet(encoded_data[i + 2], alphabet);
+                let v3 = char_to_quintet(encoded_data[i + 3], alphabet);
+                err |= v0 | v1 | v2 | v3;
+                err |= check_trailing_bits(v3, 4);
+                output[o] = (v0 << 3) | (v1 >> 2);
+                output[o + 1] = (v1.wrapping_shl(6)) | (v2 << 1) | (v3 >> 4);
+            }
+            5 => {
+                let v0 = char_to_quintet(encoded_data[i], alphabet);
+                let v1 = char_to_quintet(encoded_data[i + 1], alphabet);
+                let v2 = char_to_quintet(encoded_data[i + 2], alphabet);
+                let v3 = char_to_quintet(encoded_data[i + 3], alphabet);
+                let v4 = char_to_quintet(encoded_data[i + 4], alphabet);
+                err |= v0 | v1 | v2 | v3 | v4;
+                err |= check_trailing_bits(v4, 1);
+                output[o] = (v0 << 3) | (v1 >> 2);
+                output[o + 1] = (v1.wrapping_shl(6)) | (v2 << 1) | (v3 >> 4);
+                output[o + 2] = (v3.wrapping_shl(4)) | (v4 >> 1);
+            }
+            7 => {
+                let v0 = char_to_quintet(encoded_data[i], alphabet);
+                let v1 = char_to_quintet(encoded_data[i + 1], alphabet);
+                let v2 = char_to_quintet(encoded_data[i + 2], alphabet);
+                let v3 = char_to_quintet(encoded_data[i + 3], alphabet);
+                let v4 = char_to_quintet(encoded_data[i + 4], alphabet);
+                let v5 = char_to_quintet(encoded_data[i + 5], alphabet);
+                let v6 = char_to_quintet(encoded_data[i + 6], alphabet);
+                err |= v0 | v1 | v2 | v3 | v4 | v5 | v6;
+                err |= check_trailing_bits(v6, 3);
+                output[o] = (v0 << 3) | (v1 >> 2);
+                output[o + 1] = (v1.wrapping_shl(6)) | (v2 << 1) | (v3 >> 4);
+                output[o + 2] = (v3.wrapping_shl(4)) | (v4 >> 1);
+                output[o + 3] = (v4.wrapping_shl(7)) | (v5 << 2) | (v6 >> 3);
+            }
+            _ => return Err(DecodeError::InvalidLength),
+        }
     }
-    ret.truncate(output_length);
-    Some(ret)
+
+    if err >= 32 {
+        return Err(DecodeError::InvalidInput);
+    }
+
+    Ok(())
+}
+
+#[inline]
+const fn decode_1quad(output: &mut [u8], alphabet: Alphabet, data: &[u8], i: &mut usize, o: &mut usize, err: &mut u8) {
+    let v0 = char_to_quintet(data[*i], alphabet);
+    let v1 = char_to_quintet(data[*i + 1], alphabet);
+    let v2 = char_to_quintet(data[*i + 2], alphabet);
+    let v3 = char_to_quintet(data[*i + 3], alphabet);
+    let v4 = char_to_quintet(data[*i + 4], alphabet);
+    let v5 = char_to_quintet(data[*i + 5], alphabet);
+    let v6 = char_to_quintet(data[*i + 6], alphabet);
+    let v7 = char_to_quintet(data[*i + 7], alphabet);
+    *err |= v0 | v1 | v2 | v3 | v4 | v5 | v6 | v7;
+    output[*o] = (v0 << 3) | (v1 >> 2);
+    output[*o + 1] = (v1.wrapping_shl(6)) | (v2 << 1) | (v3 >> 4);
+    output[*o + 2] = (v3.wrapping_shl(4)) | (v4 >> 1);
+    output[*o + 3] = (v4.wrapping_shl(7)) | (v5 << 2) | (v6 >> 3);
+    output[*o + 4] = (v6.wrapping_shl(5)) | v7;
+    *i += 8;
+    *o += 5;
+}
+
+#[inline]
+const fn decode_8quads(output: &mut [u8], alphabet: Alphabet, data: &[u8], i: &mut usize, o: &mut usize, err: &mut u8) {
+    let mut n = 0;
+    while n < 8 {
+        let v0 = char_to_quintet(data[*i], alphabet);
+        let v1 = char_to_quintet(data[*i + 1], alphabet);
+        let v2 = char_to_quintet(data[*i + 2], alphabet);
+        let v3 = char_to_quintet(data[*i + 3], alphabet);
+        let v4 = char_to_quintet(data[*i + 4], alphabet);
+        let v5 = char_to_quintet(data[*i + 5], alphabet);
+        let v6 = char_to_quintet(data[*i + 6], alphabet);
+        let v7 = char_to_quintet(data[*i + 7], alphabet);
+        *err |= v0 | v1 | v2 | v3 | v4 | v5 | v6 | v7;
+        output[*o] = (v0 << 3) | (v1 >> 2);
+        output[*o + 1] = (v1.wrapping_shl(6)) | (v2 << 1) | (v3 >> 4);
+        output[*o + 2] = (v3.wrapping_shl(4)) | (v4 >> 1);
+        output[*o + 3] = (v4.wrapping_shl(7)) | (v5 << 2) | (v6 >> 3);
+        output[*o + 4] = (v6.wrapping_shl(5)) | v7;
+        *i += 8;
+        *o += 5;
+        n += 1;
+    }
+}
+
+#[inline]
+const fn strip_padding_info(data: &[u8], expect_padding: bool) -> Result<(usize, usize), DecodeError> {
+    let in_len = data.len();
+
+    if expect_padding {
+        if in_len == 0 {
+            return Ok((0, 0));
+        }
+
+        let count = count_trailing_padding(data);
+        let content_len = in_len - count;
+
+        let err = (count > 0 && in_len % 8 != 0)
+            || count > 6
+            || (count > 0
+                && match count {
+                    6 => content_len % 8 != 2,
+                    4 => content_len % 8 != 4,
+                    3 => content_len % 8 != 5,
+                    1 => content_len % 8 != 7,
+                    _ => true,
+                });
+
+        if err {
+            return Err(DecodeError::InvalidPadding);
+        }
+
+        Ok((content_len, count))
+    } else {
+        if in_len > 0 && data[in_len - 1] == PAD {
+            return Err(DecodeError::InvalidPadding);
+        }
+        Ok((in_len, 0))
+    }
+}
+
+/// Count trailing `=` padding characters in constant time.
+/// Scans at most 7 bytes from the end (max valid padding is 6).
+/// The loop always runs exactly `min(len, 7)` iterations.
+const fn count_trailing_padding(data: &[u8]) -> usize {
+    let len = data.len();
+    if len == 0 {
+        return 0;
+    }
+    let max_check = if len < 7 { len } else { 7 };
+    let mut count: usize = 0;
+    let mut all_pad: u8 = 0xFF;
+
+    let mut k = 0;
+    while k < max_check {
+        let idx = len - 1 - k;
+        let is_pad = if data[idx] == PAD { 0xFFu8 } else { 0x00u8 };
+        all_pad = all_pad & is_pad;
+        let all_pad_ext = (all_pad as i8 >> 7) as usize;
+        count = ((k + 1) as usize) & all_pad_ext | count & !all_pad_ext;
+        k += 1;
+    }
+
+    count
+}
+
+/// Constant-time mapping: base32 character to 5-bit value.
+/// Valid characters return 0-31. Invalid characters return a value with bit 5 set (>= 32).
+#[inline]
+const fn char_to_quintet(c: u8, alphabet: Alphabet) -> u8 {
+    match alphabet {
+        Alphabet::Crockford => crockford_to_quintet(c),
+        Alphabet::Rfc4648 | Alphabet::Rfc4648NoPadding => {
+            let not_upper = not_in_range(c, b'A', b'Z');
+            let not_digit = not_in_range(c, b'2', b'7');
+            let value = (c.wrapping_sub(b'A')) & !not_upper | (c.wrapping_sub(b'2').wrapping_add(26)) & !not_digit;
+            let invalid = not_upper & not_digit;
+            value | (invalid & 0x20)
+        }
+        Alphabet::Rfc4648Lower | Alphabet::Rfc4648LowerNoPadding => {
+            let not_lower = not_in_range(c, b'a', b'z');
+            let not_digit = not_in_range(c, b'2', b'7');
+            let value = (c.wrapping_sub(b'a')) & !not_lower | (c.wrapping_sub(b'2').wrapping_add(26)) & !not_digit;
+            let invalid = not_lower & not_digit;
+            value | (invalid & 0x20)
+        }
+        Alphabet::Rfc4648Hex | Alphabet::Rfc4648HexNoPadding => {
+            let not_digit = not_in_range(c, b'0', b'9');
+            let not_upper = not_in_range(c, b'A', b'V');
+            let value = (c.wrapping_sub(b'0')) & !not_digit | (c.wrapping_sub(b'A').wrapping_add(10)) & !not_upper;
+            let invalid = not_digit & not_upper;
+            value | (invalid & 0x20)
+        }
+        Alphabet::Rfc4648HexLower | Alphabet::Rfc4648HexLowerNoPadding => {
+            let not_digit = not_in_range(c, b'0', b'9');
+            let not_lower = not_in_range(c, b'a', b'v');
+            let value = (c.wrapping_sub(b'0')) & !not_digit | (c.wrapping_sub(b'a').wrapping_add(10)) & !not_lower;
+            let invalid = not_digit & not_lower;
+            value | (invalid & 0x20)
+        }
+    }
+}
+
+/// Crockford character-to-quintet: 6 non-contiguous ranges.
+#[inline]
+const fn crockford_to_quintet(c: u8) -> u8 {
+    let not_0_9 = not_in_range(c, b'0', b'9');
+    let not_a_h = not_in_range(c, b'A', b'H');
+    let not_j_k = not_in_range(c, b'J', b'K');
+    let not_m_n = not_in_range(c, b'M', b'N');
+    let not_p_t = not_in_range(c, b'P', b'T');
+    let not_v_z = not_in_range(c, b'V', b'Z');
+    let value = (c.wrapping_sub(b'0')) & !not_0_9
+        | (c.wrapping_sub(b'A').wrapping_add(10)) & !not_a_h
+        | (c.wrapping_sub(b'J').wrapping_add(18)) & !not_j_k
+        | (c.wrapping_sub(b'M').wrapping_add(20)) & !not_m_n
+        | (c.wrapping_sub(b'P').wrapping_add(22)) & !not_p_t
+        | (c.wrapping_sub(b'V').wrapping_add(27)) & !not_v_z;
+    let invalid = not_0_9 & not_a_h & not_j_k & not_m_n & not_p_t & not_v_z;
+    value | (invalid & 0x20)
 }
 
 #[cfg(test)]
-#[allow(dead_code, unused_attributes)]
-mod test {
-    use super::Alphabet::{Crockford, Rfc4648, Rfc4648Hex, Rfc4648HexLower, Rfc4648Lower, Z};
-    use crate::{Error, decode_with_alphabet, encode_with_alphabet};
-    // use quickcheck::{Arbitrary, Gen};
-    // use std::fmt::{Debug, Error, Formatter};
+mod tests {
+    use super::*;
 
-    // #[derive(Clone)]
-    // struct B32 {
-    //     c: u8,
-    // }
+    // (input_bytes, alphabet, expected_encoded_str, description)
+    const ENCODE_VECTORS: &[(&[u8], Alphabet, &str, &str)] = &[
+        (b"", Alphabet::Rfc4648, "", "RFC4648 padded: empty"),
+        (b"", Alphabet::Rfc4648NoPadding, "", "RFC4648 unpadded: empty"),
+        (b"\x00", Alphabet::Rfc4648, "AA======", "RFC4648 padded: 0x00"),
+        (b"\xFF", Alphabet::Rfc4648, "74======", "RFC4648 padded: 0xFF"),
+        (b"\xAB", Alphabet::Rfc4648, "VM======", "RFC4648 padded: 0xAB"),
+        (b"fo", Alphabet::Rfc4648, "MZXQ====", "RFC4648 padded: 'fo'"),
+        (b"foo", Alphabet::Rfc4648, "MZXW6===", "RFC4648 padded: 'foo'"),
+        (b"foob", Alphabet::Rfc4648, "MZXW6YQ=", "RFC4648 padded: 'foob'"),
+        (b"fooba", Alphabet::Rfc4648, "MZXW6YTB", "RFC4648 padded: 'fooba'"),
+        (b"foobar", Alphabet::Rfc4648, "MZXW6YTBOI======", "RFC4648 padded: 'foobar'"),
+        (b"hello", Alphabet::Rfc4648, "NBSWY3DP", "RFC4648 padded: 'hello'"),
+        (b"hello", Alphabet::Rfc4648NoPadding, "NBSWY3DP", "RFC4648 unpadded: 'hello'"),
+        (b"h", Alphabet::Rfc4648NoPadding, "NA", "RFC4648 unpadded: 'h'"),
+        (b"he", Alphabet::Rfc4648NoPadding, "NBSQ", "RFC4648 unpadded: 'he'"),
+        (b"hel", Alphabet::Rfc4648NoPadding, "NBSWY", "RFC4648 unpadded: 'hel'"),
+        (b"hell", Alphabet::Rfc4648NoPadding, "NBSWY3A", "RFC4648 unpadded: 'hell'"),
+        (b"hello", Alphabet::Rfc4648Lower, "nbswy3dp", "RFC4648 lower: 'hello'"),
+        (b"hello", Alphabet::Rfc4648Hex, "D1IMOR3F", "RFC4648 hex: 'hello'"),
+        (b"hello", Alphabet::Rfc4648HexLower, "d1imor3f", "RFC4648 hex lower: 'hello'"),
+        (b"hello", Alphabet::Crockford, "D1JPRV3F", "Crockford: 'hello'"),
+        // RFC 4648 Section 10 hex test vectors
+        (b"f", Alphabet::Rfc4648Hex, "CO======", "RFC4648 hex: 'f'"),
+        (b"fo", Alphabet::Rfc4648Hex, "CPNG====", "RFC4648 hex: 'fo'"),
+        (b"foo", Alphabet::Rfc4648Hex, "CPNMU===", "RFC4648 hex: 'foo'"),
+        (b"foob", Alphabet::Rfc4648Hex, "CPNMUOG=", "RFC4648 hex: 'foob'"),
+        (b"fooba", Alphabet::Rfc4648Hex, "CPNMUOJ1", "RFC4648 hex: 'fooba'"),
+        (b"foobar", Alphabet::Rfc4648Hex, "CPNMUOJ1E8======", "RFC4648 hex: 'foobar'"),
+    ];
 
-    // impl Arbitrary for B32 {
-    //     fn arbitrary(g: &mut Gen) -> B32 {
-    //         B32 {
-    //             c: *g.choose(b"0123456789ABCDEFGHJKMNPQRSTVWXYZ").unwrap(),
-    //         }
-    //     }
-    // }
+    // (encoded_str, alphabet, expected_bytes, description)
+    const DECODE_VECTORS: &[(&[u8], Alphabet, &[u8], &str)] = &[
+        (b"", Alphabet::Rfc4648, b"", "RFC4648 padded: empty"),
+        (b"AA======", Alphabet::Rfc4648, b"\x00", "RFC4648 padded: 0x00"),
+        (b"AE======", Alphabet::Rfc4648, b"\x01", "RFC4648 padded: 0x01"),
+        (b"MZXQ====", Alphabet::Rfc4648, b"fo", "RFC4648 padded: 'fo'"),
+        (b"MZXW6===", Alphabet::Rfc4648, b"foo", "RFC4648 padded: 'foo'"),
+        (b"MZXW6YQ=", Alphabet::Rfc4648, b"foob", "RFC4648 padded: 'foob'"),
+        (b"MZXW6YTB", Alphabet::Rfc4648, b"fooba", "RFC4648 padded: 'fooba'"),
+        (b"NA", Alphabet::Rfc4648NoPadding, b"h", "RFC4648 unpadded: 'h'"),
+        (b"NBSQ", Alphabet::Rfc4648NoPadding, b"he", "RFC4648 unpadded: 'he'"),
+        (b"NBSWY", Alphabet::Rfc4648NoPadding, b"hel", "RFC4648 unpadded: 'hel'"),
+        (b"NBSWY3A", Alphabet::Rfc4648NoPadding, b"hell", "RFC4648 unpadded: 'hell'"),
+        (b"nbswy3dp", Alphabet::Rfc4648Lower, b"hello", "RFC4648 lower: 'hello'"),
+        (b"D1IMOR3F", Alphabet::Rfc4648Hex, b"hello", "RFC4648 hex: 'hello'"),
+        (b"D1JPRV3F", Alphabet::Crockford, b"hello", "Crockford: 'hello'"),
+    ];
 
-    // impl Debug for B32 {
-    //     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-    //         (self.c as char).fmt(f)
-    //     }
-    // }
+    // (encoded_str, alphabet, expected_error, description)
+    const DECODE_ERROR_VECTORS: &[(&[u8], Alphabet, DecodeError, &str)] = &[
+        (b"!!!!====", Alphabet::Rfc4648, DecodeError::InvalidInput, "4 invalid chars"),
+        (
+            b"AAA=====",
+            Alphabet::Rfc4648,
+            DecodeError::InvalidPadding,
+            "wrong padding position",
+        ),
+        (
+            b"AA==========",
+            Alphabet::Rfc4648,
+            DecodeError::InvalidPadding,
+            "too many padding chars",
+        ),
+        (
+            b"AA======",
+            Alphabet::Rfc4648NoPadding,
+            DecodeError::InvalidPadding,
+            "no-pad rejects padding",
+        ),
+        (b"A", Alphabet::Rfc4648, DecodeError::InvalidLength, "single char"),
+        (
+            b"D1JPRV!!",
+            Alphabet::Crockford,
+            DecodeError::InvalidInput,
+            "Crockford invalid chars",
+        ),
+    ];
+
+    // (data_length, padding, expected_result, description)
+    const ENCODED_LENGTH_VECTORS: &[(usize, bool, Option<usize>, &str)] = &[
+        (0, true, Some(0), "empty padded"),
+        (1, true, Some(8), "1 byte padded"),
+        (5, true, Some(8), "5 bytes padded"),
+        (6, true, Some(16), "6 bytes padded"),
+        (10, true, Some(16), "10 bytes padded"),
+        (0, false, Some(0), "empty unpadded"),
+        (1, false, Some(2), "1 byte unpadded"),
+        (5, false, Some(8), "5 bytes unpadded"),
+        (6, false, Some(10), "6 bytes unpadded"),
+    ];
+
+    // (initial_string, input_bytes, alphabet, expected_output, description)
+    const ENCODE_INTO_STRING_VECTORS: &[(&str, &[u8], Alphabet, &str, &str)] = &[
+        ("", b"", Alphabet::Rfc4648, "", "empty"),
+        ("prefix", b"", Alphabet::Rfc4648, "prefix", "empty data with prefix"),
+        (
+            "",
+            b"hello world",
+            Alphabet::Rfc4648,
+            "NBSWY3DPEB3W64TMMQ======",
+            "hello world padded",
+        ),
+        (
+            "",
+            b"hello world",
+            Alphabet::Rfc4648NoPadding,
+            "NBSWY3DPEB3W64TMMQ",
+            "hello world unpadded",
+        ),
+        (
+            "data: ",
+            b"hello world",
+            Alphabet::Rfc4648,
+            "data: NBSWY3DPEB3W64TMMQ======",
+            "append to prefix",
+        ),
+        ("", b"foobar", Alphabet::Rfc4648Hex, "CPNMUOJ1E8======", "hex alphabet"),
+    ];
+
+    const ALL_ALPHABETS: &[Alphabet] = &[
+        Alphabet::Rfc4648,
+        Alphabet::Rfc4648NoPadding,
+        Alphabet::Rfc4648Lower,
+        Alphabet::Rfc4648Hex,
+        Alphabet::Rfc4648HexLower,
+        Alphabet::Crockford,
+    ];
+
+    const ROUNDTRIP_SIZES: &[usize] = &[
+        0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129,
+    ];
+
+    const SIMD_BOUNDARY_SIZES: &[usize] = &[38, 39, 40, 41, 42, 45, 50, 62, 63, 64, 65, 66, 84, 85, 100];
 
     #[test]
-    fn masks_crockford() {
-        assert_eq!(encode_with_alphabet(&[0xF8, 0x3E, 0x0F, 0x83, 0xE0], Crockford), "Z0Z0Z0Z0");
-        assert_eq!(encode_with_alphabet(&[0x07, 0xC1, 0xF0, 0x7C, 0x1F], Crockford), "0Z0Z0Z0Z");
-        assert_eq!(
-            decode_with_alphabet("Z0Z0Z0Z0", Crockford).unwrap(),
-            [0xF8, 0x3E, 0x0F, 0x83, 0xE0]
-        );
-        assert_eq!(
-            decode_with_alphabet("0Z0Z0Z0Z", Crockford).unwrap(),
-            [0x07, 0xC1, 0xF0, 0x7C, 0x1F]
-        );
+    fn test_encode() {
+        for &(input, alphabet, expected, desc) in ENCODE_VECTORS {
+            let result = encode(input, alphabet);
+            assert_eq!(result, expected, "encode: {desc}");
+        }
     }
 
     #[test]
-    fn masks_rfc4648() {
-        assert_eq!(
-            encode_with_alphabet(
-                &[0xF8, 0x3E, 0x7F, 0x83, 0xE7],
-                Rfc4648 {
-                    padding: false
-                }
-            ),
-            "7A7H7A7H"
-        );
-        assert_eq!(
-            encode_with_alphabet(
-                &[0x77, 0xC1, 0xF7, 0x7C, 0x1F],
-                Rfc4648 {
-                    padding: false
-                }
-            ),
-            "O7A7O7A7"
-        );
-        assert_eq!(
-            decode_with_alphabet(
-                "7A7H7A7H",
-                Rfc4648 {
-                    padding: false
-                }
-            )
-            .unwrap(),
-            [0xF8, 0x3E, 0x7F, 0x83, 0xE7]
-        );
-        assert_eq!(
-            decode_with_alphabet(
-                "O7A7O7A7",
-                Rfc4648 {
-                    padding: false
-                }
-            )
-            .unwrap(),
-            [0x77, 0xC1, 0xF7, 0x7C, 0x1F]
-        );
-        assert_eq!(
-            encode_with_alphabet(
-                &[0xF8, 0x3E, 0x7F, 0x83],
-                Rfc4648 {
-                    padding: false
-                }
-            ),
-            "7A7H7AY"
-        );
+    fn test_decode() {
+        for &(encoded, alphabet, expected, desc) in DECODE_VECTORS {
+            let result = decode(encoded, alphabet).unwrap();
+            assert_eq!(&result, expected, "decode: {desc}");
+        }
     }
 
     #[test]
-    fn masks_rfc4648_pad() {
-        assert_eq!(
-            encode_with_alphabet(
-                &[0xF8, 0x3E, 0x7F, 0x83, 0xE7],
-                Rfc4648 {
-                    padding: true
-                }
-            ),
-            "7A7H7A7H"
-        );
-        assert_eq!(
-            encode_with_alphabet(
-                &[0x77, 0xC1, 0xF7, 0x7C, 0x1F],
-                Rfc4648 {
-                    padding: true
-                }
-            ),
-            "O7A7O7A7"
-        );
-        assert_eq!(
-            decode_with_alphabet(
-                "7A7H7A7H",
-                Rfc4648 {
-                    padding: true
-                }
-            )
-            .unwrap(),
-            [0xF8, 0x3E, 0x7F, 0x83, 0xE7]
-        );
-        assert_eq!(
-            decode_with_alphabet(
-                "O7A7O7A7",
-                Rfc4648 {
-                    padding: true
-                }
-            )
-            .unwrap(),
-            [0x77, 0xC1, 0xF7, 0x7C, 0x1F]
-        );
-        assert_eq!(
-            encode_with_alphabet(
-                &[0xF8, 0x3E, 0x7F, 0x83],
-                Rfc4648 {
-                    padding: true
-                }
-            ),
-            "7A7H7AY="
-        );
+    fn test_decode_error() {
+        for &(encoded, alphabet, expected_err, desc) in DECODE_ERROR_VECTORS {
+            let result = decode(encoded, alphabet);
+            assert_eq!(result, Err(expected_err), "decode error: {desc}");
+        }
+
+        // Large buffer with trailing invalid char
+        let mut data = alloc::vec![b'A'; 256];
+        data[255] = b'!';
+        assert_eq!(decode(&data, Alphabet::Rfc4648), Err(DecodeError::InvalidInput));
     }
 
     #[test]
-    fn masks_rfc4648_lower() {
-        assert_eq!(
-            encode_with_alphabet(
-                &[0xF8, 0x3E, 0x7F, 0x83, 0xE7],
-                Rfc4648Lower {
-                    padding: false
-                }
-            ),
-            "7a7h7a7h"
-        );
-        assert_eq!(
-            encode_with_alphabet(
-                &[0x77, 0xC1, 0xF7, 0x7C, 0x1F],
-                Rfc4648Lower {
-                    padding: false
-                }
-            ),
-            "o7a7o7a7"
-        );
-        assert_eq!(
-            decode_with_alphabet(
-                "7a7h7a7h",
-                Rfc4648Lower {
-                    padding: false
-                }
-            )
-            .unwrap(),
-            [0xF8, 0x3E, 0x7F, 0x83, 0xE7]
-        );
-        assert_eq!(
-            decode_with_alphabet(
-                "o7a7o7a7",
-                Rfc4648Lower {
-                    padding: false
-                }
-            )
-            .unwrap(),
-            [0x77, 0xC1, 0xF7, 0x7C, 0x1F]
-        );
-        assert_eq!(
-            encode_with_alphabet(
-                &[0xF8, 0x3E, 0x7F, 0x83],
-                Rfc4648Lower {
-                    padding: false
-                }
-            ),
-            "7a7h7ay"
-        );
+    fn test_encoded_length() {
+        for &(data_len, padding, expected, desc) in ENCODED_LENGTH_VECTORS {
+            let result = encoded_length(data_len, padding);
+            assert_eq!(result, expected, "encoded_length: {desc}");
+        }
     }
 
     #[test]
-    fn masks_rfc4648_lower_pad() {
-        assert_eq!(
-            encode_with_alphabet(
-                &[0xF8, 0x3E, 0x7F, 0x83, 0xE7],
-                Rfc4648Lower {
-                    padding: true
-                }
-            ),
-            "7a7h7a7h"
-        );
-        assert_eq!(
-            encode_with_alphabet(
-                &[0x77, 0xC1, 0xF7, 0x7C, 0x1F],
-                Rfc4648Lower {
-                    padding: true
-                }
-            ),
-            "o7a7o7a7"
-        );
-        assert_eq!(
-            decode_with_alphabet(
-                "7a7h7a7h",
-                Rfc4648Lower {
-                    padding: true
-                }
-            )
-            .unwrap(),
-            [0xF8, 0x3E, 0x7F, 0x83, 0xE7]
-        );
-        assert_eq!(
-            decode_with_alphabet(
-                "o7a7o7a7",
-                Rfc4648Lower {
-                    padding: true
-                }
-            )
-            .unwrap(),
-            [0x77, 0xC1, 0xF7, 0x7C, 0x1F]
-        );
-        assert_eq!(
-            encode_with_alphabet(
-                &[0xF8, 0x3E, 0x7F, 0x83],
-                Rfc4648Lower {
-                    padding: true
-                }
-            ),
-            "7a7h7ay="
-        );
+    fn test_encode_into_string() {
+        for &(initial, input, alphabet, expected, desc) in ENCODE_INTO_STRING_VECTORS {
+            let mut s = alloc::string::String::from(initial);
+            encode_into_string(&mut s, input, alphabet);
+            assert_eq!(s, expected, "encode_into_string: {desc}");
+        }
+
+        // Multi-append
+        let mut s = alloc::string::String::from("~~");
+        encode_into_string(&mut s, b"hello", Alphabet::Rfc4648);
+        assert_eq!(s, "~~NBSWY3DP");
+        encode_into_string(&mut s, b"foo", Alphabet::Rfc4648);
+        assert_eq!(s, "~~NBSWY3DPMZXW6===");
+
+        // All alphabets
+        for alphabet in ALL_ALPHABETS {
+            let expected = encode(b"hello world", *alphabet);
+            let mut s = alloc::string::String::new();
+            encode_into_string(&mut s, b"hello world", *alphabet);
+            assert_eq!(s, expected, "encode_into_string alphabet {alphabet:?}");
+        }
     }
 
     #[test]
-    fn masks_rfc4648_hex() {
-        assert_eq!(
-            encode_with_alphabet(
-                &[0xF8, 0x3E, 0x7F, 0x83, 0xE7],
-                Rfc4648Hex {
-                    padding: false
-                }
-            ),
-            "V0V7V0V7"
-        );
-        assert_eq!(
-            encode_with_alphabet(
-                &[0x77, 0xC1, 0xF7, 0x7C, 0x1F],
-                Rfc4648Hex {
-                    padding: false
-                }
-            ),
-            "EV0VEV0V"
-        );
-        assert_eq!(
-            decode_with_alphabet(
-                "7A7H7A7H",
-                Rfc4648Hex {
-                    padding: false
-                }
-            )
-            .unwrap(),
-            [0x3A, 0x8F, 0x13, 0xA8, 0xF1]
-        );
-        assert_eq!(
-            decode_with_alphabet(
-                "O7A7O7A7",
-                Rfc4648Hex {
-                    padding: false
-                }
-            )
-            .unwrap(),
-            [0xC1, 0xD4, 0x7C, 0x1D, 0x47]
-        );
-        assert_eq!(
-            encode_with_alphabet(
-                &[0xF8, 0x3E, 0x7F, 0x83],
-                Rfc4648Hex {
-                    padding: false
-                }
-            ),
-            "V0V7V0O"
-        );
-    }
-
-    #[test]
-    fn masks_rfc4648_hex_pad() {
-        assert_eq!(
-            encode_with_alphabet(
-                &[0xF8, 0x3E, 0x7F, 0x83, 0xE7],
-                Rfc4648Hex {
-                    padding: true
-                }
-            ),
-            "V0V7V0V7"
-        );
-        assert_eq!(
-            encode_with_alphabet(
-                &[0x77, 0xC1, 0xF7, 0x7C, 0x1F],
-                Rfc4648Hex {
-                    padding: true
-                }
-            ),
-            "EV0VEV0V"
-        );
-        assert_eq!(
-            decode_with_alphabet(
-                "7A7H7A7H",
-                Rfc4648Hex {
-                    padding: true
-                }
-            )
-            .unwrap(),
-            [0x3A, 0x8F, 0x13, 0xA8, 0xF1]
-        );
-        assert_eq!(
-            decode_with_alphabet(
-                "O7A7O7A7",
-                Rfc4648Hex {
-                    padding: true
-                }
-            )
-            .unwrap(),
-            [0xC1, 0xD4, 0x7C, 0x1D, 0x47]
-        );
-        assert_eq!(
-            encode_with_alphabet(
-                &[0xF8, 0x3E, 0x7F, 0x83],
-                Rfc4648Hex {
-                    padding: true
-                }
-            ),
-            "V0V7V0O="
-        );
-    }
-
-    #[test]
-    fn masks_rfc4648_hex_lower() {
-        assert_eq!(
-            encode_with_alphabet(
-                &[0xF8, 0x3E, 0x7F, 0x83, 0xE7],
-                Rfc4648HexLower {
-                    padding: false
-                }
-            ),
-            "v0v7v0v7"
-        );
-        assert_eq!(
-            encode_with_alphabet(
-                &[0x77, 0xC1, 0xF7, 0x7C, 0x1F],
-                Rfc4648HexLower {
-                    padding: false
-                }
-            ),
-            "ev0vev0v"
-        );
-        assert_eq!(
-            decode_with_alphabet(
-                "7a7h7a7h",
-                Rfc4648HexLower {
-                    padding: false
-                }
-            )
-            .unwrap(),
-            [0x3A, 0x8F, 0x13, 0xA8, 0xF1]
-        );
-        assert_eq!(
-            decode_with_alphabet(
-                "o7a7o7a7",
-                Rfc4648HexLower {
-                    padding: false
-                }
-            )
-            .unwrap(),
-            [0xC1, 0xD4, 0x7C, 0x1D, 0x47]
-        );
-        assert_eq!(
-            encode_with_alphabet(
-                &[0xF8, 0x3E, 0x7F, 0x83],
-                Rfc4648HexLower {
-                    padding: false
-                }
-            ),
-            "v0v7v0o"
-        );
-    }
-
-    #[test]
-    fn masks_rfc4648_hex_lower_pad() {
-        assert_eq!(
-            encode_with_alphabet(
-                &[0xF8, 0x3E, 0x7F, 0x83, 0xE7],
-                Rfc4648HexLower {
-                    padding: true
-                }
-            ),
-            "v0v7v0v7"
-        );
-        assert_eq!(
-            encode_with_alphabet(
-                &[0x77, 0xC1, 0xF7, 0x7C, 0x1F],
-                Rfc4648HexLower {
-                    padding: true
-                }
-            ),
-            "ev0vev0v"
-        );
-        assert_eq!(
-            decode_with_alphabet(
-                "7a7h7a7h",
-                Rfc4648HexLower {
-                    padding: true
-                }
-            )
-            .unwrap(),
-            [0x3A, 0x8F, 0x13, 0xA8, 0xF1]
-        );
-        assert_eq!(
-            decode_with_alphabet(
-                "o7a7o7a7",
-                Rfc4648HexLower {
-                    padding: true
-                }
-            )
-            .unwrap(),
-            [0xC1, 0xD4, 0x7C, 0x1D, 0x47]
-        );
-        assert_eq!(
-            encode_with_alphabet(
-                &[0xF8, 0x3E, 0x7F, 0x83],
-                Rfc4648HexLower {
-                    padding: true
-                }
-            ),
-            "v0v7v0o="
-        );
-    }
-
-    #[test]
-    fn masks_z() {
-        assert_eq!(encode_with_alphabet(&[0xF8, 0x3E, 0x0F, 0x83, 0xE0], Z), "9y9y9y9y");
-        assert_eq!(encode_with_alphabet(&[0x07, 0xC1, 0xF0, 0x7C, 0x1F], Z), "y9y9y9y9");
-        assert_eq!(decode_with_alphabet("9y9y9y9y", Z).unwrap(), [0xF8, 0x3E, 0x0F, 0x83, 0xE0]);
-        assert_eq!(decode_with_alphabet("y9y9y9y9", Z).unwrap(), [0x07, 0xC1, 0xF0, 0x7C, 0x1F]);
-    }
-
-    #[test]
-    fn padding() {
-        let num_padding = [0, 6, 4, 3, 1];
-        for i in 1..6 {
-            let encoded = encode_with_alphabet(
-                (0..(i as u8)).collect::<Vec<u8>>().as_ref(),
-                Rfc4648 {
-                    padding: true,
-                },
-            );
-            assert_eq!(encoded.len(), 8);
-            for j in 0..(num_padding[i % 5]) {
-                assert_eq!(encoded.as_bytes()[encoded.len() - j - 1], b'=');
-            }
-            for j in 0..(8 - num_padding[i % 5]) {
-                assert!(encoded.as_bytes()[j] != b'=');
+    fn test_roundtrip() {
+        for &len in ROUNDTRIP_SIZES {
+            let data: Vec<u8> = (0..len as u8).collect();
+            for alphabet in ALL_ALPHABETS {
+                let encoded = encode(&data, *alphabet);
+                let decoded = decode(encoded.as_bytes(), *alphabet).unwrap();
+                assert_eq!(decoded, data, "roundtrip len={len} alphabet={alphabet:?}");
             }
         }
     }
 
-    // #[test]
-    // fn invertible_crockford() {
-    //     fn test(data: Vec<u8>) -> bool {
-    //         decode(Crockford, encode(Crockford, data.as_ref()).as_ref()).unwrap() == data
-    //     }
-    //     quickcheck::quickcheck(test as fn(Vec<u8>) -> bool)
-    // }
+    #[test]
+    fn test_roundtrip_large() {
+        let size = 4096;
 
-    // #[test]
-    // fn invertible_rfc4648() {
-    //     fn test(data: Vec<u8>) -> bool {
-    //         decode(
-    //             Rfc4648 { padding: true },
-    //             encode(Rfc4648 { padding: true }, data.as_ref()).as_ref(),
-    //         )
-    //         .unwrap()
-    //             == data
-    //     }
-    //     quickcheck::quickcheck(test as fn(Vec<u8>) -> bool)
-    // }
-    // #[test]
-    // fn invertible_unpadded_rfc4648() {
-    //     fn test(data: Vec<u8>) -> bool {
-    //         decode(
-    //             Rfc4648 { padding: false },
-    //             encode(Rfc4648 { padding: false }, data.as_ref()).as_ref(),
-    //         )
-    //         .unwrap()
-    //             == data
-    //     }
-    //     quickcheck::quickcheck(test as fn(Vec<u8>) -> bool)
-    // }
+        let data = alloc::vec![0x00u8; size];
+        let elen = encoded_length(size, true).expect("encoded_len overflow");
+        let mut encoded = alloc::vec![0u8; elen];
+        encode_into_constant_time(&mut encoded, &data, Alphabet::Rfc4648).unwrap();
+        let mut decoded = alloc::vec![0u8; size];
+        decode_into_constant_time(&mut decoded, &encoded, Alphabet::Rfc4648).unwrap();
+        assert_eq!(decoded, data, "4096 zeroes constant-time");
 
-    // #[test]
-    // fn lower_case() {
-    //     fn test(data: Vec<B32>) -> bool {
-    //         let data: String = data.iter().map(|e| e.c as char).collect();
-    //         decode(Crockford, data.as_ref())
-    //             == decode(Crockford, data.to_ascii_lowercase().as_ref())
-    //     }
-    //     quickcheck::quickcheck(test as fn(Vec<B32>) -> bool)
-    // }
+        let data = alloc::vec![0xFFu8; size];
+        let mut encoded = alloc::vec![0u8; elen];
+        encode_into_constant_time(&mut encoded, &data, Alphabet::Rfc4648).unwrap();
+        decode_into_constant_time(&mut decoded, &encoded, Alphabet::Rfc4648).unwrap();
+        assert_eq!(decoded, data, "4096 0xFF constant-time");
+
+        let data: Vec<u8> = (0..=255).cycle().take(size).collect();
+        let encoded = encode(&data, Alphabet::Rfc4648);
+        let decoded = decode(encoded.as_bytes(), Alphabet::Rfc4648).unwrap();
+        assert_eq!(decoded, data, "4096 cycle dispatch");
+
+        let data: Vec<u8> = (0..=255).collect();
+        let mut s = alloc::string::String::new();
+        encode_into_string(&mut s, &data, Alphabet::Rfc4648);
+        let decoded = decode(s.as_bytes(), Alphabet::Rfc4648).unwrap();
+        assert_eq!(decoded, data, "256-byte encode_into_string roundtrip");
+
+        let data: Vec<u8> = (0..255).cycle().take(4096).collect();
+        let expected = encode(&data, Alphabet::Rfc4648);
+        let mut s = alloc::string::String::new();
+        encode_into_string(&mut s, &data, Alphabet::Rfc4648);
+        assert_eq!(s, expected, "4096-byte encode_into_string");
+    }
 
     #[test]
-    #[allow(non_snake_case)]
-    fn iIlL1_oO0() {
+    fn test_encode_all_single_bytes() {
+        for byte in 0..=255u8 {
+            for alphabet in &[
+                Alphabet::Rfc4648,
+                Alphabet::Rfc4648Lower,
+                Alphabet::Rfc4648Hex,
+                Alphabet::Rfc4648HexLower,
+                Alphabet::Crockford,
+            ] {
+                let padding = alphabet.is_padded();
+                let elen = encoded_length(1, padding).unwrap();
+                let mut encoded = alloc::vec![0u8; elen];
+                encode_into_constant_time(&mut encoded, &[byte], *alphabet).unwrap();
+                let mut decoded = [0u8; 1];
+                decode_into_constant_time(&mut decoded, &encoded, *alphabet).unwrap();
+                assert_eq!(decoded[0], byte, "single byte roundtrip {byte:#04x} alphabet={alphabet:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_decode_invalid_char_every_position() {
+        let mut out = [0u8; 128];
+
+        // 8 chars (1 full quad), invalid at positions 0..7
+        for pos in 0..8 {
+            let mut input = [b'A'; 8];
+            input[pos] = b'!';
+            assert_eq!(
+                decode_into_constant_time(&mut out, &input, Alphabet::Rfc4648),
+                Err(DecodeError::InvalidInput),
+                "invalid char at position {pos} in 8-char input"
+            );
+        }
+
+        // 64 chars (8 quads), invalid at positions 0..63
+        for pos in 0..64 {
+            let mut input = [b'A'; 64];
+            input[pos] = b'!';
+            assert_eq!(
+                decode_into_constant_time(&mut out, &input, Alphabet::Rfc4648),
+                Err(DecodeError::InvalidInput),
+                "invalid char at position {pos} in 64-char input"
+            );
+        }
+
+        // 72 chars (8 quads + 1 more quad), invalid at positions 0..71
+        for pos in 0..72 {
+            let mut input = [b'A'; 72];
+            input[pos] = b'!';
+            assert_eq!(
+                decode_into_constant_time(&mut out, &input, Alphabet::Rfc4648),
+                Err(DecodeError::InvalidInput),
+                "invalid char at position {pos} in 72-char input"
+            );
+        }
+
+        // Lower, hex, hex_lower, crockford alphabets
+        for pos in 0..8 {
+            let mut input = [b'a'; 8];
+            input[pos] = b'!';
+            assert_eq!(
+                decode_into_constant_time(&mut out, &input, Alphabet::Rfc4648Lower),
+                Err(DecodeError::InvalidInput)
+            );
+        }
+        for pos in 0..8 {
+            let mut input = [b'0'; 8];
+            input[pos] = b'!';
+            assert_eq!(
+                decode_into_constant_time(&mut out, &input, Alphabet::Rfc4648Hex),
+                Err(DecodeError::InvalidInput)
+            );
+        }
+        for pos in 0..8 {
+            let mut input = [b'0'; 8];
+            input[pos] = b'!';
+            assert_eq!(
+                decode_into_constant_time(&mut out, &input, Alphabet::Rfc4648HexLower),
+                Err(DecodeError::InvalidInput)
+            );
+        }
+        for pos in 0..8 {
+            let mut input = [b'0'; 8];
+            input[pos] = b'!';
+            assert_eq!(
+                decode_into_constant_time(&mut out, &input, Alphabet::Crockford),
+                Err(DecodeError::InvalidInput)
+            );
+        }
+    }
+
+    #[test]
+    fn test_decode_non_canonical_trailing_bits() {
+        let mut out = [0u8; 8];
+
+        // remaining == 2: bottom 2 bits of v1 must be zero
+        for &(input, expected) in &[
+            (b"AA======" as &[u8], Ok(())),
+            (b"AB======" as &[u8], Err(DecodeError::InvalidInput)),
+            (b"AC======" as &[u8], Err(DecodeError::InvalidInput)),
+            (b"AD======" as &[u8], Err(DecodeError::InvalidInput)),
+        ] {
+            assert_eq!(
+                decode_into_constant_time(&mut out, input, Alphabet::Rfc4648),
+                expected,
+                "non-canonical (rem=2): {:?}",
+                core::str::from_utf8(input)
+            );
+        }
+
+        // remaining == 4: bottom 4 bits of v3 must be zero
+        for &(input, expected) in &[
+            (b"MZXQ====" as &[u8], Ok(())),
+            (b"MZXR====" as &[u8], Err(DecodeError::InvalidInput)),
+        ] {
+            assert_eq!(
+                decode_into_constant_time(&mut out, input, Alphabet::Rfc4648),
+                expected,
+                "non-canonical (rem=4): {:?}",
+                core::str::from_utf8(input)
+            );
+        }
+
+        // remaining == 5: bottom 1 bit of v4 must be zero
+        for &(input, expected) in &[
+            (b"MZXW6===" as &[u8], Ok(())),
+            (b"MZXW7===" as &[u8], Err(DecodeError::InvalidInput)),
+        ] {
+            assert_eq!(
+                decode_into_constant_time(&mut out, input, Alphabet::Rfc4648),
+                expected,
+                "non-canonical (rem=5): {:?}",
+                core::str::from_utf8(input)
+            );
+        }
+
+        // remaining == 7: bottom 3 bits of v6 must be zero
+        assert_eq!(decode_into_constant_time(&mut out, b"NBSWY3DP", Alphabet::Rfc4648), Ok(()));
+    }
+
+    #[test]
+    fn test_decode_rejects_interior_padding() {
+        let mut out = [0u8; 8];
         assert_eq!(
-            decode_with_alphabet("IiLlOo", Crockford),
-            decode_with_alphabet("111100", Crockford)
+            decode_into_constant_time(&mut out, b"=AAA====", Alphabet::Rfc4648),
+            Err(DecodeError::InvalidInput)
+        );
+        assert_eq!(
+            decode_into_constant_time(&mut out, b"A=AA====", Alphabet::Rfc4648),
+            Err(DecodeError::InvalidInput)
+        );
+        assert_eq!(
+            decode_into_constant_time(&mut out, b"AA=A====", Alphabet::Rfc4648),
+            Err(DecodeError::InvalidInput)
+        );
+        assert_eq!(
+            decode_into_constant_time(&mut out, b"AAA=====", Alphabet::Rfc4648),
+            Err(DecodeError::InvalidPadding)
         );
     }
 
     #[test]
-    fn invalid_chars_crockford() {
-        assert_eq!(decode_with_alphabet(",", Crockford), Err(Error::InvalidInput))
+    fn test_roundtrip_simd_boundary_sizes() {
+        let mut data_buf = Vec::new();
+        let mut enc_buf = Vec::new();
+
+        for &input_len in SIMD_BOUNDARY_SIZES {
+            data_buf.clear();
+            for b in 0..input_len {
+                data_buf.push(b as u8);
+            }
+
+            for alphabet in &[Alphabet::Rfc4648, Alphabet::Rfc4648NoPadding] {
+                let padding = alphabet.is_padded();
+                let elen = encoded_length(input_len, padding).expect("encoded_len overflow");
+                enc_buf.resize(elen, 0);
+                encode_into_constant_time(&mut enc_buf, &data_buf, *alphabet).unwrap();
+
+                let mut decoded = alloc::vec![0u8; input_len];
+                assert_eq!(
+                    decode_into_constant_time(&mut decoded, &enc_buf, *alphabet),
+                    Ok(()),
+                    "decode failed len={input_len} alphabet={alphabet:?}"
+                );
+                assert_eq!(&decoded, &data_buf, "roundtrip mismatch len={input_len} alphabet={alphabet:?}");
+            }
+        }
     }
 
     #[test]
-    fn invalid_chars_rfc4648() {
-        assert_eq!(
-            decode_with_alphabet(
-                ",",
-                Rfc4648 {
-                    padding: true
-                }
-            ),
-            Err(Error::InvalidInput)
-        )
+    fn test_const_encode() {
+        const RESULT: [u8; 8] = encode_array::<8>(b"hello", Alphabet::Rfc4648);
+        assert_eq!(&RESULT, b"NBSWY3DP");
+
+        const RESULT_EMPTY: [u8; 0] = encode_array::<0>(b"", Alphabet::Rfc4648);
+        assert_eq!(RESULT_EMPTY.len(), 0);
+
+        const RESULT_CROCKFORD: [u8; 8] = encode_array::<8>(b"hello", Alphabet::Crockford);
+        assert_eq!(&RESULT_CROCKFORD, b"D1JPRV3F");
     }
 
     #[test]
-    fn invalid_chars_unpadded_rfc4648() {
+    fn test_const_decode() {
+        const RESULT: Result<[u8; 5], DecodeError> = decode_array::<5>(b"NBSWY3DP", Alphabet::Rfc4648);
+        assert_eq!(RESULT.unwrap(), *b"hello");
+
+        const RESULT_EMPTY: Result<[u8; 0], DecodeError> = decode_array::<0>(b"", Alphabet::Rfc4648);
+        assert_eq!(RESULT_EMPTY.unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_const_decode_error() {
+        const ERR_INVALID: Result<[u8; 5], DecodeError> = decode_array::<5>(b"D1JPRV!!", Alphabet::Crockford);
+        assert_eq!(ERR_INVALID, Err(DecodeError::InvalidInput));
+    }
+
+    #[test]
+    fn test_buffer_management() {
+        let mut out = [0u8; 1];
         assert_eq!(
-            decode_with_alphabet(
-                ",",
-                Rfc4648 {
-                    padding: false
-                }
-            ),
-            Err(Error::InvalidInput)
-        )
+            encode_into(&mut out, b"hello", Alphabet::Rfc4648),
+            Err(EncodeError::InvalidOutputLength)
+        );
+
+        let mut out = [0u8; 5];
+        decode_into(&mut out, b"NBSWY3DP", Alphabet::Rfc4648).unwrap();
+        assert_eq!(&out, b"hello");
+
+        let mut out = [0u8; 1];
+        assert_eq!(
+            decode_into(&mut out, b"NBSWY3DP", Alphabet::Rfc4648),
+            Err(DecodeError::InvalidLength)
+        );
+
+        // Exact output size decode
+        let mut remainders = [0u8; 80];
+        let mut output = [0u8; 80];
+        for len in 1..=80 {
+            for i in 0..len {
+                remainders[i] = (i * 7 + 3) as u8;
+            }
+            let encoded = encode(&remainders[..len], Alphabet::Rfc4648);
+            let expected_output_len = len;
+            let r = decode_into(&mut output[..expected_output_len], encoded.as_bytes(), Alphabet::Rfc4648);
+            assert!(r.is_ok(), "decode_into failed at len {}", len);
+            assert_eq!(&output[..expected_output_len], &remainders[..len], "mismatch at len {}", len);
+        }
+    }
+
+    #[test]
+    fn test_display_error() {
+        assert_eq!(format!("{}", DecodeError::InvalidInput), "invalid base32 character");
+        assert_eq!(format!("{}", DecodeError::InvalidLength), "invalid base32 length");
+        assert_eq!(format!("{}", DecodeError::InvalidPadding), "invalid base32 padding");
+        assert_eq!(
+            format!("{}", EncodeError::InvalidOutputLength),
+            "output buffer size is not valid"
+        );
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn test_serde() {
+        #[derive(::serde::Serialize, ::serde::Deserialize)]
+        struct Data(#[serde(with = "crate::serde")] Vec<u8>);
+
+        let data = Data(b"hello world".to_vec());
+        let json = ::serde_json::to_string(&data).unwrap();
+        assert_eq!(json, "\"NBSWY3DPEB3W64TMMQ======\"");
+        let deserialized: Data = ::serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.0, b"hello world");
     }
 }
-
-#[cfg(doctest)]
-#[doc = include_str!("../README.md")]
-struct Readme;
