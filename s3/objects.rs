@@ -370,7 +370,7 @@ fn delete_objects_checksum_headers(body: &[u8]) -> [(String, String); 2] {
 }
 
 fn checksum_sha256(body: &[u8]) -> String {
-    base64::encode_with_alphabet(Sha256::hash(body).as_ref(), base64::Alphabet::Standard)
+    base64::encode(Sha256::hash(body).as_ref(), base64::Alphabet::Standard)
 }
 
 #[derive(Debug, Serialize)]

@@ -673,12 +673,12 @@ pub fn verify_password(password: &[u8], encoded: &str) -> Result<(), Argon2Error
 
 #[cfg(feature = "alloc")]
 fn base64_encode_no_pad(input: &[u8]) -> String {
-    base64::encode_with_alphabet(input, base64::Alphabet::StandardNoPadding)
+    base64::encode(input, base64::Alphabet::StandardNoPadding)
 }
 
 #[cfg(feature = "alloc")]
 fn base64_decode_no_pad(input: &str) -> Result<Vec<u8>, ()> {
-    base64::decode_with_alphabet(input.as_bytes(), base64::Alphabet::StandardNoPadding).map_err(|_| ())
+    base64::decode(input.as_bytes(), base64::Alphabet::StandardNoPadding).map_err(|_| ())
 }
 
 #[cfg(feature = "alloc")]

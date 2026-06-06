@@ -117,7 +117,7 @@ pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) ->
             }
         };
         let out_slice = core::slice::from_raw_parts_mut(out, out_len);
-        encode_into_constant_time(out_slice, data_slice, alphabet)?;
+        return encode_into_constant_time(out_slice, data_slice, alphabet);
     }
 
     Ok(())

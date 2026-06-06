@@ -412,7 +412,7 @@ fn parse_one_block<'a>(input: &'a [u8], pos: &mut usize) -> Result<Block<'a>, Pe
         .filter(|&b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=')
         .collect();
 
-    let contents = base64::decode(&b64_clean)?;
+    let contents = base64::decode(&b64_clean, base64::Alphabet::Standard)?;
 
     return Ok(Block {
         r#type,
@@ -855,7 +855,7 @@ SGVsbG8gV29ybGQ=\n\
     fn openssl_test_vector() {
         let der: Vec<u8> = (0u8..48).collect();
 
-        let b64 = base64::encode(&der);
+        let b64 = base64::encode(&der, base64::Alphabet::Standard);
         let mut lines = Vec::new();
         for chunk in b64.as_bytes().chunks(64) {
             lines.push(core::str::from_utf8(chunk).unwrap().to_string());
@@ -891,7 +891,7 @@ SGVsbG8gV29ybGQ=\n\
     #[test]
     fn python_generated_vector() {
         let data = b"Hello from Python!";
-        let b64 = base64::encode(data);
+        let b64 = base64::encode(data, base64::Alphabet::Standard);
         let pem = alloc::format!("-----BEGIN PYTHON DATA-----\n{}\n-----END PYTHON DATA-----\n", b64);
 
         let decoded: Vec<Result<Block<'_>, PemError<'_>>> = decode(pem.as_bytes()).collect();
@@ -905,7 +905,7 @@ SGVsbG8gV29ybGQ=\n\
         pem.push_str("Content-Type: application/octet-stream\n");
         pem.push_str("Content-Transfer-Encoding: base64\n");
         pem.push('\n');
-        let b64 = base64::encode(b"Python header data");
+        let b64 = base64::encode(b"Python header data", base64::Alphabet::Standard);
         pem.push_str(&b64);
         pem.push('\n');
         pem.push_str("-----END PYTHON DATA-----\n");

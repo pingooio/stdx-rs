@@ -70,7 +70,7 @@ mod pkcs8_serde {
     where
         S: Serializer,
     {
-        let encoded = base64::encode_with_alphabet(key_pkcs8.as_ref(), base64::Alphabet::UrlNoPadding);
+        let encoded = base64::encode(key_pkcs8.as_ref(), base64::Alphabet::UrlNoPadding);
         serializer.serialize_str(&encoded)
     }
 
@@ -88,7 +88,7 @@ mod pkcs8_serde {
             where
                 E: de::Error,
             {
-                base64::decode_with_alphabet(v, base64::Alphabet::UrlNoPadding).map_err(de::Error::custom)
+                base64::decode(v, base64::Alphabet::UrlNoPadding).map_err(de::Error::custom)
             }
         }
 
@@ -152,7 +152,7 @@ pub(crate) struct FinalizeRequest {
 impl FinalizeRequest {
     pub(crate) fn new(csr_der: &[u8]) -> Self {
         Self {
-            csr: base64::encode_with_alphabet(csr_der, base64::Alphabet::UrlNoPadding),
+            csr: base64::encode(csr_der, base64::Alphabet::UrlNoPadding),
         }
     }
 }
@@ -200,8 +200,8 @@ impl Jwk {
             crv: "P-256",
             kty: "EC",
             r#use: "sig",
-            x: base64::encode_with_alphabet(x, base64::Alphabet::UrlNoPadding),
-            y: base64::encode_with_alphabet(y, base64::Alphabet::UrlNoPadding),
+            x: base64::encode(x, base64::Alphabet::UrlNoPadding),
+            y: base64::encode(y, base64::Alphabet::UrlNoPadding),
         }
     }
 
@@ -380,7 +380,7 @@ impl JoseJson {
         Ok(Self {
             protected,
             payload,
-            signature: base64::encode_with_alphabet(signature.as_ref(), base64::Alphabet::UrlNoPadding),
+            signature: base64::encode(signature.as_ref(), base64::Alphabet::UrlNoPadding),
         })
     }
 }
@@ -395,7 +395,7 @@ pub(crate) trait Signer {
 
 fn base64(data: &impl Serialize) -> Result<String, serde_json::Error> {
     let json_data = serde_json::to_vec(data)?;
-    let encoded_json_data = base64::encode_with_alphabet(&json_data, base64::Alphabet::UrlNoPadding);
+    let encoded_json_data = base64::encode(&json_data, base64::Alphabet::UrlNoPadding);
     return Ok(encoded_json_data);
 }
 

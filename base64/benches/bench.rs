@@ -30,7 +30,7 @@ fn bench_decode(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(size as u64));
 
         let mut data = vec![0xABu8; size];
-        let encoded = encode(&data);
+        let encoded = encode(&data, Alphabet::Standard);
 
         group.bench_with_input(
             BenchmarkId::from_parameter("scalar (constant time)"),
