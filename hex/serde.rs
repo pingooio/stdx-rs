@@ -39,7 +39,7 @@ impl<'de> Visitor<'de> for HexVisitor {
 
     fn visit_str<E: de::Error>(self, v: &str) -> Result<Vec<u8>, E> {
         let mut output = vec![0u8; v.len() / 2];
-        decode_into(&mut output, v.as_bytes(), FORMAT).map_err(de::Error::custom)?;
+        decode_into(&mut output, v.as_bytes()).map_err(de::Error::custom)?;
         Ok(output)
     }
 

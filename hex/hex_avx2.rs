@@ -9,7 +9,10 @@ use crate::{Alphabet, Error};
 /// for the remaining tail.
 ///
 /// Processes 32 input bytes per iteration with AVX2, then encodes any
-/// remaining bytes (< 32) via `encode_into_scalar`.
+/// remaining bytes (< 32) via `encode_into_constant_time`.
+///
+/// # Safety
+/// Caller must ensure that AVX2 is available.
 #[target_feature(enable = "avx2")]
 pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) {
     debug_assert!(output.len() >= data.len() * 2);
@@ -35,8 +38,11 @@ pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) {
         let lo_hex = _mm256_shuffle_epi8(table, lo);
         let hi_hex = _mm256_shuffle_epi8(table, hi);
 
-        let result0 = _mm256_unpacklo_epi8(hi_hex, lo_hex);
-        let result1 = _mm256_unpackhi_epi8(hi_hex, lo_hex);
+        let tmp0 = _mm256_unpacklo_epi8(hi_hex, lo_hex);
+        let tmp1 = _mm256_unpackhi_epi8(hi_hex, lo_hex);
+
+        let result0 = _mm256_permute2x128_si256(tmp0, tmp1, 0x20);
+        let result1 = _mm256_permute2x128_si256(tmp0, tmp1, 0x31);
 
         let o = i * 2;
         _mm256_storeu_si256(output.as_mut_ptr().add(o).cast(), result0);
@@ -46,7 +52,7 @@ pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) {
     }
 
     if i < len {
-        crate::encode_into_scalar(&mut output[i * 2..], &data[i..], alphabet);
+        crate::encode_into_constant_time(&mut output[i * 2..], &data[i..], alphabet);
     }
 }
 
@@ -54,7 +60,10 @@ pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) {
 /// for the remaining tail.
 ///
 /// Processes 32 hex chars (16 output bytes) per iteration with AVX2,
-/// then decodes any remaining hex chars (< 32) via `decode_into_scalar`.
+/// then decodes any remaining hex chars (< 32) via `decode_into_constant_time`.
+///
+/// # Safety
+/// Caller must ensure that AVX2 is available.
 #[target_feature(enable = "avx2")]
 pub unsafe fn decode_into(output: &mut [u8], input: &[u8]) -> Result<(), Error> {
     debug_assert!(input.len() % 2 == 0);
@@ -118,7 +127,7 @@ pub unsafe fn decode_into(output: &mut [u8], input: &[u8]) -> Result<(), Error> 
     }
 
     if i < in_len {
-        crate::decode_into_scalar(&mut output[i / 2..], &input[i..])?;
+        crate::decode_into_constant_time(&mut output[i / 2..], &input[i..])?;
     }
 
     Ok(())

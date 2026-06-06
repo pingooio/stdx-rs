@@ -6,7 +6,7 @@ use crate::{Alphabet, Error};
 /// for the remaining tail.
 ///
 /// Processes 16 input bytes per iteration with NEON, then encodes any
-/// remaining bytes (< 16) via `encode_into_scalar`.
+/// remaining bytes (< 16) via `encode_into_constant_time`.
 #[target_feature(enable = "neon")]
 pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) {
     debug_assert!(output.len() >= data.len() * 2);
@@ -44,7 +44,7 @@ pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) {
     }
 
     if i < len {
-        crate::encode_into_scalar(&mut output[i * 2..], &data[i..], alphabet);
+        crate::encode_into_constant_time(&mut output[i * 2..], &data[i..], alphabet);
     }
 }
 
@@ -52,7 +52,7 @@ pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) {
 /// for the remaining tail.
 ///
 /// Processes 32 hex chars (16 output bytes) per iteration with NEON,
-/// then decodes any remaining hex chars (< 32) via `decode_into_scalar`.
+/// then decodes any remaining hex chars (< 32) via `decode_into_constant_time`.
 #[allow(non_snake_case)]
 #[target_feature(enable = "neon")]
 pub unsafe fn decode_into(output: &mut [u8], input: &[u8]) -> Result<(), Error> {
@@ -126,7 +126,7 @@ pub unsafe fn decode_into(output: &mut [u8], input: &[u8]) -> Result<(), Error> 
     }
 
     if i < in_len {
-        crate::decode_into_scalar(&mut output[i / 2..], &input[i..])?;
+        crate::decode_into_constant_time(&mut output[i / 2..], &input[i..])?;
     }
 
     Ok(())

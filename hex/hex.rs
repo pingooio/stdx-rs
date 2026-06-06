@@ -7,8 +7,6 @@ extern crate alloc;
 #[cfg(all(feature = "serde", any(feature = "alloc", test)))]
 mod serde;
 
-use core::fmt;
-
 #[cfg(target_arch = "aarch64")]
 mod hex_neon;
 
@@ -17,22 +15,6 @@ mod hex_avx2;
 
 const ALPHABET_LOWER: [u8; 16] = *b"0123456789abcdef";
 const ALPHABET_UPPER: [u8; 16] = *b"0123456789ABCDEF";
-
-const DECODE_TABLE: [u8; 256] = {
-    let mut table = [0x10u8; 256];
-    let mut i: usize = 0;
-    while i < 10 {
-        table[b'0' as usize + i] = i as u8;
-        i += 1;
-    }
-    i = 0;
-    while i < 6 {
-        table[b'a' as usize + i] = 10 + i as u8;
-        table[b'A' as usize + i] = 10 + i as u8;
-        i += 1;
-    }
-    table
-};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Alphabet {
@@ -47,8 +29,8 @@ pub enum Error {
 }
 
 #[cfg(any(feature = "alloc", test))]
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::InvalidInput => f.write_str("invalid hex character"),
             Self::InvalidLength => f.write_str("odd number of hex characters"),
@@ -85,11 +67,11 @@ pub fn encode_with_alphabet(data: impl AsRef<[u8]>, alphabet: Alphabet) -> alloc
 /// assert_eq!(&HEX, b"deadbeef");
 /// ```
 pub const fn encode_array<const OUT: usize>(data: &[u8], alphabet: Alphabet) -> [u8; OUT] {
-    if data.len() * 2 > OUT {
-        panic!("encode_array: output array too small");
+    if data.len() * 2 != OUT {
+        panic!("encode_array: output array size must be exactly data.len() * 2");
     }
     let mut result = [0u8; OUT];
-    encode_into_scalar(&mut result, data, alphabet);
+    encode_into_constant_time(&mut result, data, alphabet);
     result
 }
 
@@ -97,7 +79,7 @@ pub fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) {
     assert!(output.len() >= data.len() * 2, "output buffer is too small");
 
     #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-    if data.len() >= 32 {
+    if data.len() >= 16 {
         return unsafe { hex_neon::encode_into(output, data, alphabet) };
     }
 
@@ -106,20 +88,17 @@ pub fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) {
         return unsafe { hex_avx2::encode_into(output, data, alphabet) };
     }
 
-    encode_into_scalar(output, data, alphabet);
+    encode_into_constant_time(output, data, alphabet);
 }
 
-/// Pure-scalar hex encoding. Exposed publicly for benchmarking only.
-/// Consumers should use [`encode_into`] instead, which dispatches to
-/// a SIMD-accelerated path when available.
-#[doc(hidden)]
-pub const fn encode_into_scalar(output: &mut [u8], data: &[u8], alphabet: Alphabet) {
+/// Constant-time hex encoding. Processes all input data without
+/// secret-dependent branches or memory accesses, making it suitable
+/// for cryptographic applications.
+///
+/// Consumers may prefer the faster [`encode_into`] which dispatches to
+/// a SIMD-accelerated path when available (non constant-time).
+pub const fn encode_into_constant_time(output: &mut [u8], data: &[u8], alphabet: Alphabet) {
     assert!(output.len() >= data.len() * 2, "output buffer is too small");
-
-    let table = match alphabet {
-        Alphabet::Lower => &ALPHABET_LOWER,
-        Alphabet::Upper => &ALPHABET_UPPER,
-    };
 
     let mut i = 0;
     let len = data.len();
@@ -143,38 +122,38 @@ pub const fn encode_into_scalar(output: &mut [u8], data: &[u8], alphabet: Alphab
         let b15 = data[i + 15];
 
         let o = i * 2;
-        output[o] = table[(b0 >> 4) as usize];
-        output[o + 1] = table[(b0 & 0x0F) as usize];
-        output[o + 2] = table[(b1 >> 4) as usize];
-        output[o + 3] = table[(b1 & 0x0F) as usize];
-        output[o + 4] = table[(b2 >> 4) as usize];
-        output[o + 5] = table[(b2 & 0x0F) as usize];
-        output[o + 6] = table[(b3 >> 4) as usize];
-        output[o + 7] = table[(b3 & 0x0F) as usize];
-        output[o + 8] = table[(b4 >> 4) as usize];
-        output[o + 9] = table[(b4 & 0x0F) as usize];
-        output[o + 10] = table[(b5 >> 4) as usize];
-        output[o + 11] = table[(b5 & 0x0F) as usize];
-        output[o + 12] = table[(b6 >> 4) as usize];
-        output[o + 13] = table[(b6 & 0x0F) as usize];
-        output[o + 14] = table[(b7 >> 4) as usize];
-        output[o + 15] = table[(b7 & 0x0F) as usize];
-        output[o + 16] = table[(b8 >> 4) as usize];
-        output[o + 17] = table[(b8 & 0x0F) as usize];
-        output[o + 18] = table[(b9 >> 4) as usize];
-        output[o + 19] = table[(b9 & 0x0F) as usize];
-        output[o + 20] = table[(b10 >> 4) as usize];
-        output[o + 21] = table[(b10 & 0x0F) as usize];
-        output[o + 22] = table[(b11 >> 4) as usize];
-        output[o + 23] = table[(b11 & 0x0F) as usize];
-        output[o + 24] = table[(b12 >> 4) as usize];
-        output[o + 25] = table[(b12 & 0x0F) as usize];
-        output[o + 26] = table[(b13 >> 4) as usize];
-        output[o + 27] = table[(b13 & 0x0F) as usize];
-        output[o + 28] = table[(b14 >> 4) as usize];
-        output[o + 29] = table[(b14 & 0x0F) as usize];
-        output[o + 30] = table[(b15 >> 4) as usize];
-        output[o + 31] = table[(b15 & 0x0F) as usize];
+        output[o] = nibble_to_hex(b0 >> 4, alphabet);
+        output[o + 1] = nibble_to_hex(b0 & 0x0F, alphabet);
+        output[o + 2] = nibble_to_hex(b1 >> 4, alphabet);
+        output[o + 3] = nibble_to_hex(b1 & 0x0F, alphabet);
+        output[o + 4] = nibble_to_hex(b2 >> 4, alphabet);
+        output[o + 5] = nibble_to_hex(b2 & 0x0F, alphabet);
+        output[o + 6] = nibble_to_hex(b3 >> 4, alphabet);
+        output[o + 7] = nibble_to_hex(b3 & 0x0F, alphabet);
+        output[o + 8] = nibble_to_hex(b4 >> 4, alphabet);
+        output[o + 9] = nibble_to_hex(b4 & 0x0F, alphabet);
+        output[o + 10] = nibble_to_hex(b5 >> 4, alphabet);
+        output[o + 11] = nibble_to_hex(b5 & 0x0F, alphabet);
+        output[o + 12] = nibble_to_hex(b6 >> 4, alphabet);
+        output[o + 13] = nibble_to_hex(b6 & 0x0F, alphabet);
+        output[o + 14] = nibble_to_hex(b7 >> 4, alphabet);
+        output[o + 15] = nibble_to_hex(b7 & 0x0F, alphabet);
+        output[o + 16] = nibble_to_hex(b8 >> 4, alphabet);
+        output[o + 17] = nibble_to_hex(b8 & 0x0F, alphabet);
+        output[o + 18] = nibble_to_hex(b9 >> 4, alphabet);
+        output[o + 19] = nibble_to_hex(b9 & 0x0F, alphabet);
+        output[o + 20] = nibble_to_hex(b10 >> 4, alphabet);
+        output[o + 21] = nibble_to_hex(b10 & 0x0F, alphabet);
+        output[o + 22] = nibble_to_hex(b11 >> 4, alphabet);
+        output[o + 23] = nibble_to_hex(b11 & 0x0F, alphabet);
+        output[o + 24] = nibble_to_hex(b12 >> 4, alphabet);
+        output[o + 25] = nibble_to_hex(b12 & 0x0F, alphabet);
+        output[o + 26] = nibble_to_hex(b13 >> 4, alphabet);
+        output[o + 27] = nibble_to_hex(b13 & 0x0F, alphabet);
+        output[o + 28] = nibble_to_hex(b14 >> 4, alphabet);
+        output[o + 29] = nibble_to_hex(b14 & 0x0F, alphabet);
+        output[o + 30] = nibble_to_hex(b15 >> 4, alphabet);
+        output[o + 31] = nibble_to_hex(b15 & 0x0F, alphabet);
 
         i += 16;
     }
@@ -182,9 +161,27 @@ pub const fn encode_into_scalar(output: &mut [u8], data: &[u8], alphabet: Alphab
     while i < len {
         let b = data[i];
         let o = i * 2;
-        output[o] = table[(b >> 4) as usize];
-        output[o + 1] = table[(b & 0x0F) as usize];
+        output[o] = nibble_to_hex(b >> 4, alphabet);
+        output[o + 1] = nibble_to_hex(b & 0x0F, alphabet);
         i += 1;
+    }
+}
+
+#[inline]
+const fn nibble_to_hex(nibble: u8, alphabet: Alphabet) -> u8 {
+    let nibble = nibble & 0x0F;
+    let digit_mask = (((nibble as i16) - 10) >> 8) as u8;
+
+    let digit_val = b'0' + nibble;
+    let letter_val = b'a' + nibble - 10;
+    let upper_val = b'A' + nibble - 10;
+
+    let lower_result = (digit_val & digit_mask) | (letter_val & !digit_mask);
+    let upper_result = (digit_val & digit_mask) | (upper_val & !digit_mask);
+
+    match alphabet {
+        Alphabet::Lower => lower_result,
+        Alphabet::Upper => upper_result,
     }
 }
 
@@ -218,7 +215,7 @@ pub const fn decode_array<const OUT: usize>(encoded_data: &[u8]) -> Result<[u8; 
     }
 
     let mut result = [0u8; OUT];
-    match decode_into_scalar(&mut result, encoded_data) {
+    match decode_into_constant_time(&mut result, encoded_data) {
         Ok(_) => {}
         Err(err) => return Err(err),
     }
@@ -244,14 +241,20 @@ pub fn decode_into(output: &mut [u8], encoded_data: &[u8]) -> Result<(), Error> 
         return unsafe { hex_avx2::decode_into(output, encoded_data) };
     }
 
-    decode_into_scalar(output, encoded_data)
+    decode_into_constant_time(output, encoded_data)
 }
 
-/// Pure-scalar hex decoding. Exposed publicly for benchmarking only.
-/// Consumers should use [`decode_into`] instead, which dispatches to
-/// a SIMD-accelerated path when available.
-#[doc(hidden)]
-pub const fn decode_into_scalar(output: &mut [u8], encoded_data: &[u8]) -> Result<(), Error> {
+/// Constant-time hex decoding. Processes all input data without
+/// secret-dependent branches or memory accesses, making it suitable
+/// for cryptographic applications.
+///
+/// Note that `output` is written even when `Err` is returned, which is
+/// required for constant-time operation. Callers must not rely on the
+/// contents of `output` when an error is returned.
+///
+/// Consumers may prefer the faster [`decode_into`] which dispatches to
+/// a SIMD-accelerated path when available (non constant-time).
+pub const fn decode_into_constant_time(output: &mut [u8], encoded_data: &[u8]) -> Result<(), Error> {
     let in_len = encoded_data.len();
     if in_len % 2 != 0 {
         return Err(Error::InvalidLength);
@@ -261,108 +264,121 @@ pub const fn decode_into_scalar(output: &mut [u8], encoded_data: &[u8]) -> Resul
     }
 
     let mut i = 0;
+    let mut err: u8 = 0;
 
     while i + 32 <= in_len {
-        let mut valid: u8 = 0;
-
-        let h0 = DECODE_TABLE[encoded_data[i] as usize];
-        let l0 = DECODE_TABLE[encoded_data[i + 1] as usize];
-        valid |= h0 | l0;
+        let h0 = nibble_from_hex(encoded_data[i]);
+        let l0 = nibble_from_hex(encoded_data[i + 1]);
+        err |= h0 | l0;
         output[i / 2] = (h0 << 4) | l0;
 
-        let h1 = DECODE_TABLE[encoded_data[i + 2] as usize];
-        let l1 = DECODE_TABLE[encoded_data[i + 3] as usize];
-        valid |= h1 | l1;
+        let h1 = nibble_from_hex(encoded_data[i + 2]);
+        let l1 = nibble_from_hex(encoded_data[i + 3]);
+        err |= h1 | l1;
         output[i / 2 + 1] = (h1 << 4) | l1;
 
-        let h2 = DECODE_TABLE[encoded_data[i + 4] as usize];
-        let l2 = DECODE_TABLE[encoded_data[i + 5] as usize];
-        valid |= h2 | l2;
+        let h2 = nibble_from_hex(encoded_data[i + 4]);
+        let l2 = nibble_from_hex(encoded_data[i + 5]);
+        err |= h2 | l2;
         output[i / 2 + 2] = (h2 << 4) | l2;
 
-        let h3 = DECODE_TABLE[encoded_data[i + 6] as usize];
-        let l3 = DECODE_TABLE[encoded_data[i + 7] as usize];
-        valid |= h3 | l3;
+        let h3 = nibble_from_hex(encoded_data[i + 6]);
+        let l3 = nibble_from_hex(encoded_data[i + 7]);
+        err |= h3 | l3;
         output[i / 2 + 3] = (h3 << 4) | l3;
 
-        let h4 = DECODE_TABLE[encoded_data[i + 8] as usize];
-        let l4 = DECODE_TABLE[encoded_data[i + 9] as usize];
-        valid |= h4 | l4;
+        let h4 = nibble_from_hex(encoded_data[i + 8]);
+        let l4 = nibble_from_hex(encoded_data[i + 9]);
+        err |= h4 | l4;
         output[i / 2 + 4] = (h4 << 4) | l4;
 
-        let h5 = DECODE_TABLE[encoded_data[i + 10] as usize];
-        let l5 = DECODE_TABLE[encoded_data[i + 11] as usize];
-        valid |= h5 | l5;
+        let h5 = nibble_from_hex(encoded_data[i + 10]);
+        let l5 = nibble_from_hex(encoded_data[i + 11]);
+        err |= h5 | l5;
         output[i / 2 + 5] = (h5 << 4) | l5;
 
-        let h6 = DECODE_TABLE[encoded_data[i + 12] as usize];
-        let l6 = DECODE_TABLE[encoded_data[i + 13] as usize];
-        valid |= h6 | l6;
+        let h6 = nibble_from_hex(encoded_data[i + 12]);
+        let l6 = nibble_from_hex(encoded_data[i + 13]);
+        err |= h6 | l6;
         output[i / 2 + 6] = (h6 << 4) | l6;
 
-        let h7 = DECODE_TABLE[encoded_data[i + 14] as usize];
-        let l7 = DECODE_TABLE[encoded_data[i + 15] as usize];
-        valid |= h7 | l7;
+        let h7 = nibble_from_hex(encoded_data[i + 14]);
+        let l7 = nibble_from_hex(encoded_data[i + 15]);
+        err |= h7 | l7;
         output[i / 2 + 7] = (h7 << 4) | l7;
 
-        let h8 = DECODE_TABLE[encoded_data[i + 16] as usize];
-        let l8 = DECODE_TABLE[encoded_data[i + 17] as usize];
-        valid |= h8 | l8;
+        let h8 = nibble_from_hex(encoded_data[i + 16]);
+        let l8 = nibble_from_hex(encoded_data[i + 17]);
+        err |= h8 | l8;
         output[i / 2 + 8] = (h8 << 4) | l8;
 
-        let h9 = DECODE_TABLE[encoded_data[i + 18] as usize];
-        let l9 = DECODE_TABLE[encoded_data[i + 19] as usize];
-        valid |= h9 | l9;
+        let h9 = nibble_from_hex(encoded_data[i + 18]);
+        let l9 = nibble_from_hex(encoded_data[i + 19]);
+        err |= h9 | l9;
         output[i / 2 + 9] = (h9 << 4) | l9;
 
-        let h10 = DECODE_TABLE[encoded_data[i + 20] as usize];
-        let l10 = DECODE_TABLE[encoded_data[i + 21] as usize];
-        valid |= h10 | l10;
+        let h10 = nibble_from_hex(encoded_data[i + 20]);
+        let l10 = nibble_from_hex(encoded_data[i + 21]);
+        err |= h10 | l10;
         output[i / 2 + 10] = (h10 << 4) | l10;
 
-        let h11 = DECODE_TABLE[encoded_data[i + 22] as usize];
-        let l11 = DECODE_TABLE[encoded_data[i + 23] as usize];
-        valid |= h11 | l11;
+        let h11 = nibble_from_hex(encoded_data[i + 22]);
+        let l11 = nibble_from_hex(encoded_data[i + 23]);
+        err |= h11 | l11;
         output[i / 2 + 11] = (h11 << 4) | l11;
 
-        let h12 = DECODE_TABLE[encoded_data[i + 24] as usize];
-        let l12 = DECODE_TABLE[encoded_data[i + 25] as usize];
-        valid |= h12 | l12;
+        let h12 = nibble_from_hex(encoded_data[i + 24]);
+        let l12 = nibble_from_hex(encoded_data[i + 25]);
+        err |= h12 | l12;
         output[i / 2 + 12] = (h12 << 4) | l12;
 
-        let h13 = DECODE_TABLE[encoded_data[i + 26] as usize];
-        let l13 = DECODE_TABLE[encoded_data[i + 27] as usize];
-        valid |= h13 | l13;
+        let h13 = nibble_from_hex(encoded_data[i + 26]);
+        let l13 = nibble_from_hex(encoded_data[i + 27]);
+        err |= h13 | l13;
         output[i / 2 + 13] = (h13 << 4) | l13;
 
-        let h14 = DECODE_TABLE[encoded_data[i + 28] as usize];
-        let l14 = DECODE_TABLE[encoded_data[i + 29] as usize];
-        valid |= h14 | l14;
+        let h14 = nibble_from_hex(encoded_data[i + 28]);
+        let l14 = nibble_from_hex(encoded_data[i + 29]);
+        err |= h14 | l14;
         output[i / 2 + 14] = (h14 << 4) | l14;
 
-        let h15 = DECODE_TABLE[encoded_data[i + 30] as usize];
-        let l15 = DECODE_TABLE[encoded_data[i + 31] as usize];
-        valid |= h15 | l15;
+        let h15 = nibble_from_hex(encoded_data[i + 30]);
+        let l15 = nibble_from_hex(encoded_data[i + 31]);
+        err |= h15 | l15;
         output[i / 2 + 15] = (h15 << 4) | l15;
-
-        if valid & 0xF0 != 0 {
-            return Err(Error::InvalidInput);
-        }
 
         i += 32;
     }
 
     while i < in_len {
-        let h = DECODE_TABLE[encoded_data[i] as usize];
-        let l = DECODE_TABLE[encoded_data[i + 1] as usize];
-        if h >= 16 || l >= 16 {
-            return Err(Error::InvalidInput);
-        }
+        let h = nibble_from_hex(encoded_data[i]);
+        let l = nibble_from_hex(encoded_data[i + 1]);
+        err |= h | l;
         output[i / 2] = (h << 4) | l;
         i += 2;
     }
 
+    if err & 0xF0 != 0 {
+        return Err(Error::InvalidInput);
+    }
+
     Ok(())
+}
+
+#[inline]
+const fn nibble_from_hex(c: u8) -> u8 {
+    let is_digit = ((((c as i16) - (b'0' as i16)) | ((b'9' as i16) - (c as i16))) >> 8) as u8;
+    let is_lower = ((((c as i16) - (b'a' as i16)) | ((b'f' as i16) - (c as i16))) >> 8) as u8;
+    let is_upper = ((((c as i16) - (b'A' as i16)) | ((b'F' as i16) - (c as i16))) >> 8) as u8;
+
+    let digit_val = c.wrapping_sub(b'0');
+    let lower_val = c.wrapping_sub(b'a').wrapping_add(10);
+    let upper_val = c.wrapping_sub(b'A').wrapping_add(10);
+
+    let value = (digit_val & !is_digit) | (lower_val & !is_lower) | (upper_val & !is_upper);
+    let invalid = is_digit & is_lower & is_upper;
+
+    value | (invalid & 0xF0)
 }
 
 #[cfg(test)]
@@ -497,6 +513,68 @@ mod tests {
     }
 
     #[test]
+    fn rfc4648_test_vectors_encode() {
+        let vectors = [
+            (b"" as &[u8], ""),
+            (b"f", "66"),
+            (b"fo", "666F"),
+            (b"foo", "666F6F"),
+            (b"foob", "666F6F62"),
+            (b"fooba", "666F6F6261"),
+            (b"foobar", "666F6F626172"),
+        ];
+        for (input, expected) in &vectors {
+            assert_eq!(encode_with_alphabet(input, Alphabet::Upper), *expected);
+        }
+    }
+
+    #[test]
+    fn rfc4648_test_vectors_decode() {
+        let vectors = [
+            ("", b"" as &[u8]),
+            ("66", b"f"),
+            ("666F", b"fo"),
+            ("666F6F", b"foo"),
+            ("666F6F62", b"foob"),
+            ("666F6F6261", b"fooba"),
+            ("666F6F626172", b"foobar"),
+        ];
+        for (hex_str, expected) in &vectors {
+            assert_eq!(decode(hex_str.as_bytes()).unwrap(), *expected);
+        }
+    }
+
+    #[test]
+    fn rfc4648_test_vectors_lowercase() {
+        let vectors = [
+            ("66", b"f" as &[u8]),
+            ("666f", b"fo" as &[u8]),
+            ("666f6f", b"foo" as &[u8]),
+            ("666f6f62", b"foob" as &[u8]),
+            ("666f6f6261", b"fooba" as &[u8]),
+            ("666f6f626172", b"foobar" as &[u8]),
+        ];
+        for (hex_str, expected) in &vectors {
+            assert_eq!(decode(hex_str.as_bytes()).unwrap(), *expected);
+        }
+    }
+
+    #[test]
+    fn simd_boundary_nonuniform() {
+        let sizes = [
+            0, 1, 2, 3, 15, 16, 17, 31, 32, 33, 63, 64, 65, 95, 96, 127, 128, 129, 255, 256, 257,
+        ];
+        for &len in &sizes {
+            let data: Vec<u8> = (0..len)
+                .map(|i: usize| (i.wrapping_mul(17).wrapping_add(0xAB)) as u8)
+                .collect();
+            let hex = encode(&data);
+            let decoded = decode(hex.as_bytes()).unwrap();
+            assert_eq!(decoded, data, "non-uniform roundtrip failed for len={}", len);
+        }
+    }
+
+    #[test]
     fn decode_into_too_small() {
         let mut out = [0u8; 1];
         assert_eq!(decode_into(&mut out, b"0000"), Err(Error::InvalidLength));
@@ -538,14 +616,6 @@ mod tests {
     fn const_encode_empty() {
         const HEX: [u8; 0] = encode_array::<0>(b"", Alphabet::Lower);
         assert_eq!(HEX.len(), 0);
-    }
-
-    #[test]
-    fn const_encode_large_output() {
-        const DATA: [u8; 2] = [0xAB, 0xCD];
-        const HEX: [u8; 8] = encode_array::<8>(&DATA, Alphabet::Lower);
-        assert_eq!(&HEX[..4], b"abcd");
-        assert_eq!(&HEX[4..], &[0u8; 4]);
     }
 
     #[test]
