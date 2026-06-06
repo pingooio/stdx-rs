@@ -8,6 +8,23 @@ use serde::{
 
 use crate::{Alphabet, decode_into, encode_into};
 
+#[cfg_attr(
+    all(feature = "alloc", feature = "serde"),
+    doc = r##"
+# Example
+
+```
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize)]
+struct Foo {
+    #[serde(with = "hex")]
+    bar: Vec<u8>,
+}
+```
+"##
+)]
+
 const FORMAT: Alphabet = Alphabet::Lower;
 
 pub fn serialize<S: Serializer>(data: &[u8], serializer: S) -> Result<S::Ok, S::Error> {

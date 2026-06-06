@@ -44,7 +44,7 @@ pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) {
     }
 
     if i < len {
-        crate::encode_into_constant_time(&mut output[i * 2..], &data[i..], alphabet);
+        crate::encode_into_constant_time(&mut output[i * 2..], &data[i..], alphabet).unwrap();
     }
 }
 
