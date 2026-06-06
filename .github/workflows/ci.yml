@@ -15,6 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       - run: rustup update stable
+      - run: sudo apt-get update && sudo apt-get install -y binutils gcc
       - run: cargo test --package hex
       - run: cargo test --package base64
       - run: cargo test --package base32
