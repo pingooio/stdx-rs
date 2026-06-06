@@ -14,7 +14,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: rustup update stable
       - run: cargo test --package hex
       - run: cargo test --package base64
       - run: cargo test --package base32
+      - run: cargo test --package crypto
