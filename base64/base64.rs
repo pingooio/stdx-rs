@@ -89,6 +89,7 @@ pub fn encode_with_alphabet(data: impl AsRef<[u8]>, alphabet: Alphabet) -> alloc
     let len = encoded_length(data.len(), padding).expect("encoded length overflow");
     let mut output = alloc::vec![0u8; len];
     encode_into(&mut output, data, alphabet).unwrap();
+    // SAFETY: base64 only produces ASCII characters, which are valid UTF-8.
     unsafe { alloc::string::String::from_utf8_unchecked(output) }
 }
 
@@ -251,15 +252,20 @@ pub const fn encode_into_constant_time(output: &mut [u8], data: &[u8], alphabet:
 #[cfg(feature = "alloc")]
 pub fn encode_into_string(output: &mut alloc::string::String, data: &[u8], alphabet: Alphabet) {
     let padding = matches!(alphabet, Alphabet::Standard | Alphabet::Url);
-    let needed = encoded_length(data.len(), padding).expect("output length overflow");
-    let old_len = output.len();
-    // SAFETY: `as_mut_vec()` gives mutable access to the raw buffer.
-    // We extend it with zeros (valid UTF-8), write base64 ASCII over them
-    // (also valid UTF-8), so the String's UTF-8 invariant is never violated.
-    // No other references to `output` or its buffer exist during this time.
-    let vec = unsafe { output.as_mut_vec() };
-    vec.resize(old_len + needed, 0);
-    encode_into(&mut vec[old_len..], data, alphabet).unwrap();
+    let encoded_length = encoded_length(data.len(), padding).expect("output length overflow");
+    if encoded_length <= 256 {
+        // zero-alloc version for small data
+        let mut buf = [0u8; 256];
+        let mut buf = &mut buf[..encoded_length];
+        encode_into(&mut buf, data, alphabet).unwrap();
+        // SAFETY: base64 only produces ASCII characters, which are valid UTF-8.
+        output.push_str(unsafe { core::str::from_utf8_unchecked(&buf) });
+    } else {
+        let mut buf = alloc::vec![0u8; encoded_length];
+        encode_into(&mut buf, data, alphabet).unwrap();
+        // SAFETY: base64 only produces ASCII characters, which are valid UTF-8.
+        output.push_str(unsafe { core::str::from_utf8_unchecked(&buf) });
+    }
 }
 
 #[inline]
