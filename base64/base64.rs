@@ -34,31 +34,42 @@ impl Alphabet {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Error {
-    // encode and decode
+pub enum EncodeError {
     InvalidOutputLength,
     OutputOverflow,
+}
 
-    // decode-only
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecodeError {
     InvalidInput,
     InvalidInputLength,
     InvalidPadding,
 }
 
-impl core::fmt::Display for Error {
+impl core::fmt::Display for EncodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidOutputLength => f.write_str("output buffer size must be exactly equal to decoded_len(input)"),
+            Self::OutputOverflow => f.write_str("output length overflows usize::MAX"),
+        }
+    }
+}
+
+impl core::fmt::Display for DecodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::InvalidInput => f.write_str("invalid base64 character"),
             Self::InvalidInputLength => f.write_str("invalid base64 length"),
             Self::InvalidPadding => f.write_str("invalid base64 padding"),
-            Self::InvalidOutputLength => f.write_str("output buffer size must be exactly equal to decoded_len(input)"),
-            Self::OutputOverflow => f.write_str("output length overflow"),
         }
     }
 }
 
 #[cfg(feature = "std")]
-impl std::error::Error for Error {}
+impl std::error::Error for EncodeError {}
+
+#[cfg(feature = "std")]
+impl std::error::Error for DecodeError {}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 /// Encode
@@ -104,7 +115,7 @@ pub const fn encode_array<const OUT: usize>(data: &[u8], alphabet: Alphabet) -> 
     out_buffer
 }
 
-pub fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), Error> {
+pub fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), EncodeError> {
     #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
     if data.len() >= 48 {
         check_encode_output_length(output.len(), data.len(), alphabet)?;
@@ -126,12 +137,13 @@ pub fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result
 ///
 /// Consumers may prefer the faster [`encode_into`] which dispatches to
 /// a SIMD-accelerated path when available (non constant-time).
-pub const fn encode_into_constant_time(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), Error> {
-    let padding = match check_encode_output_length(output.len(), data.len(), alphabet) {
-        Ok((_, padding)) => padding,
+pub const fn encode_into_constant_time(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), EncodeError> {
+    match check_encode_output_length(output.len(), data.len(), alphabet) {
+        Ok(_) => {}
         Err(err) => return Err(err),
     };
 
+    let padding = alphabet.is_padded();
     let len = data.len();
     let mut i = 0;
 
@@ -268,23 +280,24 @@ pub fn encode_into_string(output: &mut alloc::string::String, data: &[u8], alpha
     }
 }
 
+/// Checks that `output_length == encoded_length(data_length, padding)`
 #[inline]
 const fn check_encode_output_length(
     output_length: usize,
     data_length: usize,
     alphabet: Alphabet,
-) -> Result<(usize, bool), Error> {
+) -> Result<(), EncodeError> {
     let padding = alphabet.is_padded();
 
     let expected_output_length = match encoded_length(data_length, padding) {
         Some(length) => length,
-        None => return Err(Error::OutputOverflow),
+        None => return Err(EncodeError::OutputOverflow),
     };
     if output_length != expected_output_length {
-        return Err(Error::InvalidOutputLength);
+        return Err(EncodeError::InvalidOutputLength);
     }
 
-    return Ok((expected_output_length, padding));
+    return Ok(());
 }
 
 /// Returns 0x00 if lo <= v <= hi, 0xFF otherwise.
@@ -327,7 +340,7 @@ const fn sextet_to_base64_char(v: u8, alphabet: Alphabet) -> u8 {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ///
 #[cfg(feature = "alloc")]
-pub fn decode(data: impl AsRef<[u8]>, alphabet: Alphabet) -> Result<alloc::vec::Vec<u8>, Error> {
+pub fn decode(data: impl AsRef<[u8]>, alphabet: Alphabet) -> Result<alloc::vec::Vec<u8>, DecodeError> {
     let data = data.as_ref();
     let (content_len, _) = strip_padding_info(data, alphabet.is_padded())?;
     let output_len = decoded_length(content_len)?;
@@ -337,7 +350,7 @@ pub fn decode(data: impl AsRef<[u8]>, alphabet: Alphabet) -> Result<alloc::vec::
 }
 
 /// Decodes a base64 string into a fixed-size array at compile time.
-pub const fn decode_array<const OUT: usize>(encoded_data: &[u8], alphabet: Alphabet) -> Result<[u8; OUT], Error> {
+pub const fn decode_array<const OUT: usize>(encoded_data: &[u8], alphabet: Alphabet) -> Result<[u8; OUT], DecodeError> {
     let mut result = [0u8; OUT];
     match decode_into_constant_time(&mut result, encoded_data, alphabet) {
         Ok(()) => Ok(result),
@@ -345,15 +358,15 @@ pub const fn decode_array<const OUT: usize>(encoded_data: &[u8], alphabet: Alpha
     }
 }
 
-pub fn decode_into(output: &mut [u8], encoded_data: &[u8], alphabet: Alphabet) -> Result<(), Error> {
+pub fn decode_into(output: &mut [u8], encoded_data: &[u8], alphabet: Alphabet) -> Result<(), DecodeError> {
     let (content_len, _) = strip_padding_info(encoded_data, alphabet.is_padded())?;
     let computed_output = decoded_length(content_len)?;
     if output.len() < computed_output {
-        return Err(Error::InvalidInputLength);
+        return Err(DecodeError::InvalidInputLength);
     }
 
     #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-    if content_len >= 64 {
+    if content_len >= 32 {
         let content = &encoded_data[..content_len];
         return unsafe { base64_neon::decode_into(output, content, alphabet) };
     }
@@ -377,7 +390,7 @@ pub const fn decode_into_constant_time(
     output: &mut [u8],
     encoded_data: &[u8],
     alphabet: Alphabet,
-) -> Result<(), Error> {
+) -> Result<(), DecodeError> {
     let in_len = encoded_data.len();
     let padding = alphabet.is_padded();
 
@@ -400,7 +413,7 @@ pub const fn decode_into_constant_time(
     };
 
     if output.len() < computed_output {
-        return Err(Error::InvalidInputLength);
+        return Err(DecodeError::InvalidInputLength);
     }
 
     let mut err: u8 = 0;
@@ -539,7 +552,7 @@ pub const fn decode_into_constant_time(
     }
 
     if err >= 64 {
-        return Err(Error::InvalidInput);
+        return Err(DecodeError::InvalidInput);
     }
 
     Ok(())
@@ -574,13 +587,13 @@ const fn base64_char_to_sextet(c: u8, alphabet: Alphabet) -> u8 {
     value | (invalid & 0x40)
 }
 
-pub(crate) const fn strip_padding_info(data: &[u8], expect_padding: bool) -> Result<(usize, usize), Error> {
+pub(crate) const fn strip_padding_info(data: &[u8], expect_padding: bool) -> Result<(usize, usize), DecodeError> {
     let in_len = data.len();
 
     if !expect_padding {
         let last_is_pad = if in_len > 0 { (data[in_len - 1] == PAD) as u8 } else { 0 };
         if last_is_pad != 0 {
-            return Err(Error::InvalidPadding);
+            return Err(DecodeError::InvalidPadding);
         }
         return Ok((in_len, 0));
     }
@@ -611,7 +624,7 @@ pub(crate) const fn strip_padding_info(data: &[u8], expect_padding: bool) -> Res
     err_pad |= (pad_count > 2) as u8;
 
     if err_len != 0 {
-        return Err(Error::InvalidInputLength);
+        return Err(DecodeError::InvalidInputLength);
     }
 
     // Padding count must match the content length modulo 4.
@@ -623,7 +636,7 @@ pub(crate) const fn strip_padding_info(data: &[u8], expect_padding: bool) -> Res
     err_pad |= has_pads & (1 - mod4_ok);
 
     if err_pad != 0 {
-        return Err(Error::InvalidPadding);
+        return Err(DecodeError::InvalidPadding);
     }
 
     Ok((content_len, pad_count))
@@ -631,26 +644,26 @@ pub(crate) const fn strip_padding_info(data: &[u8], expect_padding: bool) -> Res
 
 /// Returns the size in bytes of the data after decoding from Base64.
 /// Returns `None` if the length overflows `usize`.
-pub(crate) const fn decoded_length(encoded_data_length: usize) -> Result<usize, Error> {
+pub(crate) const fn decoded_length(encoded_data_length: usize) -> Result<usize, DecodeError> {
     let full_blocks = encoded_data_length / 4;
     let rem = encoded_data_length % 4;
 
     let base = match full_blocks.checked_mul(3) {
         Some(v) => v,
-        None => return Err(Error::InvalidInputLength),
+        None => return Err(DecodeError::InvalidInputLength),
     };
 
     match rem {
         0 => Ok(base),
         2 => match base.checked_add(1) {
             Some(v) => Ok(v),
-            None => Err(Error::InvalidInputLength),
+            None => Err(DecodeError::InvalidInputLength),
         },
         3 => match base.checked_add(2) {
             Some(v) => Ok(v),
-            None => Err(Error::InvalidInputLength),
+            None => Err(DecodeError::InvalidInputLength),
         },
-        _ => Err(Error::InvalidInputLength),
+        _ => Err(DecodeError::InvalidInputLength),
     }
 }
 
@@ -849,28 +862,28 @@ mod tests {
 
     #[test]
     fn decode_invalid_character() {
-        assert_eq!(decode(b"!!", Alphabet::Standard), Err(Error::InvalidInput));
-        assert_eq!(decode(b"Zg!!", Alphabet::Standard), Err(Error::InvalidInput));
-        assert_eq!(decode(b"!A==", Alphabet::Standard), Err(Error::InvalidInput));
+        assert_eq!(decode(b"!!", Alphabet::Standard), Err(DecodeError::InvalidInput));
+        assert_eq!(decode(b"Zg!!", Alphabet::Standard), Err(DecodeError::InvalidInput));
+        assert_eq!(decode(b"!A==", Alphabet::Standard), Err(DecodeError::InvalidInput));
     }
 
     #[test]
     fn decode_invalid_length() {
-        assert_eq!(decode(b"A", Alphabet::Standard), Err(Error::InvalidInputLength));
-        assert_eq!(decode(b"AAAAA", Alphabet::Standard), Err(Error::InvalidInputLength));
+        assert_eq!(decode(b"A", Alphabet::Standard), Err(DecodeError::InvalidInputLength));
+        assert_eq!(decode(b"AAAAA", Alphabet::Standard), Err(DecodeError::InvalidInputLength));
     }
 
     #[test]
     fn decode_invalid_padding() {
-        assert_eq!(decode(b"Z===", Alphabet::Standard), Err(Error::InvalidPadding));
-        assert_eq!(decode(b"Zg=A", Alphabet::Standard), Err(Error::InvalidInput));
-        assert_eq!(decode(b"Zg===", Alphabet::Standard), Err(Error::InvalidInputLength));
+        assert_eq!(decode(b"Z===", Alphabet::Standard), Err(DecodeError::InvalidPadding));
+        assert_eq!(decode(b"Zg=A", Alphabet::Standard), Err(DecodeError::InvalidInput));
+        assert_eq!(decode(b"Zg===", Alphabet::Standard), Err(DecodeError::InvalidInputLength));
     }
 
     #[test]
     fn decode_no_padding_rejects_padding() {
-        assert_eq!(decode(b"Zg==", Alphabet::StandardNoPadding), Err(Error::InvalidPadding));
-        assert_eq!(decode(b"Zm8=", Alphabet::StandardNoPadding), Err(Error::InvalidPadding));
+        assert_eq!(decode(b"Zg==", Alphabet::StandardNoPadding), Err(DecodeError::InvalidPadding));
+        assert_eq!(decode(b"Zm8=", Alphabet::StandardNoPadding), Err(DecodeError::InvalidPadding));
     }
 
     #[test]
@@ -885,7 +898,7 @@ mod tests {
         let mut out = [0u8; 2];
         assert_eq!(
             decode_into(&mut out, b"Zm9v", Alphabet::Standard),
-            Err(Error::InvalidInputLength)
+            Err(DecodeError::InvalidInputLength)
         );
     }
 
@@ -957,45 +970,45 @@ mod tests {
 
     #[test]
     fn const_decode() {
-        const RESULT: Result<[u8; 3], Error> = decode_array::<3>(b"Zm9v", Alphabet::Standard);
+        const RESULT: Result<[u8; 3], DecodeError> = decode_array::<3>(b"Zm9v", Alphabet::Standard);
         assert_eq!(RESULT.unwrap(), [0x66, 0x6F, 0x6F]);
     }
 
     #[test]
     fn const_decode_empty() {
-        const RESULT: Result<[u8; 0], Error> = decode_array::<0>(b"", Alphabet::Standard);
+        const RESULT: Result<[u8; 0], DecodeError> = decode_array::<0>(b"", Alphabet::Standard);
         assert_eq!(RESULT.unwrap().len(), 0);
     }
 
     #[test]
     fn const_decode_no_pad() {
-        const RESULT: Result<[u8; 2], Error> = decode_array::<2>(b"Zm8", Alphabet::StandardNoPadding);
+        const RESULT: Result<[u8; 2], DecodeError> = decode_array::<2>(b"Zm8", Alphabet::StandardNoPadding);
         assert_eq!(RESULT.unwrap(), [0x66, 0x6F]);
     }
 
     #[test]
     fn const_decode_invalid_character() {
-        const ERR: Result<[u8; 1], Error> = decode_array::<1>(b"!!", Alphabet::Standard);
-        assert_eq!(ERR, Err(Error::InvalidInput));
+        const ERR: Result<[u8; 1], DecodeError> = decode_array::<1>(b"!!", Alphabet::Standard);
+        assert_eq!(ERR, Err(DecodeError::InvalidInput));
     }
 
     #[test]
     fn const_decode_wrong_output_size() {
-        const ERR: Result<[u8; 0], Error> = decode_array::<0>(b"Zg==", Alphabet::Standard);
-        assert_eq!(ERR, Err(Error::InvalidInputLength));
+        const ERR: Result<[u8; 0], DecodeError> = decode_array::<0>(b"Zg==", Alphabet::Standard);
+        assert_eq!(ERR, Err(DecodeError::InvalidInputLength));
     }
 
     #[test]
     fn encode_into_panics_on_too_small() {
         let mut out = [0u8; 1];
-        assert!(encode_into(&mut out, b"hello", Alphabet::Standard) == Err(Error::InvalidOutputLength));
+        assert!(encode_into(&mut out, b"hello", Alphabet::Standard) == Err(EncodeError::InvalidOutputLength));
     }
 
     #[test]
     fn decode_trailing_invalid_in_large_buffer() {
         let mut input = alloc::vec![b'A'; 32];
         input[31] = b'!';
-        assert_eq!(decode(&input, Alphabet::Standard), Err(Error::InvalidInput));
+        assert_eq!(decode(&input, Alphabet::Standard), Err(DecodeError::InvalidInput));
     }
 
     #[test]
@@ -1028,12 +1041,20 @@ mod tests {
 
     #[test]
     fn display_error() {
-        let err = Error::InvalidInput;
+        let err = DecodeError::InvalidInput;
         assert_eq!(format!("{}", err), "invalid base64 character");
-        let err = Error::InvalidInputLength;
+        let err = DecodeError::InvalidInputLength;
         assert_eq!(format!("{}", err), "invalid base64 length");
-        let err = Error::InvalidPadding;
+        let err = DecodeError::InvalidPadding;
         assert_eq!(format!("{}", err), "invalid base64 padding");
+
+        let err = EncodeError::InvalidOutputLength;
+        assert_eq!(
+            format!("{}", err),
+            "output buffer size must be exactly equal to decoded_len(input)"
+        );
+        let err = EncodeError::OutputOverflow;
+        assert_eq!(format!("{}", err), "output length overflow");
     }
 
     #[test]
@@ -1060,14 +1081,14 @@ mod tests {
 
     #[test]
     fn decode_invalid_padding_count() {
-        assert_eq!(decode(b"Zg===", Alphabet::Standard), Err(Error::InvalidInputLength));
-        assert_eq!(decode(b"Z===", Alphabet::Standard), Err(Error::InvalidPadding));
+        assert_eq!(decode(b"Zg===", Alphabet::Standard), Err(DecodeError::InvalidInputLength));
+        assert_eq!(decode(b"Z===", Alphabet::Standard), Err(DecodeError::InvalidPadding));
     }
 
     #[test]
     fn decode_invalid_length_mod4() {
-        assert_eq!(decode(b"A", Alphabet::Standard), Err(Error::InvalidInputLength));
-        assert_eq!(decode(b"AAAAA", Alphabet::Standard), Err(Error::InvalidInputLength));
+        assert_eq!(decode(b"A", Alphabet::Standard), Err(DecodeError::InvalidInputLength));
+        assert_eq!(decode(b"AAAAA", Alphabet::Standard), Err(DecodeError::InvalidInputLength));
     }
 
     #[test]
@@ -1096,7 +1117,7 @@ mod tests {
         // 4 bytes, invalid char at position 0 (short input, scalar tail path)
         assert_eq!(
             decode_into_constant_time(&mut out, b"!AAA", Alphabet::Standard),
-            Err(Error::InvalidInput)
+            Err(DecodeError::InvalidInput)
         );
 
         // 32 bytes, invalid char at position 31 (last byte of a 32-byte main-loop chunk)
@@ -1104,7 +1125,7 @@ mod tests {
         input32[31] = b'!';
         assert_eq!(
             decode_into_constant_time(&mut out, &input32, Alphabet::Standard),
-            Err(Error::InvalidInput)
+            Err(DecodeError::InvalidInput)
         );
 
         // 36 bytes, invalid char at position 32 (first byte after a 32-byte chunk)
@@ -1112,7 +1133,7 @@ mod tests {
         input36_32[32] = b'!';
         assert_eq!(
             decode_into_constant_time(&mut out, &input36_32, Alphabet::Standard),
-            Err(Error::InvalidInput)
+            Err(DecodeError::InvalidInput)
         );
 
         // 36 bytes, invalid char at position 33
@@ -1120,7 +1141,7 @@ mod tests {
         input36_33[33] = b'!';
         assert_eq!(
             decode_into_constant_time(&mut out, &input36_33, Alphabet::Standard),
-            Err(Error::InvalidInput)
+            Err(DecodeError::InvalidInput)
         );
     }
 
@@ -1135,7 +1156,7 @@ mod tests {
             input[pos] = b'!';
             assert_eq!(
                 decode_into_constant_time(&mut out, &input, Alphabet::Standard),
-                Err(Error::InvalidInput),
+                Err(DecodeError::InvalidInput),
                 "invalid char at position {pos} should return InvalidInput"
             );
         }
@@ -1146,7 +1167,7 @@ mod tests {
             input[pos] = b'!';
             assert_eq!(
                 decode_into_constant_time(&mut out, &input, Alphabet::Standard),
-                Err(Error::InvalidInput),
+                Err(DecodeError::InvalidInput),
                 "invalid char at position {pos} in 36-byte input should return InvalidInput"
             );
         }
@@ -1159,9 +1180,9 @@ mod tests {
         // remaining == 2: bottom 4 bits of v1 must be zero
         for (input, expected) in &[
             (b"/w==" as &[u8], Ok(())),
-            (b"/x==" as &[u8], Err(Error::InvalidInput)),
-            (b"/y==" as &[u8], Err(Error::InvalidInput)),
-            (b"/z==" as &[u8], Err(Error::InvalidInput)),
+            (b"/x==" as &[u8], Err(DecodeError::InvalidInput)),
+            (b"/y==" as &[u8], Err(DecodeError::InvalidInput)),
+            (b"/z==" as &[u8], Err(DecodeError::InvalidInput)),
         ] {
             assert_eq!(
                 decode_into_constant_time(&mut out, input, Alphabet::Standard).map(|_| ()),
@@ -1174,9 +1195,9 @@ mod tests {
         // remaining == 3: bottom 2 bits of v2 must be zero
         for (input, expected) in &[
             (b"iYU=" as &[u8], Ok(())),
-            (b"iYV=" as &[u8], Err(Error::InvalidInput)),
-            (b"iYW=" as &[u8], Err(Error::InvalidInput)),
-            (b"iYX=" as &[u8], Err(Error::InvalidInput)),
+            (b"iYV=" as &[u8], Err(DecodeError::InvalidInput)),
+            (b"iYW=" as &[u8], Err(DecodeError::InvalidInput)),
+            (b"iYX=" as &[u8], Err(DecodeError::InvalidInput)),
         ] {
             assert_eq!(
                 decode_into_constant_time(&mut out, input, Alphabet::Standard).map(|_| ()),
@@ -1193,15 +1214,15 @@ mod tests {
 
         assert_eq!(
             decode_into_constant_time(&mut out, b"A=AA", Alphabet::Standard),
-            Err(Error::InvalidInput)
+            Err(DecodeError::InvalidInput)
         );
         assert_eq!(
             decode_into_constant_time(&mut out, b"AA=A", Alphabet::Standard),
-            Err(Error::InvalidInput)
+            Err(DecodeError::InvalidInput)
         );
         assert_eq!(
             decode_into_constant_time(&mut out, b"AA==", Alphabet::StandardNoPadding),
-            Err(Error::InvalidPadding)
+            Err(DecodeError::InvalidPadding)
         );
     }
 
@@ -1328,23 +1349,23 @@ mod tests {
         // Input with padding and length not multiple of 4
         assert_eq!(
             decode_into_constant_time(&mut out, b"Zg===", Alphabet::Standard),
-            Err(Error::InvalidInputLength)
+            Err(DecodeError::InvalidInputLength)
         );
 
         // Input with padding only at end, no content, pad_count=1
         assert_eq!(
             decode_into_constant_time(&mut out, b"=", Alphabet::Standard),
-            Err(Error::InvalidInputLength)
+            Err(DecodeError::InvalidInputLength)
         );
         assert_eq!(
             decode_into_constant_time(&mut out, b"==", Alphabet::Standard),
-            Err(Error::InvalidInputLength)
+            Err(DecodeError::InvalidInputLength)
         );
 
         // 3 padding characters is invalid
         assert_eq!(
             decode_into_constant_time(&mut out, b"A===", Alphabet::Standard),
-            Err(Error::InvalidPadding)
+            Err(DecodeError::InvalidPadding)
         );
     }
 

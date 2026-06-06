@@ -26,12 +26,12 @@ impl fmt::Debug for Block<'_> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PemError<'a> {
     InvalidEncoding(&'static str),
-    Base64(base64::Error),
+    Base64(base64::DecodeError),
     LabelMismatch { expected: &'a str, actual: &'a str },
 }
 
-impl<'a> From<base64::Error> for PemError<'a> {
-    fn from(err: base64::Error) -> Self {
+impl<'a> From<base64::DecodeError> for PemError<'a> {
+    fn from(err: base64::DecodeError) -> Self {
         PemError::Base64(err)
     }
 }

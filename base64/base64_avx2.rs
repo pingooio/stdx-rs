@@ -6,7 +6,7 @@ use core::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
-use crate::{Alphabet, Error, decode_into_constant_time, encode_into_constant_time};
+use crate::{Alphabet, DecodeError, EncodeError, decode_into_constant_time, encode_into_constant_time};
 
 // Shuffle: rearrange 12 bytes per 128-bit lane into 4×32-bit triplet lanes.
 // Input: [b11,b10,b9,b8,b7,b6,b5,b4,b3,b2,b1,b0,  ?,?,?,?]
@@ -31,7 +31,7 @@ const DECODE_COMPACT: [i8; 32] = [
 // ======================================================================
 
 #[target_feature(enable = "avx2")]
-pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), Error> {
+pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), EncodeError> {
     let shuffle = _mm256_loadu_si256(ENCODE_SHUFFLE.as_ptr().cast());
 
     let mask_ac = _mm256_set1_epi32(0x0fc0fc00i32 as i32);
@@ -128,7 +128,7 @@ pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) ->
 // ======================================================================
 
 #[target_feature(enable = "avx2")]
-pub unsafe fn decode_into(output: &mut [u8], encoded_data: &[u8], alphabet: Alphabet) -> Result<(), Error> {
+pub unsafe fn decode_into(output: &mut [u8], encoded_data: &[u8], alphabet: Alphabet) -> Result<(), DecodeError> {
     let url = matches!(alphabet, Alphabet::Url | Alphabet::UrlNoPadding);
     let zero = _mm256_setzero_si256();
 
@@ -203,7 +203,7 @@ pub unsafe fn decode_into(output: &mut [u8], encoded_data: &[u8], alphabet: Alph
         let mask_lo = _mm_movemask_epi8(_mm256_castsi256_si128(err)) as u32;
         let mask_hi = _mm_movemask_epi8(_mm256_extracti128_si256::<1>(err)) as u32;
         if mask_lo != 0 || mask_hi != 0 {
-            return Err(Error::InvalidInput);
+            return Err(DecodeError::InvalidInput);
         }
 
         // 6-bit values

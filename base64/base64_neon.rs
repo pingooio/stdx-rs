@@ -3,7 +3,7 @@
 
 use core::arch::aarch64::*;
 
-use crate::{Alphabet, Error, decode_into_constant_time, encode_into_constant_time};
+use crate::{Alphabet, DecodeError, EncodeError, decode_into_constant_time, encode_into_constant_time};
 
 const ENCODE_NEON_STANDARD: [u8; 64] = {
     let src = crate::ALPHABET_STANDARD;
@@ -34,7 +34,7 @@ const ENCODE_NEON_URL_SAFE: [u8; 64] = {
 };
 
 #[target_feature(enable = "neon")]
-pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), Error> {
+pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), EncodeError> {
     let table_bytes: &[u8; 64] = match alphabet {
         Alphabet::Standard | Alphabet::StandardNoPadding => &ENCODE_NEON_STANDARD,
         Alphabet::Url | Alphabet::UrlNoPadding => &ENCODE_NEON_URL_SAFE,
@@ -98,7 +98,7 @@ pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) ->
 }
 
 #[target_feature(enable = "neon")]
-pub unsafe fn decode_into(output: &mut [u8], encoded_data: &[u8], alphabet: Alphabet) -> Result<(), Error> {
+pub unsafe fn decode_into(output: &mut [u8], encoded_data: &[u8], alphabet: Alphabet) -> Result<(), DecodeError> {
     let url = matches!(alphabet, Alphabet::Url | Alphabet::UrlNoPadding);
     let mut inp = encoded_data.as_ptr();
     let mut out = output.as_mut_ptr();
@@ -118,7 +118,7 @@ pub unsafe fn decode_into(output: &mut [u8], encoded_data: &[u8], alphabet: Alph
         let mut buf = [0u8; 8];
         vst1_u8(buf.as_mut_ptr(), err);
         if u64::from_ne_bytes(buf) != 0 {
-            return Err(Error::InvalidInput);
+            return Err(DecodeError::InvalidInput);
         }
 
         let va = vadd_u8(chunk.0, sa);

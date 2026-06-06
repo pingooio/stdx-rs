@@ -18,7 +18,7 @@ pub enum Error {
     Api(#[from] Problem),
     /// Failed to base64-decode data
     #[error("base64 decoding failed: {0}")]
-    Base64(#[from] base64::Error),
+    Base64(#[from] base64::DecodeError),
     /// Failed from cryptographic operations
     #[error("cryptographic operation failed")]
     Crypto,
