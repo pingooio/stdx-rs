@@ -202,6 +202,25 @@ const fn check_encode_output_length(data_length: usize, output_length: usize) ->
     Ok(())
 }
 
+/// Helper function that appends the encoded data to a `String`.
+#[cfg(feature = "alloc")]
+pub fn encode_into_string(output: &mut alloc::string::String, data: &[u8], alphabet: Alphabet) {
+    let encoded_length = data.len() * 2;
+    if encoded_length <= 256 {
+        // zero-alloc version for small data
+        let mut buf = [0u8; 256];
+        let mut buf = &mut buf[..encoded_length];
+        encode_into(&mut buf, data, alphabet).unwrap();
+        // SAFETY: base64 only produces ASCII characters, which are valid UTF-8.
+        output.push_str(unsafe { core::str::from_utf8_unchecked(&buf) });
+    } else {
+        let mut buf = alloc::vec![0u8; encoded_length];
+        encode_into(&mut buf, data, alphabet).unwrap();
+        // SAFETY: base64 only produces ASCII characters, which are valid UTF-8.
+        output.push_str(unsafe { core::str::from_utf8_unchecked(&buf) });
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 /// Decode
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -594,7 +613,7 @@ mod tests {
     #[test]
     fn decode_into_too_small() {
         let mut out = [0u8; 1];
-        assert_eq!(decode_into(&mut out, b"0000"), Err(Error::InvalidInputLength));
+        assert_eq!(decode_into(&mut out, b"0000"), Err(Error::InvalidOutputLength));
     }
 
     #[test]
@@ -668,6 +687,128 @@ mod tests {
     #[test]
     fn const_decode_wrong_output_size() {
         const ERR: Result<[u8; 2], Error> = decode_array::<2>(b"00");
-        assert_eq!(ERR, Err(Error::InvalidInputLength));
+        assert_eq!(ERR, Err(Error::InvalidOutputLength));
+    }
+
+    #[test]
+    fn encode_into_string_empty() {
+        let mut s = alloc::string::String::new();
+        encode_into_string(&mut s, b"", Alphabet::Lower);
+        assert_eq!(s, "");
+    }
+
+    #[test]
+    fn encode_into_string_empty_data_nonempty_output() {
+        let mut s = alloc::string::String::from("prefix");
+        encode_into_string(&mut s, b"", Alphabet::Lower);
+        assert_eq!(s, "prefix");
+    }
+
+    #[test]
+    fn encode_into_string_single_byte() {
+        let mut s = alloc::string::String::new();
+        encode_into_string(&mut s, b"\x00", Alphabet::Lower);
+        assert_eq!(s, "00");
+        let mut s = alloc::string::String::new();
+        encode_into_string(&mut s, b"\xFF", Alphabet::Upper);
+        assert_eq!(s, "FF");
+    }
+
+    #[test]
+    fn encode_into_string_multiple_bytes() {
+        let mut s = alloc::string::String::new();
+        encode_into_string(&mut s, b"hello", Alphabet::Lower);
+        assert_eq!(s, "68656c6c6f");
+        let mut s = alloc::string::String::new();
+        encode_into_string(&mut s, b"hello", Alphabet::Upper);
+        assert_eq!(s, "68656C6C6F");
+    }
+
+    #[test]
+    fn encode_into_string_append() {
+        let mut s = alloc::string::String::from("~~");
+        encode_into_string(&mut s, b"\xDE\xAD", Alphabet::Lower);
+        assert_eq!(s, "~~dead");
+        encode_into_string(&mut s, b"\xBE\xEF", Alphabet::Lower);
+        assert_eq!(s, "~~deadbeef");
+    }
+
+    #[test]
+    fn encode_into_string_large() {
+        let data: Vec<u8> = (0..255).cycle().take(4096).collect();
+        let expected = encode_with_alphabet(&data, Alphabet::Lower);
+        let mut s = alloc::string::String::new();
+        encode_into_string(&mut s, &data, Alphabet::Lower);
+        assert_eq!(s, expected);
+    }
+
+    #[test]
+    fn encode_into_string_roundtrip() {
+        let data: Vec<u8> = (0..=255).collect();
+        let mut s = alloc::string::String::new();
+        encode_into_string(&mut s, &data, Alphabet::Lower);
+        let decoded = decode(s.as_bytes()).unwrap();
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn encode_into_string_small_boundary() {
+        let mut s = alloc::string::String::new();
+        encode_into_string(
+            &mut s,
+            b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F",
+            Alphabet::Lower,
+        );
+        assert_eq!(s, "000102030405060708090a0b0c0d0e0f");
+    }
+
+    #[test]
+    fn encode_into_string_all_alphabets() {
+        let data = b"hello world";
+        for alphabet in &[Alphabet::Lower, Alphabet::Upper] {
+            let expected = encode_with_alphabet(data, *alphabet);
+            let mut s = alloc::string::String::new();
+            encode_into_string(&mut s, data, *alphabet);
+            assert_eq!(s, expected, "mismatch for alphabet {alphabet:?}");
+        }
+    }
+
+    #[test]
+    fn encode_into_string_rfc4648_vectors() {
+        let vectors = [
+            (b"" as &[u8], "", ""),
+            (b"f", "66", "66"),
+            (b"fo", "666f", "666F"),
+            (b"foo", "666f6f", "666F6F"),
+            (b"foob", "666f6f62", "666F6F62"),
+            (b"fooba", "666f6f6261", "666F6F6261"),
+            (b"foobar", "666f6f626172", "666F6F626172"),
+        ];
+        for (input, expected_lower, expected_upper) in &vectors {
+            let mut s = alloc::string::String::new();
+            encode_into_string(&mut s, input, Alphabet::Lower);
+            assert_eq!(s, *expected_lower);
+            let mut s = alloc::string::String::new();
+            encode_into_string(&mut s, input, Alphabet::Upper);
+            assert_eq!(s, *expected_upper);
+        }
+    }
+
+    #[test]
+    fn encode_into_string_exact_stack_capacity() {
+        let data: Vec<u8> = (0..128).collect();
+        let expected = encode(&data);
+        let mut s = alloc::string::String::new();
+        encode_into_string(&mut s, &data, Alphabet::Lower);
+        assert_eq!(s, expected);
+    }
+
+    #[test]
+    fn encode_into_string_exceeds_stack_capacity() {
+        let data: Vec<u8> = (0..129).collect();
+        let expected = encode(&data);
+        let mut s = alloc::string::String::new();
+        encode_into_string(&mut s, &data, Alphabet::Lower);
+        assert_eq!(s, expected);
     }
 }
