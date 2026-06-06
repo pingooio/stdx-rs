@@ -14,7 +14,7 @@ use crate::{Alphabet, Error};
 /// # Safety
 /// Caller must ensure that AVX2 is available.
 #[target_feature(enable = "avx2")]
-pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) {
+pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), Error> {
     debug_assert!(output.len() >= data.len() * 2);
 
     let table = _mm256_broadcastsi128_si256(_mm_loadu_si128(
@@ -52,8 +52,10 @@ pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) {
     }
 
     if i < len {
-        crate::encode_into_constant_time(&mut output[i * 2..], &data[i..], alphabet);
+        crate::encode_into_constant_time(&mut output[i * 2..], &data[i..], alphabet)?;
     }
+
+    Ok(())
 }
 
 /// Decode hex `input` into `output` using AVX2, with scalar fallback

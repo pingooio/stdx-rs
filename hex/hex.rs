@@ -82,22 +82,14 @@ pub const fn encode_array<const OUT: usize>(data: &[u8], alphabet: Alphabet) -> 
 pub fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), Error> {
     #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
     if data.len() >= 16 {
-        if data.len() * 2 != output.len() {
-            return Err(Error::InvalidOutputLength);
-        }
-
-        unsafe { hex_neon::encode_into(output, data, alphabet) };
-        return Ok(());
+        check_encode_output_length(data.len(), output.len())?;
+        return unsafe { hex_neon::encode_into(output, data, alphabet) };
     }
 
     #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
     if data.len() >= 32 {
-        if data.len() * 2 != output.len() {
-            return Err(Error::InvalidOutputLength);
-        }
-
-        unsafe { hex_avx2::encode_into(output, data, alphabet) };
-        return Ok(());
+        check_encode_output_length(data.len(), output.len())?;
+        return unsafe { hex_avx2::encode_into(output, data, alphabet) };
     }
 
     return encode_into_constant_time(output, data, alphabet);
@@ -110,9 +102,10 @@ pub fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result
 /// Consumers may prefer the faster [`encode_into`] which dispatches to
 /// a SIMD-accelerated path when available (non constant-time).
 pub const fn encode_into_constant_time(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), Error> {
-    if data.len() * 2 != output.len() {
-        return Err(Error::InvalidOutputLength);
-    }
+    match check_encode_output_length(data.len(), output.len()) {
+        Ok(_) => {}
+        Err(err) => return Err(err),
+    };
 
     let mut i = 0;
     let len = data.len();
@@ -201,6 +194,14 @@ const fn nibble_to_hex(nibble: u8, alphabet: Alphabet) -> u8 {
     }
 }
 
+#[inline]
+const fn check_encode_output_length(data_length: usize, output_length: usize) -> Result<(), Error> {
+    if data_length * 2 != output_length {
+        return Err(Error::InvalidOutputLength);
+    }
+    Ok(())
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 /// Decode
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -226,10 +227,6 @@ pub fn decode(data: impl AsRef<[u8]>) -> Result<alloc::vec::Vec<u8>, Error> {
 /// assert_eq!(RESULT.unwrap(), [0xDE, 0xAD, 0xBE, 0xEF]);
 /// ```
 pub const fn decode_array<const OUT: usize>(encoded_data: &[u8]) -> Result<[u8; OUT], Error> {
-    if OUT != encoded_data.len() / 2 {
-        return Err(Error::InvalidInputLength);
-    }
-
     let mut result = [0u8; OUT];
     match decode_into_constant_time(&mut result, encoded_data) {
         Ok(_) => {}
@@ -239,21 +236,15 @@ pub const fn decode_array<const OUT: usize>(encoded_data: &[u8]) -> Result<[u8; 
 }
 
 pub fn decode_into(output: &mut [u8], encoded_data: &[u8]) -> Result<(), Error> {
-    let in_len = encoded_data.len();
-    if in_len % 2 != 0 {
-        return Err(Error::InvalidInputLength);
-    }
-    if output.len() < in_len / 2 {
-        return Err(Error::InvalidInputLength);
-    }
-
     #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-    if in_len >= 32 {
+    if encoded_data.len() >= 32 {
+        check_decode_input_and_output_length(encoded_data.len(), output.len())?;
         return unsafe { hex_neon::decode_into(output, encoded_data) };
     }
 
     #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "avx2"))]
-    if in_len >= 32 {
+    if encoded_data.len() >= 32 {
+        check_decode_input_and_output_length(encoded_data.len(), output.len())?;
         return unsafe { hex_avx2::decode_into(output, encoded_data) };
     }
 
@@ -271,14 +262,12 @@ pub fn decode_into(output: &mut [u8], encoded_data: &[u8]) -> Result<(), Error> 
 /// Consumers may prefer the faster [`decode_into`] which dispatches to
 /// a SIMD-accelerated path when available (non constant-time).
 pub const fn decode_into_constant_time(output: &mut [u8], encoded_data: &[u8]) -> Result<(), Error> {
-    let in_len = encoded_data.len();
-    if in_len % 2 != 0 {
-        return Err(Error::InvalidInputLength);
-    }
-    if output.len() < in_len / 2 {
-        return Err(Error::InvalidInputLength);
-    }
+    match check_decode_input_and_output_length(encoded_data.len(), output.len()) {
+        Ok(_) => {}
+        Err(err) => return Err(err),
+    };
 
+    let in_len = encoded_data.len();
     let mut i = 0;
     let mut err: u8 = 0;
 
@@ -395,6 +384,18 @@ const fn nibble_from_hex(c: u8) -> u8 {
     let invalid = is_digit & is_lower & is_upper;
 
     value | (invalid & 0xF0)
+}
+
+#[inline]
+const fn check_decode_input_and_output_length(encoded_length: usize, output_length: usize) -> Result<(), Error> {
+    if encoded_length % 2 != 0 {
+        return Err(Error::InvalidInputLength);
+    }
+    if output_length != encoded_length / 2 {
+        return Err(Error::InvalidOutputLength);
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

@@ -8,7 +8,7 @@ use crate::{Alphabet, Error};
 /// Processes 16 input bytes per iteration with NEON, then encodes any
 /// remaining bytes (< 16) via `encode_into_constant_time`.
 #[target_feature(enable = "neon")]
-pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) {
+pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), Error> {
     debug_assert!(output.len() >= data.len() * 2);
 
     let table = unsafe {
@@ -44,8 +44,10 @@ pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) {
     }
 
     if i < len {
-        crate::encode_into_constant_time(&mut output[i * 2..], &data[i..], alphabet).unwrap();
+        crate::encode_into_constant_time(&mut output[i * 2..], &data[i..], alphabet)?;
     }
+
+    Ok(())
 }
 
 /// Decode hex `input` into `output` using NEON, with scalar fallback
