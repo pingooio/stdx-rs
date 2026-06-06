@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use crypto::{Hasher, sha2::Sha256};
 use quick_xml::{de::from_str, se::to_string};
 use serde::{Deserialize, Serialize};
@@ -371,7 +370,7 @@ fn delete_objects_checksum_headers(body: &[u8]) -> [(String, String); 2] {
 }
 
 fn checksum_sha256(body: &[u8]) -> String {
-    BASE64_STANDARD.encode(Sha256::hash(body).as_ref())
+    base64::encode_with_alphabet(Sha256::hash(body).as_ref(), base64::Alphabet::Standard)
 }
 
 #[derive(Debug, Serialize)]

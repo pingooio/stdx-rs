@@ -18,7 +18,7 @@ pub enum Error {
     Api(#[from] Problem),
     /// Failed to base64-decode data
     #[error("base64 decoding failed: {0}")]
-    Base64(#[from] base64::DecodeError),
+    Base64(#[from] base64::Error),
     /// Failed from cryptographic operations
     #[error("cryptographic operation failed")]
     Crypto,
@@ -64,14 +64,13 @@ pub struct AccountCredentials {
 mod pkcs8_serde {
     use std::fmt;
 
-    use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine};
     use serde::{Deserializer, Serializer, de};
 
     pub(crate) fn serialize<S>(key_pkcs8: &[u8], serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let encoded = BASE64_URL_SAFE_NO_PAD.encode(key_pkcs8.as_ref());
+        let encoded = base64::encode_with_alphabet(key_pkcs8.as_ref(), base64::Alphabet::UrlNoPadding);
         serializer.serialize_str(&encoded)
     }
 
@@ -89,7 +88,7 @@ mod pkcs8_serde {
             where
                 E: de::Error,
             {
-                BASE64_URL_SAFE_NO_PAD.decode(v).map_err(de::Error::custom)
+                base64::decode_with_alphabet(v, base64::Alphabet::UrlNoPadding).map_err(de::Error::custom)
             }
         }
 

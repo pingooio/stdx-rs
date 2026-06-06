@@ -26,12 +26,12 @@ impl fmt::Debug for Block<'_> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PemError<'a> {
     InvalidEncoding(&'static str),
-    Base64(base64::DecodeError),
+    Base64(base64::Error),
     LabelMismatch { expected: &'a str, actual: &'a str },
 }
 
-impl<'a> From<base64::DecodeError> for PemError<'a> {
-    fn from(err: base64::DecodeError) -> Self {
+impl<'a> From<base64::Error> for PemError<'a> {
+    fn from(err: base64::Error) -> Self {
         PemError::Base64(err)
     }
 }
@@ -62,7 +62,7 @@ pub fn encode(blocks: &[Block<'_>]) -> Vec<u8> {
         if !block.headers.is_empty() {
             capacity += 1;
         }
-        let b64_len = base64::encoded_len(block.contents.len(), true).unwrap_or_default();
+        let b64_len = base64::encoded_length(block.contents.len(), true).unwrap_or_default();
         base64_capacity += b64_len;
         capacity += b64_len + b64_len / 64 + 1;
         capacity += 9 + block.r#type.len() + 6;
@@ -87,7 +87,7 @@ pub fn encode(blocks: &[Block<'_>]) -> Vec<u8> {
             output.push(b'\n');
         }
 
-        base64::encode_to_string(&block.contents, base64::Alphabet::Standard, &mut b64_buf);
+        base64::encode_into_string(&mut b64_buf, &block.contents, base64::Alphabet::Standard);
         for chunk in b64_buf.as_bytes().chunks(LINE_WIDTH) {
             output.extend_from_slice(chunk);
             output.push(b'\n');

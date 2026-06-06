@@ -7,7 +7,6 @@ edition = "2024"
 path = "src/pg.rs"
 
 [dependencies]
-base64 = { path = "../base64" }
 bytes = { workspace = true }
 chrono = { workspace = true }
 crypto = { path = "../crypto" }
