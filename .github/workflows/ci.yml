@@ -15,8 +15,16 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       - run: rustup update stable
-      - run: sudo apt-get update && sudo apt-get install -y binutils gcc
+      - run: sudo apt-get update && sudo apt upgrade && sudo apt-get install -y binutils gcc
       - run: cargo test --package hex
+        env:
+          RUSTFLAGS: "-C linker=gcc"
       - run: cargo test --package base64
+        env:
+          RUSTFLAGS: "-C linker=gcc"
       - run: cargo test --package base32
+        env:
+          RUSTFLAGS: "-C linker=gcc"
       - run: cargo test --package crypto
+        env:
+          RUSTFLAGS: "-C linker=gcc"

@@ -3,7 +3,7 @@ use core::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
-use crate::{Alphabet, Error};
+use crate::{Alphabet, DecodeError, EncodeError};
 
 /// Encode `data` as hex into `output` using AVX2, with scalar fallback
 /// for the remaining tail.
@@ -14,7 +14,7 @@ use crate::{Alphabet, Error};
 /// # Safety
 /// Caller must ensure that AVX2 is available.
 #[target_feature(enable = "avx2")]
-pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), Error> {
+pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), EncodeError> {
     debug_assert!(output.len() >= data.len() * 2);
 
     let table = _mm256_broadcastsi128_si256(_mm_loadu_si128(
@@ -67,7 +67,7 @@ pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) ->
 /// # Safety
 /// Caller must ensure that AVX2 is available.
 #[target_feature(enable = "avx2")]
-pub unsafe fn decode_into(output: &mut [u8], input: &[u8]) -> Result<(), Error> {
+pub unsafe fn decode_into(output: &mut [u8], input: &[u8]) -> Result<(), DecodeError> {
     debug_assert!(input.len() % 2 == 0);
     debug_assert!(output.len() >= input.len() / 2);
 
@@ -105,7 +105,7 @@ pub unsafe fn decode_into(output: &mut [u8], input: &[u8]) -> Result<(), Error> 
         let valid = _mm256_or_si256(is_digit, _mm256_or_si256(is_upper, is_lower));
 
         if _mm256_movemask_epi8(valid) != -1i32 {
-            return Err(Error::InvalidInput);
+            return Err(DecodeError::InvalidInput);
         }
 
         let nd = _mm256_sub_epi8(c, digit_base);
