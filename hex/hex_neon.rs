@@ -1,6 +1,6 @@
 use core::arch::aarch64::*;
 
-use crate::{Alphabet, Error};
+use crate::{Alphabet, DecodeError, EncodeError};
 
 /// Encode `data` as hex into `output` using NEON, with scalar fallback
 /// for the remaining tail.
@@ -8,7 +8,7 @@ use crate::{Alphabet, Error};
 /// Processes 16 input bytes per iteration with NEON, then encodes any
 /// remaining bytes (< 16) via `encode_into_constant_time`.
 #[target_feature(enable = "neon")]
-pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), Error> {
+pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), EncodeError> {
     debug_assert!(output.len() >= data.len() * 2);
 
     let table = unsafe {
@@ -44,7 +44,7 @@ pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) ->
     }
 
     if i < len {
-        crate::encode_into_constant_time(&mut output[i * 2..], &data[i..], alphabet)?;
+        return crate::encode_into_constant_time(&mut output[i * 2..], &data[i..], alphabet);
     }
 
     Ok(())
@@ -57,7 +57,7 @@ pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) ->
 /// then decodes any remaining hex chars (< 32) via `decode_into_constant_time`.
 #[allow(non_snake_case)]
 #[target_feature(enable = "neon")]
-pub unsafe fn decode_into(output: &mut [u8], input: &[u8]) -> Result<(), Error> {
+pub unsafe fn decode_into(output: &mut [u8], input: &[u8]) -> Result<(), DecodeError> {
     debug_assert!(input.len() % 2 == 0);
     debug_assert!(output.len() >= input.len() / 2);
 
@@ -93,7 +93,7 @@ pub unsafe fn decode_into(output: &mut [u8], input: &[u8]) -> Result<(), Error> 
             );
             let m1 = vandq_u32(m0, vextq_u32(m0, m0, 1));
             if vgetq_lane_u32(m1, 0) != 0xFFFF_FFFF {
-                return Err(Error::InvalidInput);
+                return Err(DecodeError::InvalidInput);
             }
 
             let nd = vsubq_u8(c, digit_base);
@@ -128,7 +128,7 @@ pub unsafe fn decode_into(output: &mut [u8], input: &[u8]) -> Result<(), Error> 
     }
 
     if i < in_len {
-        crate::decode_into_constant_time(&mut output[i / 2..], &input[i..])?;
+        return crate::decode_into_constant_time(&mut output[i / 2..], &input[i..]);
     }
 
     Ok(())

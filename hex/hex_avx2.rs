@@ -52,7 +52,7 @@ pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) ->
     }
 
     if i < len {
-        crate::encode_into_constant_time(&mut output[i * 2..], &data[i..], alphabet)?;
+        return crate::encode_into_constant_time(&mut output[i * 2..], &data[i..], alphabet);
     }
 
     Ok(())
@@ -129,7 +129,7 @@ pub unsafe fn decode_into(output: &mut [u8], input: &[u8]) -> Result<(), Error> 
     }
 
     if i < in_len {
-        crate::decode_into_constant_time(&mut output[i / 2..], &input[i..])?;
+        return crate::decode_into_constant_time(&mut output[i / 2..], &input[i..]);
     }
 
     Ok(())

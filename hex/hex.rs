@@ -23,32 +23,49 @@ pub enum Alphabet {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Error {
+pub enum DecodeError {
     InvalidInput,
     InvalidInputLength,
     InvalidOutputLength,
 }
 
-#[cfg(any(feature = "alloc", test))]
-impl core::fmt::Display for Error {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EncodeError {
+    InvalidOutputLength,
+}
+
+impl core::fmt::Display for DecodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::InvalidInput => f.write_str("invalid hex character"),
             Self::InvalidInputLength => f.write_str("odd number of hex characters"),
+            Self::InvalidOutputLength => f.write_str("output buffer size must be equal to input.len() / 2"),
+        }
+    }
+}
+
+impl core::fmt::Display for EncodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
             Self::InvalidOutputLength => f.write_str("output buffer size must be equal to input.len() * 2"),
         }
     }
 }
 
 #[cfg(feature = "std")]
-impl std::error::Error for Error {}
+impl std::error::Error for DecodeError {}
+
+#[cfg(feature = "std")]
+impl std::error::Error for EncodeError {}
 
 #[cfg(any(feature = "alloc", test))]
+#[inline]
 pub fn encode(data: impl AsRef<[u8]>) -> alloc::string::String {
     encode_with_alphabet(data.as_ref(), Alphabet::Lower)
 }
 
 #[cfg(any(feature = "alloc", test))]
+#[inline]
 pub fn encode_with_alphabet(data: impl AsRef<[u8]>, alphabet: Alphabet) -> alloc::string::String {
     let data = data.as_ref();
     let mut output = alloc::vec![0u8; data.len() * 2];
@@ -79,7 +96,7 @@ pub const fn encode_array<const OUT: usize>(data: &[u8], alphabet: Alphabet) -> 
 
 /// Returns an error if output.len() != data.len() * 2
 #[inline]
-pub fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), Error> {
+pub fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), EncodeError> {
     #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
     if data.len() >= 16 {
         check_encode_output_length(data.len(), output.len())?;
@@ -101,7 +118,7 @@ pub fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result
 ///
 /// Consumers may prefer the faster [`encode_into`] which dispatches to
 /// a SIMD-accelerated path when available (non constant-time).
-pub const fn encode_into_constant_time(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), Error> {
+pub const fn encode_into_constant_time(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), EncodeError> {
     match check_encode_output_length(data.len(), output.len()) {
         Ok(_) => {}
         Err(err) => return Err(err),
@@ -195,9 +212,9 @@ const fn nibble_to_hex(nibble: u8, alphabet: Alphabet) -> u8 {
 }
 
 #[inline]
-const fn check_encode_output_length(data_length: usize, output_length: usize) -> Result<(), Error> {
+const fn check_encode_output_length(data_length: usize, output_length: usize) -> Result<(), EncodeError> {
     if data_length * 2 != output_length {
-        return Err(Error::InvalidOutputLength);
+        return Err(EncodeError::InvalidOutputLength);
     }
     Ok(())
 }
@@ -226,7 +243,7 @@ pub fn encode_into_string(output: &mut alloc::string::String, data: &[u8], alpha
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[cfg(any(feature = "alloc", test))]
-pub fn decode(data: impl AsRef<[u8]>) -> Result<alloc::vec::Vec<u8>, Error> {
+pub fn decode(data: impl AsRef<[u8]>) -> Result<alloc::vec::Vec<u8>, DecodeError> {
     let data = data.as_ref();
     let mut output = alloc::vec![0u8; data.len() / 2];
     decode_into(&mut output, data)?;
@@ -241,11 +258,11 @@ pub fn decode(data: impl AsRef<[u8]>) -> Result<alloc::vec::Vec<u8>, Error> {
 /// # Example
 ///
 /// ```rust
-/// const RESULT: Result<[u8; 4], hex::Error> =
+/// const RESULT: Result<[u8; 4], hex::DecodeError> =
 ///     hex::decode_array::<4>(b"deadbeef");
 /// assert_eq!(RESULT.unwrap(), [0xDE, 0xAD, 0xBE, 0xEF]);
 /// ```
-pub const fn decode_array<const OUT: usize>(encoded_data: &[u8]) -> Result<[u8; OUT], Error> {
+pub const fn decode_array<const OUT: usize>(encoded_data: &[u8]) -> Result<[u8; OUT], DecodeError> {
     let mut result = [0u8; OUT];
     match decode_into_constant_time(&mut result, encoded_data) {
         Ok(_) => {}
@@ -254,7 +271,7 @@ pub const fn decode_array<const OUT: usize>(encoded_data: &[u8]) -> Result<[u8; 
     Ok(result)
 }
 
-pub fn decode_into(output: &mut [u8], encoded_data: &[u8]) -> Result<(), Error> {
+pub fn decode_into(output: &mut [u8], encoded_data: &[u8]) -> Result<(), DecodeError> {
     #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
     if encoded_data.len() >= 32 {
         check_decode_input_and_output_length(encoded_data.len(), output.len())?;
@@ -280,7 +297,7 @@ pub fn decode_into(output: &mut [u8], encoded_data: &[u8]) -> Result<(), Error> 
 ///
 /// Consumers may prefer the faster [`decode_into`] which dispatches to
 /// a SIMD-accelerated path when available (non constant-time).
-pub const fn decode_into_constant_time(output: &mut [u8], encoded_data: &[u8]) -> Result<(), Error> {
+pub const fn decode_into_constant_time(output: &mut [u8], encoded_data: &[u8]) -> Result<(), DecodeError> {
     match check_decode_input_and_output_length(encoded_data.len(), output.len()) {
         Ok(_) => {}
         Err(err) => return Err(err),
@@ -383,7 +400,7 @@ pub const fn decode_into_constant_time(output: &mut [u8], encoded_data: &[u8]) -
     }
 
     if err & 0xF0 != 0 {
-        return Err(Error::InvalidInput);
+        return Err(DecodeError::InvalidInput);
     }
 
     Ok(())
@@ -406,12 +423,12 @@ const fn nibble_from_hex(c: u8) -> u8 {
 }
 
 #[inline]
-const fn check_decode_input_and_output_length(encoded_length: usize, output_length: usize) -> Result<(), Error> {
+const fn check_decode_input_and_output_length(encoded_length: usize, output_length: usize) -> Result<(), DecodeError> {
     if encoded_length % 2 != 0 {
-        return Err(Error::InvalidInputLength);
+        return Err(DecodeError::InvalidInputLength);
     }
     if output_length != encoded_length / 2 {
-        return Err(Error::InvalidOutputLength);
+        return Err(DecodeError::InvalidOutputLength);
     }
 
     Ok(())
@@ -498,22 +515,22 @@ mod tests {
 
     #[test]
     fn decode_invalid_character() {
-        assert_eq!(decode(b"0g"), Err(Error::InvalidInput));
-        assert_eq!(decode(b"GG"), Err(Error::InvalidInput));
-        assert_eq!(decode(b"  "), Err(Error::InvalidInput));
+        assert_eq!(decode(b"0g"), Err(DecodeError::InvalidInput));
+        assert_eq!(decode(b"GG"), Err(DecodeError::InvalidInput));
+        assert_eq!(decode(b"  "), Err(DecodeError::InvalidInput));
     }
 
     #[test]
     fn decode_odd_length() {
-        assert_eq!(decode(b"0"), Err(Error::InvalidInputLength));
-        assert_eq!(decode(b"abc"), Err(Error::InvalidInputLength));
+        assert_eq!(decode(b"0"), Err(DecodeError::InvalidInputLength));
+        assert_eq!(decode(b"abc"), Err(DecodeError::InvalidInputLength));
     }
 
     #[test]
     fn decode_trailing_invalid_in_large_buffer() {
         let mut input = alloc::vec![b'0'; 64];
         input[63] = b'g';
-        assert_eq!(decode(&input), Err(Error::InvalidInput));
+        assert_eq!(decode(&input), Err(DecodeError::InvalidInput));
     }
 
     #[test]
@@ -613,7 +630,7 @@ mod tests {
     #[test]
     fn decode_into_too_small() {
         let mut out = [0u8; 1];
-        assert_eq!(decode_into(&mut out, b"0000"), Err(Error::InvalidOutputLength));
+        assert_eq!(decode_into(&mut out, b"0000"), Err(DecodeError::InvalidOutputLength));
     }
 
     #[test]
@@ -656,38 +673,38 @@ mod tests {
 
     #[test]
     fn const_decode() {
-        const RESULT: Result<[u8; 4], Error> = decode_array::<4>(b"deadbeef");
+        const RESULT: Result<[u8; 4], DecodeError> = decode_array::<4>(b"deadbeef");
         assert_eq!(RESULT.unwrap(), [0xDE, 0xAD, 0xBE, 0xEF]);
     }
 
     #[test]
     fn const_decode_empty() {
-        const RESULT: Result<[u8; 0], Error> = decode_array::<0>(b"");
+        const RESULT: Result<[u8; 0], DecodeError> = decode_array::<0>(b"");
         assert_eq!(RESULT.unwrap().len(), 0);
     }
 
     #[test]
     fn const_decode_upper() {
-        const RESULT: Result<[u8; 4], Error> = decode_array::<4>(b"DEADBEEF");
+        const RESULT: Result<[u8; 4], DecodeError> = decode_array::<4>(b"DEADBEEF");
         assert_eq!(RESULT.unwrap(), [0xDE, 0xAD, 0xBE, 0xEF]);
     }
 
     #[test]
     fn const_decode_invalid_character() {
-        const ERR: Result<[u8; 1], Error> = decode_array::<1>(b"0g");
-        assert_eq!(ERR, Err(Error::InvalidInput));
+        const ERR: Result<[u8; 1], DecodeError> = decode_array::<1>(b"0g");
+        assert_eq!(ERR, Err(DecodeError::InvalidInput));
     }
 
     #[test]
     fn const_decode_odd_length() {
-        const ERR: Result<[u8; 0], Error> = decode_array::<0>(b"0");
-        assert_eq!(ERR, Err(Error::InvalidInputLength));
+        const ERR: Result<[u8; 0], DecodeError> = decode_array::<0>(b"0");
+        assert_eq!(ERR, Err(DecodeError::InvalidInputLength));
     }
 
     #[test]
     fn const_decode_wrong_output_size() {
-        const ERR: Result<[u8; 2], Error> = decode_array::<2>(b"00");
-        assert_eq!(ERR, Err(Error::InvalidOutputLength));
+        const ERR: Result<[u8; 2], DecodeError> = decode_array::<2>(b"00");
+        assert_eq!(ERR, Err(DecodeError::InvalidOutputLength));
     }
 
     #[test]
