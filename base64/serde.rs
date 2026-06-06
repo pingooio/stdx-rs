@@ -6,7 +6,7 @@ use serde::{
     de::{self, Visitor},
 };
 
-use crate::{Alphabet, decode_into, encode_into, encoded_length};
+use crate::{Alphabet, decode, encode};
 
 #[cfg_attr(
     all(feature = "alloc", feature = "serde"),
@@ -25,14 +25,9 @@ struct Foo {
 "##
 )]
 
-const FORMAT: Alphabet = Alphabet::Standard;
-
 pub fn serialize<S: Serializer>(data: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
     if serializer.is_human_readable() {
-        let len = encoded_len(data.len(), true);
-        let mut buf = vec![0u8; len];
-        encode_into(&mut buf, data, FORMAT);
-        serializer.serialize_str(unsafe { core::str::from_utf8_unchecked(&buf) })
+        serializer.serialize_str(&encode(data, Alphabet::Standard))
     } else {
         serializer.serialize_bytes(data)
     }
@@ -56,12 +51,7 @@ impl<'de> Visitor<'de> for Base64Visitor {
     }
 
     fn visit_str<E: de::Error>(self, v: &str) -> Result<Vec<u8>, E> {
-        let padding = matches!(FORMAT, Alphabet::Standard | Alphabet::Url);
-        let (content_len, _) = crate::strip_padding_info(v.as_bytes(), padding).map_err(de::Error::custom)?;
-        let output_len = crate::decoded_length(content_len).map_err(de::Error::custom)?;
-        let mut output = vec![0u8; output_len];
-        decode_into(&mut output, v.as_bytes(), FORMAT).map_err(de::Error::custom)?;
-        Ok(output)
+        decode(v.as_bytes(), Alphabet::Standard).map_err(de::Error::custom)
     }
 
     fn visit_bytes<E: de::Error>(self, v: &[u8]) -> Result<Vec<u8>, E> {

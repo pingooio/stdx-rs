@@ -5,8 +5,11 @@ use core::arch::aarch64::*;
 
 use crate::{Alphabet, DecodeError, EncodeError, decode_into_constant_time, encode_into_constant_time};
 
+const ALPHABET_STANDARD: [u8; 64] = *b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const ALPHABET_URL: [u8; 64] = *b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
 const ENCODE_NEON_STANDARD: [u8; 64] = {
-    let src = crate::ALPHABET_STANDARD;
+    let src = ALPHABET_STANDARD;
     let mut dst = [0u8; 64];
     let mut i = 0;
     while i < 16 {
@@ -20,7 +23,7 @@ const ENCODE_NEON_STANDARD: [u8; 64] = {
 };
 
 const ENCODE_NEON_URL_SAFE: [u8; 64] = {
-    let src = crate::ALPHABET_URL;
+    let src = ALPHABET_URL;
     let mut dst = [0u8; 64];
     let mut i = 0;
     while i < 16 {

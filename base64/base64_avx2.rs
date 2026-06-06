@@ -97,24 +97,11 @@ pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) ->
 
     if len > 0 {
         let data_slice = core::slice::from_raw_parts(inp, len);
+        let padded = alphabet.is_padded();
         let out_len = match len % 3 {
             0 => (len / 3) * 4,
-            1 => {
-                (len / 3) * 4
-                    + if matches!(alphabet, Alphabet::Standard | Alphabet::Url) {
-                        4
-                    } else {
-                        2
-                    }
-            }
-            _ => {
-                (len / 3) * 4
-                    + if matches!(alphabet, Alphabet::Standard | Alphabet::Url) {
-                        4
-                    } else {
-                        3
-                    }
-            }
+            1 => (len / 3) * 4 + if padded { 4 } else { 2 },
+            _ => (len / 3) * 4 + if padded { 4 } else { 3 },
         };
         let out_slice = core::slice::from_raw_parts_mut(out, out_len);
         return encode_into_constant_time(out_slice, data_slice, alphabet);

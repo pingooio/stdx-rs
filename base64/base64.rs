@@ -15,9 +15,6 @@ mod base64_avx2;
 
 const PAD: u8 = b'=';
 
-const ALPHABET_STANDARD: [u8; 64] = *b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-const ALPHABET_URL: [u8; 64] = *b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Alphabet {
     Standard,

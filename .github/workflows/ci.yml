@@ -12,19 +12,15 @@ jobs:
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: "-C linker=gcc"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          submodules: recursive
       - run: rustup update stable
       - run: sudo apt-get update && sudo apt upgrade && sudo apt-get install -y binutils gcc
       - run: cargo test --package hex
-        env:
-          RUSTFLAGS: "-C linker=gcc"
       - run: cargo test --package base64
-        env:
-          RUSTFLAGS: "-C linker=gcc"
       - run: cargo test --package base32
-        env:
-          RUSTFLAGS: "-C linker=gcc"
       - run: cargo test --package crypto
-        env:
-          RUSTFLAGS: "-C linker=gcc"

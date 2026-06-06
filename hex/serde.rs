@@ -6,7 +6,7 @@ use serde::{
     de::{self, Visitor},
 };
 
-use crate::{Alphabet, decode_into, encode_into};
+use crate::{decode, encode};
 
 #[cfg_attr(
     all(feature = "alloc", feature = "serde"),
@@ -25,13 +25,9 @@ struct Foo {
 "##
 )]
 
-const FORMAT: Alphabet = Alphabet::Lower;
-
 pub fn serialize<S: Serializer>(data: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
     if serializer.is_human_readable() {
-        let mut buf = vec![0u8; data.len() * 2];
-        encode_into(&mut buf, data, FORMAT);
-        serializer.serialize_str(unsafe { core::str::from_utf8_unchecked(&buf) })
+        serializer.serialize_str(&encode(data))
     } else {
         serializer.serialize_bytes(data)
     }
@@ -55,9 +51,7 @@ impl<'de> Visitor<'de> for HexVisitor {
     }
 
     fn visit_str<E: de::Error>(self, v: &str) -> Result<Vec<u8>, E> {
-        let mut output = vec![0u8; v.len() / 2];
-        decode_into(&mut output, v.as_bytes()).map_err(de::Error::custom)?;
-        Ok(output)
+        decode(v.as_bytes()).map_err(de::Error::custom)
     }
 
     fn visit_bytes<E: de::Error>(self, v: &[u8]) -> Result<Vec<u8>, E> {
