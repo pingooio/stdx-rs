@@ -132,12 +132,6 @@ pub unsafe fn decode_into(output: &mut [u8], encoded_data: &[u8], alphabet: Alph
     let url = matches!(alphabet, Alphabet::Url | Alphabet::UrlNoPadding);
     let zero = _mm256_setzero_si256();
 
-    let v_A = _mm256_set1_epi8(b'A' as i8);
-    let v_Z = _mm256_set1_epi8(b'Z' as i8);
-    let v_a = _mm256_set1_epi8(b'a' as i8);
-    let v_z = _mm256_set1_epi8(b'z' as i8);
-    let v_0 = _mm256_set1_epi8(b'0' as i8);
-    let v_9 = _mm256_set1_epi8(b'9' as i8);
     let v_plus = _mm256_set1_epi8(b'+' as i8);
     let v_slash = _mm256_set1_epi8(b'/' as i8);
 
@@ -162,19 +156,19 @@ pub unsafe fn decode_into(output: &mut [u8], encoded_data: &[u8], alphabet: Alph
 
         // A-Z range
         let ge_A = _mm256_cmpgt_epi8(c, _mm256_set1_epi8((b'A' - 1) as i8));
-        let le_Z = _mm256_cmpgt_epi8(v_Z, c);
+        let le_Z = _mm256_cmpgt_epi8(_mm256_set1_epi8((b'Z' + 1) as i8), c);
         let m_AZ = _mm256_and_si256(ge_A, le_Z);
         let sh_AZ = _mm256_and_si256(m_AZ, sh_n65);
 
         // a-z range
         let ge_a = _mm256_cmpgt_epi8(c, _mm256_set1_epi8((b'a' - 1) as i8));
-        let le_z = _mm256_cmpgt_epi8(v_z, c);
+        let le_z = _mm256_cmpgt_epi8(_mm256_set1_epi8((b'z' + 1) as i8), c);
         let m_az = _mm256_and_si256(ge_a, le_z);
         let sh_az = _mm256_and_si256(m_az, sh_n71);
 
         // 0-9 range
         let ge_0 = _mm256_cmpgt_epi8(c, _mm256_set1_epi8((b'0' - 1) as i8));
-        let le_9 = _mm256_cmpgt_epi8(v_9, c);
+        let le_9 = _mm256_cmpgt_epi8(_mm256_set1_epi8((b'9' + 1) as i8), c);
         let m_09 = _mm256_and_si256(ge_0, le_9);
         let sh_09 = _mm256_and_si256(m_09, sh_p4);
 

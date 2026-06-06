@@ -671,514 +671,322 @@ pub(crate) const fn decoded_length(encoded_data_length: usize) -> Result<usize, 
 mod tests {
     use super::*;
 
-    #[test]
-    fn encode_empty() {
-        assert_eq!(encode(b"", Alphabet::Standard), "");
-        let mut out = [0u8; 0];
-        encode_into(&mut out, b"", Alphabet::Standard).unwrap();
-    }
-
-    #[test]
-    fn encode_single_byte() {
-        assert_eq!(encode(b"\x00", Alphabet::Standard), "AA==");
-        assert_eq!(encode(b"\xFF", Alphabet::Standard), "/w==");
-        assert_eq!(encode(b"\xAB", Alphabet::Standard), "qw==");
-        assert_eq!(encode(b"\xFF", Alphabet::Url), "_w==");
-    }
-
-    #[test]
-    fn encode_two_bytes() {
-        assert_eq!(encode(b"fo", Alphabet::Standard), "Zm8=");
-        assert_eq!(encode(b"\x00\x00", Alphabet::Standard), "AAA=");
-        assert_eq!(encode(b"\xFF\xFF", Alphabet::Standard), "//8=");
-    }
-
-    #[test]
-    fn encode_three_bytes() {
-        assert_eq!(encode(b"foo", Alphabet::Standard), "Zm9v");
-        assert_eq!(encode(b"bar", Alphabet::Standard), "YmFy");
-    }
-
-    #[test]
-    fn encode_no_padding() {
-        assert_eq!(encode(b"f", Alphabet::StandardNoPadding), "Zg");
-        assert_eq!(encode(b"fo", Alphabet::StandardNoPadding), "Zm8");
-        assert_eq!(encode(b"foo", Alphabet::StandardNoPadding), "Zm9v");
-    }
-
-    #[test]
-    fn encode_url() {
-        assert_eq!(encode(b"\xFF\xEC\x20\x55\x00", Alphabet::Url), "_-wgVQA=");
-        assert_eq!(encode(b"\xFF\xEC\x20\x55\x00", Alphabet::UrlNoPadding), "_-wgVQA");
-    }
-
-    #[test]
-    fn encode_all_bytes() {
-        let data: Vec<u8> = (0..=255).collect();
-        let encoded = encode(&data, Alphabet::Standard);
-        assert_eq!(encoded.len(), 344);
-        let decoded = decode(encoded.as_bytes(), Alphabet::Standard).unwrap();
-        assert_eq!(decoded, data);
-    }
-
-    #[test]
-    fn encode_into_string_empty() {
-        let mut s = alloc::string::String::new();
-        encode_into_string(&mut s, b"", Alphabet::Standard);
-        assert_eq!(s, "");
-    }
-
-    #[test]
-    fn encode_into_string_empty_data_nonempty_output() {
-        let mut s = alloc::string::String::from("prefix");
-        encode_into_string(&mut s, b"", Alphabet::Standard);
-        assert_eq!(s, "prefix");
-    }
-
-    #[test]
-    fn encode_into_string_single_byte() {
-        let mut s = alloc::string::String::new();
-        encode_into_string(&mut s, b"\x00", Alphabet::Standard);
-        assert_eq!(s, "AA==");
-    }
-
-    #[test]
-    fn encode_into_string_two_bytes() {
-        let mut s = alloc::string::String::new();
-        encode_into_string(&mut s, b"fo", Alphabet::Standard);
-        assert_eq!(s, "Zm8=");
-    }
-
-    #[test]
-    fn encode_into_string_three_bytes() {
-        let mut s = alloc::string::String::new();
-        encode_into_string(&mut s, b"foo", Alphabet::Standard);
-        assert_eq!(s, "Zm9v");
-    }
-
-    #[test]
-    fn encode_into_string_append() {
-        let mut s = alloc::string::String::from("~~");
-        encode_into_string(&mut s, b"foo", Alphabet::Standard);
-        assert_eq!(s, "~~Zm9v");
-        encode_into_string(&mut s, b"bar", Alphabet::Standard);
-        assert_eq!(s, "~~Zm9vYmFy");
-    }
-
-    #[test]
-    fn encode_into_string_no_padding() {
-        let mut s = alloc::string::String::new();
-        encode_into_string(&mut s, b"f", Alphabet::StandardNoPadding);
-        assert_eq!(s, "Zg");
-        let mut s = alloc::string::String::new();
-        encode_into_string(&mut s, b"fo", Alphabet::StandardNoPadding);
-        assert_eq!(s, "Zm8");
-        let mut s = alloc::string::String::new();
-        encode_into_string(&mut s, b"foo", Alphabet::StandardNoPadding);
-        assert_eq!(s, "Zm9v");
-    }
-
-    #[test]
-    fn encode_into_string_url() {
-        let mut s = alloc::string::String::new();
-        encode_into_string(&mut s, b"\xFF\xEC\x20\x55\x00", Alphabet::Url);
-        assert_eq!(s, "_-wgVQA=");
-        let mut s = alloc::string::String::new();
-        encode_into_string(&mut s, b"\xFF\xEC\x20\x55\x00", Alphabet::UrlNoPadding);
-        assert_eq!(s, "_-wgVQA");
-    }
-
-    #[test]
-    fn encode_into_string_large() {
-        let data: Vec<u8> = (0..255).cycle().take(4096).collect();
-        let expected = encode(&data, Alphabet::Standard);
-        let mut s = alloc::string::String::new();
-        encode_into_string(&mut s, &data, Alphabet::Standard);
-        assert_eq!(s, expected);
-    }
-
-    #[test]
-    fn encode_into_string_roundtrip() {
-        let data: Vec<u8> = (0..=255).collect();
-        let mut s = alloc::string::String::new();
-        encode_into_string(&mut s, &data, Alphabet::Standard);
-        let decoded = decode(s.as_bytes(), Alphabet::Standard).unwrap();
-        assert_eq!(decoded, data);
-    }
-
-    #[test]
-    fn encode_into_string_all_alphabets() {
-        let data = b"hello world";
-        for alphabet in &[
+    // (input_bytes, alphabet, expected_encoded_str, description)
+    const ENCODE_VECTORS: &[(&[u8], Alphabet, &str, &str)] = &[
+        // RFC 4648 test vectors
+        (b"", Alphabet::Standard, "", "RFC4648: empty"),
+        (b"f", Alphabet::Standard, "Zg==", "RFC4648: 'f'"),
+        (b"fo", Alphabet::Standard, "Zm8=", "RFC4648: 'fo'"),
+        (b"foo", Alphabet::Standard, "Zm9v", "RFC4648: 'foo'"),
+        (b"foob", Alphabet::Standard, "Zm9vYg==", "RFC4648: 'foob'"),
+        (b"fooba", Alphabet::Standard, "Zm9vYmE=", "RFC4648: 'fooba'"),
+        (b"foobar", Alphabet::Standard, "Zm9vYmFy", "RFC4648: 'foobar'"),
+        // RFC 4648 Section 9 illustration vectors
+        (
+            &[0x14, 0xfb, 0x9c, 0x03, 0xd9, 0x7e],
             Alphabet::Standard,
-            Alphabet::StandardNoPadding,
-            Alphabet::Url,
-            Alphabet::UrlNoPadding,
-        ] {
-            let expected = encode(data, *alphabet);
-            let mut s = alloc::string::String::new();
-            encode_into_string(&mut s, data, *alphabet);
-            assert_eq!(s, expected, "mismatch for alphabet {alphabet:?}");
-        }
-    }
-
-    #[test]
-    fn decode_empty() {
-        assert_eq!(decode(b"", Alphabet::Standard).unwrap(), b"");
-    }
-
-    #[test]
-    fn decode_single_byte() {
-        assert_eq!(decode(b"AA==", Alphabet::Standard).unwrap(), b"\x00");
-        assert_eq!(decode(b"/w==", Alphabet::Standard).unwrap(), b"\xFF");
-        assert_eq!(decode(b"qw==", Alphabet::Standard).unwrap(), b"\xAB");
-    }
-
-    #[test]
-    fn decode_two_bytes() {
-        assert_eq!(decode(b"Zm8=", Alphabet::Standard).unwrap(), b"fo");
-        assert_eq!(decode(b"AAA=", Alphabet::Standard).unwrap(), b"\x00\x00");
-        assert_eq!(decode(b"//8=", Alphabet::Standard).unwrap(), b"\xFF\xFF");
-    }
-
-    #[test]
-    fn decode_three_bytes() {
-        assert_eq!(decode(b"Zm9v", Alphabet::Standard).unwrap(), b"foo");
-        assert_eq!(decode(b"YmFy", Alphabet::Standard).unwrap(), b"bar");
-    }
-
-    #[test]
-    fn decode_no_padding() {
-        assert_eq!(decode(b"Zg", Alphabet::StandardNoPadding).unwrap(), b"f");
-        assert_eq!(decode(b"Zm8", Alphabet::StandardNoPadding).unwrap(), b"fo");
-        assert_eq!(decode(b"Zm9v", Alphabet::StandardNoPadding).unwrap(), b"foo");
-    }
-
-    #[test]
-    fn decode_url_safe() {
-        assert_eq!(decode(b"_-wgVQA=", Alphabet::Url).unwrap(), b"\xFF\xEC\x20\x55\x00");
-        assert_eq!(decode(b"_-wgVQA", Alphabet::UrlNoPadding).unwrap(), b"\xFF\xEC\x20\x55\x00");
-    }
-
-    #[test]
-    fn decode_invalid_character() {
-        assert_eq!(decode(b"!!", Alphabet::Standard), Err(DecodeError::InvalidInput));
-        assert_eq!(decode(b"Zg!!", Alphabet::Standard), Err(DecodeError::InvalidInput));
-        assert_eq!(decode(b"!A==", Alphabet::Standard), Err(DecodeError::InvalidInput));
-    }
-
-    #[test]
-    fn decode_invalid_length() {
-        assert_eq!(decode(b"A", Alphabet::Standard), Err(DecodeError::InvalidInputLength));
-        assert_eq!(decode(b"AAAAA", Alphabet::Standard), Err(DecodeError::InvalidInputLength));
-    }
-
-    #[test]
-    fn decode_invalid_padding() {
-        assert_eq!(decode(b"Z===", Alphabet::Standard), Err(DecodeError::InvalidPadding));
-        assert_eq!(decode(b"Zg=A", Alphabet::Standard), Err(DecodeError::InvalidInput));
-        assert_eq!(decode(b"Zg===", Alphabet::Standard), Err(DecodeError::InvalidInputLength));
-    }
-
-    #[test]
-    fn decode_no_padding_rejects_padding() {
-        assert_eq!(decode(b"Zg==", Alphabet::StandardNoPadding), Err(DecodeError::InvalidPadding));
-        assert_eq!(decode(b"Zm8=", Alphabet::StandardNoPadding), Err(DecodeError::InvalidPadding));
-    }
-
-    #[test]
-    fn decode_into_exact_buffer() {
-        let mut out = [0u8; 3];
-        decode_into(&mut out, b"Zm9v", Alphabet::Standard).unwrap();
-        assert_eq!(&out, b"foo");
-    }
-
-    #[test]
-    fn decode_into_too_small() {
-        let mut out = [0u8; 2];
-        assert_eq!(
-            decode_into(&mut out, b"Zm9v", Alphabet::Standard),
-            Err(DecodeError::InvalidInputLength)
-        );
-    }
-
-    #[test]
-    fn decode_large_input() {
-        let data: Vec<u8> = (0..=255).cycle().take(4096).collect();
-        let encoded = encode(&data, Alphabet::Standard);
-        let decoded = decode(encoded.as_bytes(), Alphabet::Standard).unwrap();
-        assert_eq!(decoded, data);
-    }
-
-    #[test]
-    fn roundtrip() {
-        let data: Vec<u8> = (0..=255).cycle().take(1024).collect();
-        let encoded = encode(&data, Alphabet::Standard);
-        let decoded = decode(encoded.as_bytes(), Alphabet::Standard).unwrap();
-        assert_eq!(decoded, data);
-    }
-
-    #[test]
-    fn roundtrip_all_variants() {
-        let data: Vec<u8> = (0..=255).cycle().take(1024).collect();
-        for alphabet in &[
+            "FPucA9l+",
+            "illustration: 6 bytes",
+        ),
+        (
+            &[0x14, 0xfb, 0x9c, 0x03, 0xd9],
             Alphabet::Standard,
+            "FPucA9k=",
+            "illustration: 5 bytes",
+        ),
+        (
+            &[0x14, 0xfb, 0x9c, 0x03],
+            Alphabet::Standard,
+            "FPucAw==",
+            "illustration: 4 bytes",
+        ),
+        (b"Man", Alphabet::Standard, "TWFu", "illustration: 'Man'"),
+        (b"Ma", Alphabet::Standard, "TWE=", "illustration: 'Ma'"),
+        (b"M", Alphabet::Standard, "TQ==", "illustration: 'M'"),
+        // Single bytes
+        (b"\x00", Alphabet::Standard, "AA==", "single byte 0x00"),
+        (b"\xFF", Alphabet::Standard, "/w==", "single byte 0xFF"),
+        (b"\xAB", Alphabet::Standard, "qw==", "single byte 0xAB"),
+        (b"\xFF", Alphabet::Url, "_w==", "single byte 0xFF URL"),
+        // Two bytes
+        (b"\x00\x00", Alphabet::Standard, "AAA=", "two bytes 0x00"),
+        (b"\xFF\xFF", Alphabet::Standard, "//8=", "two bytes 0xFF"),
+        // Three bytes
+        (b"bar", Alphabet::Standard, "YmFy", "three bytes 'bar'"),
+        // No padding
+        (b"f", Alphabet::StandardNoPadding, "Zg", "no-pad: 'f'"),
+        (b"fo", Alphabet::StandardNoPadding, "Zm8", "no-pad: 'fo'"),
+        (b"foo", Alphabet::StandardNoPadding, "Zm9v", "no-pad: 'foo'"),
+        // URL-safe
+        (b"\xFF\xEC\x20\x55\x00", Alphabet::Url, "_-wgVQA=", "URL padded"),
+        (b"\xFF\xEC\x20\x55\x00", Alphabet::UrlNoPadding, "_-wgVQA", "URL no-pad"),
+    ];
+
+    // (encoded_str, alphabet, expected_bytes, description)
+    const DECODE_VECTORS: &[(&[u8], Alphabet, &[u8], &str)] = &[
+        (b"", Alphabet::Standard, b"", "RFC4648: empty"),
+        (b"Zg==", Alphabet::Standard, b"f", "RFC4648: 'f'"),
+        (b"Zm8=", Alphabet::Standard, b"fo", "RFC4648: 'fo'"),
+        (b"Zm9v", Alphabet::Standard, b"foo", "RFC4648: 'foo'"),
+        (b"Zm9vYg==", Alphabet::Standard, b"foob", "RFC4648: 'foob'"),
+        (b"Zm9vYmE=", Alphabet::Standard, b"fooba", "RFC4648: 'fooba'"),
+        (b"Zm9vYmFy", Alphabet::Standard, b"foobar", "RFC4648: 'foobar'"),
+        (b"AA==", Alphabet::Standard, b"\x00", "single byte 0x00"),
+        (b"/w==", Alphabet::Standard, b"\xFF", "single byte 0xFF"),
+        (b"qw==", Alphabet::Standard, b"\xAB", "single byte 0xAB"),
+        (b"AAA=", Alphabet::Standard, b"\x00\x00", "two bytes 0x00"),
+        (b"//8=", Alphabet::Standard, b"\xFF\xFF", "two bytes 0xFF"),
+        (b"Zg", Alphabet::StandardNoPadding, b"f", "no-pad: 'f'"),
+        (b"Zm8", Alphabet::StandardNoPadding, b"fo", "no-pad: 'fo'"),
+        (b"Zm9v", Alphabet::StandardNoPadding, b"foo", "no-pad: 'foo'"),
+        (b"_-wgVQA=", Alphabet::Url, b"\xFF\xEC\x20\x55\x00", "URL padded"),
+        (b"_-wgVQA", Alphabet::UrlNoPadding, b"\xFF\xEC\x20\x55\x00", "URL no-pad"),
+    ];
+
+    // (encoded_str, alphabet, expected_error, description)
+    const DECODE_ERROR_VECTORS: &[(&[u8], Alphabet, DecodeError, &str)] = &[
+        (b"!!", Alphabet::Standard, DecodeError::InvalidInput, "two invalid chars"),
+        (
+            b"Zg!!",
+            Alphabet::Standard,
+            DecodeError::InvalidInput,
+            "valid prefix + invalid suffix",
+        ),
+        (b"!A==", Alphabet::Standard, DecodeError::InvalidInput, "invalid first char"),
+        (b"A", Alphabet::Standard, DecodeError::InvalidInputLength, "single char"),
+        (b"AAAAA", Alphabet::Standard, DecodeError::InvalidInputLength, "5 chars"),
+        (b"Z===", Alphabet::Standard, DecodeError::InvalidPadding, "1 content + 3 pads"),
+        (
+            b"Zg=A",
+            Alphabet::Standard,
+            DecodeError::InvalidInput,
+            "interior '=' before valid char",
+        ),
+        (
+            b"Zg===",
+            Alphabet::Standard,
+            DecodeError::InvalidInputLength,
+            "valid + 3 pads (invalid length)",
+        ),
+        (
+            b"Zg==",
             Alphabet::StandardNoPadding,
-            Alphabet::Url,
-            Alphabet::UrlNoPadding,
-        ] {
-            let encoded = encode(&data, *alphabet);
-            let decoded = decode(encoded.as_bytes(), *alphabet).unwrap();
-            assert_eq!(decoded, data, "roundtrip failed for alphabet {:?}", alphabet);
+            DecodeError::InvalidPadding,
+            "no-pad rejects padding",
+        ),
+        (
+            b"Zm8=",
+            Alphabet::StandardNoPadding,
+            DecodeError::InvalidPadding,
+            "no-pad rejects padding 2 bytes",
+        ),
+        (b"=", Alphabet::Standard, DecodeError::InvalidInputLength, "single pad only"),
+        (b"==", Alphabet::Standard, DecodeError::InvalidInputLength, "double pad only"),
+        (b"A===", Alphabet::Standard, DecodeError::InvalidPadding, "1 content + 3 pads"),
+    ];
+
+    // (data_length, padding, expected_result, description)
+    const ENCODED_LENGTH_VECTORS: &[(usize, bool, Option<usize>, &str)] = &[
+        (0, true, Some(0), "empty padded"),
+        (1, true, Some(4), "1 byte padded"),
+        (2, true, Some(4), "2 bytes padded"),
+        (3, true, Some(4), "3 bytes padded"),
+        (4, true, Some(8), "4 bytes padded"),
+        (5, true, Some(8), "5 bytes padded"),
+        (0, false, Some(0), "empty unpadded"),
+        (1, false, Some(2), "1 byte unpadded"),
+        (2, false, Some(3), "2 bytes unpadded"),
+        (3, false, Some(4), "3 bytes unpadded"),
+        (4, false, Some(6), "4 bytes unpadded"),
+        (5, false, Some(7), "5 bytes unpadded"),
+        (usize::MAX, true, None, "overflow padded"),
+        (usize::MAX, false, None, "overflow unpadded"),
+        (usize::MAX / 4 * 3 + 3, true, None, "overflow at boundary"),
+    ];
+
+    // (initial_string, input_bytes, alphabet, expected_output, description)
+    const ENCODE_INTO_STRING_VECTORS: &[(&str, &[u8], Alphabet, &str, &str)] = &[
+        ("", b"", Alphabet::Standard, "", "empty"),
+        ("prefix", b"", Alphabet::Standard, "prefix", "empty data with prefix"),
+        ("", b"\x00", Alphabet::Standard, "AA==", "single null byte"),
+        ("", b"fo", Alphabet::Standard, "Zm8=", "two bytes 'fo'"),
+        ("", b"foo", Alphabet::Standard, "Zm9v", "three bytes 'foo'"),
+        ("", b"f", Alphabet::StandardNoPadding, "Zg", "no-pad: 'f'"),
+        ("", b"fo", Alphabet::StandardNoPadding, "Zm8", "no-pad: 'fo'"),
+        ("", b"foo", Alphabet::StandardNoPadding, "Zm9v", "no-pad: 'foo'"),
+        ("", b"\xFF\xEC\x20\x55\x00", Alphabet::Url, "_-wgVQA=", "URL padded"),
+        ("", b"\xFF\xEC\x20\x55\x00", Alphabet::UrlNoPadding, "_-wgVQA", "URL no-pad"),
+    ];
+
+    const ALL_ALPHABETS: &[Alphabet] = &[
+        Alphabet::Standard,
+        Alphabet::StandardNoPadding,
+        Alphabet::Url,
+        Alphabet::UrlNoPadding,
+    ];
+
+    const ROUNDTRIP_SIZES: &[usize] = &[
+        0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 23, 24, 25, 31, 32, 33, 47, 48, 49, 63, 64, 65, 127, 128, 129,
+    ];
+
+    const SIMD_BOUNDARY_SIZES: &[usize] = &[
+        22, 23, 24, 25, 26, 30, 31, 32, 33, 34, 46, 47, 48, 49, 50, 62, 63, 64, 65, 66,
+    ];
+
+    #[test]
+    fn test_encode() {
+        for &(input, alphabet, expected, desc) in ENCODE_VECTORS {
+            let result = encode(input, alphabet);
+            assert_eq!(result, expected, "encode: {desc}");
         }
     }
 
     #[test]
-    fn roundtrip_various_sizes() {
-        for len in [
-            0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129,
-        ] {
-            let data: Vec<u8> = (0..len as u8).collect();
-            let encoded = encode(&data, Alphabet::Standard);
-            let decoded = decode(encoded.as_bytes(), Alphabet::Standard).unwrap();
-            assert_eq!(decoded, data, "roundtrip failed for len={}", len);
+    fn test_decode() {
+        for &(encoded, alphabet, expected, desc) in DECODE_VECTORS {
+            let result = decode(encoded, alphabet).unwrap();
+            assert_eq!(&result, expected, "decode: {desc}");
         }
     }
 
     #[test]
-    fn const_encode() {
-        const DATA: [u8; 3] = [0x66, 0x6F, 0x6F];
-        const B64: [u8; 4] = encode_array::<4>(&DATA, Alphabet::Standard);
-        assert_eq!(&B64, b"Zm9v");
+    fn test_decode_error() {
+        for &(encoded, alphabet, expected_err, desc) in DECODE_ERROR_VECTORS {
+            let result = decode(encoded, alphabet);
+            assert_eq!(result, Err(expected_err), "decode error: {desc}");
+        }
 
-        const B64_URL: [u8; 4] = encode_array::<4>(&DATA, Alphabet::Url);
-        assert_eq!(&B64_URL, b"Zm9v");
-    }
-
-    #[test]
-    fn const_encode_empty() {
-        const B64: [u8; 0] = encode_array::<0>(b"", Alphabet::Standard);
-        assert_eq!(B64.len(), 0);
-    }
-
-    #[test]
-    fn const_encode_no_pad() {
-        const DATA: [u8; 2] = [0x66, 0x6F];
-        const B64: [u8; 3] = encode_array::<3>(&DATA, Alphabet::StandardNoPadding);
-        assert_eq!(&B64, b"Zm8");
-    }
-
-    #[test]
-    fn const_decode() {
-        const RESULT: Result<[u8; 3], DecodeError> = decode_array::<3>(b"Zm9v", Alphabet::Standard);
-        assert_eq!(RESULT.unwrap(), [0x66, 0x6F, 0x6F]);
-    }
-
-    #[test]
-    fn const_decode_empty() {
-        const RESULT: Result<[u8; 0], DecodeError> = decode_array::<0>(b"", Alphabet::Standard);
-        assert_eq!(RESULT.unwrap().len(), 0);
-    }
-
-    #[test]
-    fn const_decode_no_pad() {
-        const RESULT: Result<[u8; 2], DecodeError> = decode_array::<2>(b"Zm8", Alphabet::StandardNoPadding);
-        assert_eq!(RESULT.unwrap(), [0x66, 0x6F]);
-    }
-
-    #[test]
-    fn const_decode_invalid_character() {
-        const ERR: Result<[u8; 1], DecodeError> = decode_array::<1>(b"!!", Alphabet::Standard);
-        assert_eq!(ERR, Err(DecodeError::InvalidInput));
-    }
-
-    #[test]
-    fn const_decode_wrong_output_size() {
-        const ERR: Result<[u8; 0], DecodeError> = decode_array::<0>(b"Zg==", Alphabet::Standard);
-        assert_eq!(ERR, Err(DecodeError::InvalidInputLength));
-    }
-
-    #[test]
-    fn encode_into_panics_on_too_small() {
-        let mut out = [0u8; 1];
-        assert!(encode_into(&mut out, b"hello", Alphabet::Standard) == Err(EncodeError::InvalidOutputLength));
-    }
-
-    #[test]
-    fn decode_trailing_invalid_in_large_buffer() {
+        // 32-byte input with invalid char at position 31 (SIMD boundary via dispatch)
         let mut input = alloc::vec![b'A'; 32];
         input[31] = b'!';
         assert_eq!(decode(&input, Alphabet::Standard), Err(DecodeError::InvalidInput));
     }
 
     #[test]
-    fn encoded_len_padded() {
-        assert_eq!(encoded_length(0, true), Some(0));
-        assert_eq!(encoded_length(1, true), Some(4));
-        assert_eq!(encoded_length(2, true), Some(4));
-        assert_eq!(encoded_length(3, true), Some(4));
-        assert_eq!(encoded_length(4, true), Some(8));
-        assert_eq!(encoded_length(5, true), Some(8));
+    fn test_encoded_length() {
+        for &(data_len, padding, expected, desc) in ENCODED_LENGTH_VECTORS {
+            let result = encoded_length(data_len, padding);
+            assert_eq!(result, expected, "encoded_length: {desc}");
+        }
     }
 
     #[test]
-    fn encoded_len_no_padding() {
-        assert_eq!(encoded_length(0, false), Some(0));
-        assert_eq!(encoded_length(1, false), Some(2));
-        assert_eq!(encoded_length(2, false), Some(3));
-        assert_eq!(encoded_length(3, false), Some(4));
-        assert_eq!(encoded_length(4, false), Some(6));
-        assert_eq!(encoded_length(5, false), Some(7));
+    fn test_encode_into_string() {
+        for &(initial, input, alphabet, expected, desc) in ENCODE_INTO_STRING_VECTORS {
+            let mut s = alloc::string::String::from(initial);
+            encode_into_string(&mut s, input, alphabet);
+            assert_eq!(s, expected, "encode_into_string: {desc}");
+        }
+
+        // Multi-append
+        let mut s = alloc::string::String::from("~~");
+        encode_into_string(&mut s, b"foo", Alphabet::Standard);
+        assert_eq!(s, "~~Zm9v");
+        encode_into_string(&mut s, b"bar", Alphabet::Standard);
+        assert_eq!(s, "~~Zm9vYmFy");
+
+        for alphabet in ALL_ALPHABETS {
+            let expected = encode(b"hello world", *alphabet);
+            let mut s = alloc::string::String::new();
+            encode_into_string(&mut s, b"hello world", *alphabet);
+            assert_eq!(s, expected, "encode_into_string alphabet {alphabet:?}");
+        }
     }
 
     #[test]
-    fn encoded_len_overflow() {
-        assert_eq!(encoded_length(usize::MAX, true), None);
-        assert_eq!(encoded_length(usize::MAX, false), None);
-        // This is the smallest input length that causes complete_chunks * 4 to overflow usize
-        assert_eq!(encoded_length(usize::MAX / 4 * 3 + 3, true), None);
-    }
-
-    #[test]
-    fn display_error() {
-        let err = DecodeError::InvalidInput;
-        assert_eq!(format!("{}", err), "invalid base64 character");
-        let err = DecodeError::InvalidInputLength;
-        assert_eq!(format!("{}", err), "invalid base64 length");
-        let err = DecodeError::InvalidPadding;
-        assert_eq!(format!("{}", err), "invalid base64 padding");
-
-        let err = EncodeError::InvalidOutputLength;
-        assert_eq!(
-            format!("{}", err),
-            "output buffer size must be exactly equal to decoded_len(input)"
-        );
-        let err = EncodeError::OutputOverflow;
-        assert_eq!(format!("{}", err), "output length overflow");
-    }
-
-    #[test]
-    fn encode_rfc4648_vectors() {
-        assert_eq!(encode(b"", Alphabet::Standard), "");
-        assert_eq!(encode(b"f", Alphabet::Standard), "Zg==");
-        assert_eq!(encode(b"fo", Alphabet::Standard), "Zm8=");
-        assert_eq!(encode(b"foo", Alphabet::Standard), "Zm9v");
-        assert_eq!(encode(b"foob", Alphabet::Standard), "Zm9vYg==");
-        assert_eq!(encode(b"fooba", Alphabet::Standard), "Zm9vYmE=");
-        assert_eq!(encode(b"foobar", Alphabet::Standard), "Zm9vYmFy");
-    }
-
-    #[test]
-    fn decode_rfc4648_vectors() {
-        assert_eq!(decode(b"", Alphabet::Standard).unwrap(), b"");
-        assert_eq!(decode(b"Zg==", Alphabet::Standard).unwrap(), b"f");
-        assert_eq!(decode(b"Zm8=", Alphabet::Standard).unwrap(), b"fo");
-        assert_eq!(decode(b"Zm9v", Alphabet::Standard).unwrap(), b"foo");
-        assert_eq!(decode(b"Zm9vYg==", Alphabet::Standard).unwrap(), b"foob");
-        assert_eq!(decode(b"Zm9vYmE=", Alphabet::Standard).unwrap(), b"fooba");
-        assert_eq!(decode(b"Zm9vYmFy", Alphabet::Standard).unwrap(), b"foobar");
-    }
-
-    #[test]
-    fn decode_invalid_padding_count() {
-        assert_eq!(decode(b"Zg===", Alphabet::Standard), Err(DecodeError::InvalidInputLength));
-        assert_eq!(decode(b"Z===", Alphabet::Standard), Err(DecodeError::InvalidPadding));
-    }
-
-    #[test]
-    fn decode_invalid_length_mod4() {
-        assert_eq!(decode(b"A", Alphabet::Standard), Err(DecodeError::InvalidInputLength));
-        assert_eq!(decode(b"AAAAA", Alphabet::Standard), Err(DecodeError::InvalidInputLength));
-    }
-
-    #[test]
-    fn roundtrip_boundary_sizes() {
-        for len in [
-            0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 23, 24, 25, 47, 48, 49, 63, 64, 65,
-        ] {
+    fn test_roundtrip() {
+        for &len in ROUNDTRIP_SIZES {
             let data: Vec<u8> = (0..len as u8).collect();
-            for alphabet in &[
-                Alphabet::Standard,
-                Alphabet::StandardNoPadding,
-                Alphabet::Url,
-                Alphabet::UrlNoPadding,
-            ] {
+            for alphabet in ALL_ALPHABETS {
                 let encoded = encode(&data, *alphabet);
                 let decoded = decode(encoded.as_bytes(), *alphabet).unwrap();
-                assert_eq!(decoded, data, "roundtrip failed for len={} alphabet={:?}", len, alphabet);
+                assert_eq!(decoded, data, "roundtrip len={len} alphabet={alphabet:?}");
             }
         }
     }
 
     #[test]
-    fn decode_invalid_char_position_constant_time() {
-        let mut out = [0u8; 32];
+    fn test_roundtrip_large() {
+        let size = 4096;
 
-        // 4 bytes, invalid char at position 0 (short input, scalar tail path)
-        assert_eq!(
-            decode_into_constant_time(&mut out, b"!AAA", Alphabet::Standard),
-            Err(DecodeError::InvalidInput)
-        );
+        let data = alloc::vec![0x00u8; size];
+        let elen = encoded_length(size, true).expect("encoded_len overflow");
+        let mut encoded = alloc::vec![0u8; elen];
+        encode_into_constant_time(&mut encoded, &data, Alphabet::Standard).unwrap();
+        let mut decoded = alloc::vec![0u8; size];
+        decode_into_constant_time(&mut decoded, &encoded, Alphabet::Standard).unwrap();
+        assert_eq!(decoded, data, "4096 zeroes constant-time");
 
-        // 32 bytes, invalid char at position 31 (last byte of a 32-byte main-loop chunk)
-        let mut input32 = [b'A'; 32];
-        input32[31] = b'!';
-        assert_eq!(
-            decode_into_constant_time(&mut out, &input32, Alphabet::Standard),
-            Err(DecodeError::InvalidInput)
-        );
+        let data = alloc::vec![0xFFu8; size];
+        let mut encoded = alloc::vec![0u8; elen];
+        encode_into_constant_time(&mut encoded, &data, Alphabet::Standard).unwrap();
+        decode_into_constant_time(&mut decoded, &encoded, Alphabet::Standard).unwrap();
+        assert_eq!(decoded, data, "4096 0xFF constant-time");
 
-        // 36 bytes, invalid char at position 32 (first byte after a 32-byte chunk)
-        let mut input36_32 = [b'A'; 36];
-        input36_32[32] = b'!';
-        assert_eq!(
-            decode_into_constant_time(&mut out, &input36_32, Alphabet::Standard),
-            Err(DecodeError::InvalidInput)
-        );
+        let data: Vec<u8> = (0..=255).cycle().take(size).collect();
+        let encoded = encode(&data, Alphabet::Standard);
+        let decoded = decode(encoded.as_bytes(), Alphabet::Standard).unwrap();
+        assert_eq!(decoded, data, "4096 cycle dispatch");
 
-        // 36 bytes, invalid char at position 33
-        let mut input36_33 = [b'A'; 36];
-        input36_33[33] = b'!';
-        assert_eq!(
-            decode_into_constant_time(&mut out, &input36_33, Alphabet::Standard),
-            Err(DecodeError::InvalidInput)
-        );
+        let data: Vec<u8> = (0..=255).collect();
+        let mut s = alloc::string::String::new();
+        encode_into_string(&mut s, &data, Alphabet::Standard);
+        let decoded = decode(s.as_bytes(), Alphabet::Standard).unwrap();
+        assert_eq!(decoded, data, "256-byte encode_into_string roundtrip");
+
+        let data: Vec<u8> = (0..255).cycle().take(4096).collect();
+        let expected = encode(&data, Alphabet::Standard);
+        let mut s = alloc::string::String::new();
+        encode_into_string(&mut s, &data, Alphabet::Standard);
+        assert_eq!(s, expected, "4096-byte encode_into_string");
     }
 
     #[test]
-    fn decode_invalid_char_every_position_constant_time() {
-        // Verify constant-time decode handles invalid chars at every position
-        // in a 32-byte main-loop block -- all must return InvalidInput, not
-        // crash or return different errors.
+    fn test_encode_all_single_bytes() {
+        for byte in 0..=255u8 {
+            for alphabet in &[Alphabet::Standard, Alphabet::Url] {
+                let padding = alphabet.is_padded();
+                let elen = encoded_length(1, padding).unwrap();
+                let mut encoded = alloc::vec![0u8; elen];
+                encode_into_constant_time(&mut encoded, &[byte], *alphabet).unwrap();
+                let mut decoded = [0u8; 1];
+                decode_into_constant_time(&mut decoded, &encoded, *alphabet).unwrap();
+                assert_eq!(decoded[0], byte, "single byte roundtrip {byte:#04x} alphabet={alphabet:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_decode_invalid_char_every_position() {
         let mut out = [0u8; 32];
+
         for pos in 0..32 {
             let mut input = [b'A'; 32];
             input[pos] = b'!';
             assert_eq!(
                 decode_into_constant_time(&mut out, &input, Alphabet::Standard),
                 Err(DecodeError::InvalidInput),
-                "invalid char at position {pos} should return InvalidInput"
+                "invalid char at position {pos} in 32-byte block"
             );
         }
 
-        // 36 bytes with invalid at positions 0..35 (spans main loop + tail)
         for pos in 0..36 {
             let mut input = [b'A'; 36];
             input[pos] = b'!';
             assert_eq!(
                 decode_into_constant_time(&mut out, &input, Alphabet::Standard),
                 Err(DecodeError::InvalidInput),
-                "invalid char at position {pos} in 36-byte input should return InvalidInput"
+                "invalid char at position {pos} in 36-byte block"
             );
         }
     }
 
     #[test]
-    fn decode_non_canonical_trailing_bits() {
+    fn test_decode_non_canonical_trailing_bits() {
         let mut out = [0u8; 2];
 
         // remaining == 2: bottom 4 bits of v1 must be zero
-        for (input, expected) in &[
+        for &(input, expected) in &[
             (b"/w==" as &[u8], Ok(())),
             (b"/x==" as &[u8], Err(DecodeError::InvalidInput)),
             (b"/y==" as &[u8], Err(DecodeError::InvalidInput)),
@@ -1186,14 +994,14 @@ mod tests {
         ] {
             assert_eq!(
                 decode_into_constant_time(&mut out, input, Alphabet::Standard).map(|_| ()),
-                *expected,
-                "input: {:?}",
+                expected,
+                "non-canonical (rem=2): {:?}",
                 core::str::from_utf8(input)
             );
         }
 
         // remaining == 3: bottom 2 bits of v2 must be zero
-        for (input, expected) in &[
+        for &(input, expected) in &[
             (b"iYU=" as &[u8], Ok(())),
             (b"iYV=" as &[u8], Err(DecodeError::InvalidInput)),
             (b"iYW=" as &[u8], Err(DecodeError::InvalidInput)),
@@ -1201,17 +1009,16 @@ mod tests {
         ] {
             assert_eq!(
                 decode_into_constant_time(&mut out, input, Alphabet::Standard).map(|_| ()),
-                *expected,
-                "input: {:?}",
+                expected,
+                "non-canonical (rem=3): {:?}",
                 core::str::from_utf8(input)
             );
         }
     }
 
     #[test]
-    fn decode_rejects_interior_padding() {
+    fn test_decode_rejects_interior_padding() {
         let mut out = [0u8; 4];
-
         assert_eq!(
             decode_into_constant_time(&mut out, b"A=AA", Alphabet::Standard),
             Err(DecodeError::InvalidInput)
@@ -1227,151 +1034,105 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_simd_boundary_sizes() {
+    fn test_roundtrip_simd_boundary_sizes() {
         let mut data_buf = Vec::new();
         let mut enc_buf = Vec::new();
 
-        for input_len in [
-            22, 23, 24, 25, 26, 30, 31, 32, 33, 34, 46, 47, 48, 49, 50, 62, 63, 64, 65, 66,
-        ] {
+        for &input_len in SIMD_BOUNDARY_SIZES {
             data_buf.clear();
             for b in 0..input_len {
                 data_buf.push(b as u8);
             }
 
-            for alphabet in &[
-                Alphabet::Standard,
-                Alphabet::StandardNoPadding,
-                Alphabet::Url,
-                Alphabet::UrlNoPadding,
-            ] {
+            for alphabet in ALL_ALPHABETS {
                 let padding = alphabet.is_padded();
                 let elen = encoded_length(input_len, padding).expect("encoded_len overflow");
                 enc_buf.resize(elen, 0);
-
                 encode_into_constant_time(&mut enc_buf, &data_buf, *alphabet).unwrap();
 
                 let mut decoded = alloc::vec![0u8; input_len];
                 assert_eq!(
                     decode_into_constant_time(&mut decoded, &enc_buf, *alphabet),
                     Ok(()),
-                    "decode failed for len={input_len} alphabet={alphabet:?}"
+                    "decode failed len={input_len} alphabet={alphabet:?}"
                 );
-                assert_eq!(
-                    &decoded, &data_buf,
-                    "roundtrip mismatch for len={input_len} alphabet={alphabet:?}"
-                );
+                assert_eq!(&decoded, &data_buf, "roundtrip mismatch len={input_len} alphabet={alphabet:?}");
             }
         }
     }
 
     #[test]
-    fn encode_all_single_bytes_standard() {
-        for byte in 0..=255u8 {
-            let input = [byte];
-            let mut encoded = [0u8; 4];
-            encode_into_constant_time(&mut encoded, &input, Alphabet::Standard).unwrap();
+    fn test_const_encode() {
+        const DATA: [u8; 3] = [0x66, 0x6F, 0x6F];
+        const B64: [u8; 4] = encode_array::<4>(&DATA, Alphabet::Standard);
+        assert_eq!(&B64, b"Zm9v");
 
-            let mut decoded = [0u8; 1];
-            assert_eq!(
-                decode_into_constant_time(&mut decoded, &encoded, Alphabet::Standard),
-                Ok(()),
-                "decode failed for byte {byte:#04x}"
-            );
-            assert_eq!(decoded[0], byte, "roundtrip mismatch for byte {byte:#04x}");
-        }
+        const B64_URL: [u8; 4] = encode_array::<4>(&DATA, Alphabet::Url);
+        assert_eq!(&B64_URL, b"Zm9v");
+
+        const B64_EMPTY: [u8; 0] = encode_array::<0>(b"", Alphabet::Standard);
+        assert_eq!(B64_EMPTY.len(), 0);
+
+        const NOPAD_DATA: [u8; 2] = [0x66, 0x6F];
+        const B64_NOPAD: [u8; 3] = encode_array::<3>(&NOPAD_DATA, Alphabet::StandardNoPadding);
+        assert_eq!(&B64_NOPAD, b"Zm8");
     }
 
     #[test]
-    fn encode_all_single_bytes_url_safe() {
-        for byte in 0..=255u8 {
-            let input = [byte];
-            let padding = true;
-            let elen = encoded_length(1, padding).expect("encoded_len overflow");
-            let mut encoded = vec![0u8; elen];
-            encode_into_constant_time(&mut encoded, &input, Alphabet::Url).unwrap();
+    fn test_const_decode() {
+        const RESULT: Result<[u8; 3], DecodeError> = decode_array::<3>(b"Zm9v", Alphabet::Standard);
+        assert_eq!(RESULT.unwrap(), [0x66, 0x6F, 0x6F]);
 
-            let mut decoded = [0u8; 1];
-            assert_eq!(
-                decode_into_constant_time(&mut decoded, &encoded, Alphabet::Url),
-                Ok(()),
-                "decode failed for byte {byte:#04x}"
-            );
-            assert_eq!(decoded[0], byte, "roundtrip mismatch for byte {byte:#04x}");
-        }
+        const RESULT_EMPTY: Result<[u8; 0], DecodeError> = decode_array::<0>(b"", Alphabet::Standard);
+        assert_eq!(RESULT_EMPTY.unwrap().len(), 0);
+
+        const RESULT_NOPAD: Result<[u8; 2], DecodeError> = decode_array::<2>(b"Zm8", Alphabet::StandardNoPadding);
+        assert_eq!(RESULT_NOPAD.unwrap(), [0x66, 0x6F]);
     }
 
     #[test]
-    fn roundtrip_large_all_zeroes() {
-        let size = 4096;
-        let data = alloc::vec![0x00u8; size];
-        let padding = true;
-        let elen = encoded_length(size, padding).expect("encoded_len overflow");
-        let mut encoded = alloc::vec![0u8; elen];
-        encode_into_constant_time(&mut encoded, &data, Alphabet::Standard).unwrap();
+    fn test_const_decode_error() {
+        const ERR_INVALID: Result<[u8; 1], DecodeError> = decode_array::<1>(b"!!", Alphabet::Standard);
+        assert_eq!(ERR_INVALID, Err(DecodeError::InvalidInput));
 
-        let mut decoded = alloc::vec![0u8; size];
-        decode_into_constant_time(&mut decoded, &encoded, Alphabet::Standard).unwrap();
-        assert_eq!(decoded, data);
+        const ERR_SIZE: Result<[u8; 0], DecodeError> = decode_array::<0>(b"Zg==", Alphabet::Standard);
+        assert_eq!(ERR_SIZE, Err(DecodeError::InvalidInputLength));
     }
 
     #[test]
-    fn roundtrip_large_all_ones() {
-        let size = 4096;
-        let data = alloc::vec![0xFFu8; size];
-        let padding = true;
-        let elen = encoded_length(size, padding).expect("encoded_len overflow");
-        let mut encoded = alloc::vec![0u8; elen];
-        encode_into_constant_time(&mut encoded, &data, Alphabet::Standard).unwrap();
-
-        let mut decoded = alloc::vec![0u8; size];
-        decode_into_constant_time(&mut decoded, &encoded, Alphabet::Standard).unwrap();
-        assert_eq!(decoded, data);
-    }
-
-    #[test]
-    fn rfc4648_illustration_vectors() {
-        // RFC 4648 Section 9, Table 1 illustration vectors
-        assert_eq!(encode(&[0x14, 0xfb, 0x9c, 0x03, 0xd9, 0x7e], Alphabet::Standard), "FPucA9l+");
-        assert_eq!(encode(&[0x14, 0xfb, 0x9c, 0x03, 0xd9], Alphabet::Standard), "FPucA9k=");
-        assert_eq!(encode(&[0x14, 0xfb, 0x9c, 0x03], Alphabet::Standard), "FPucAw==");
-
-        // "Man" -> "TWFu"
-        assert_eq!(encode(b"Man", Alphabet::Standard), "TWFu");
-        assert_eq!(encode(b"Ma", Alphabet::Standard), "TWE=");
-        assert_eq!(encode(b"M", Alphabet::Standard), "TQ==");
-    }
-
-    #[test]
-    fn decode_strict_padding_length_multiple_of_4() {
-        let mut out = [0u8; 16];
-
-        // Input with padding and length not multiple of 4
+    fn test_buffer_management() {
+        let mut out = [0u8; 1];
         assert_eq!(
-            decode_into_constant_time(&mut out, b"Zg===", Alphabet::Standard),
+            encode_into(&mut out, b"hello", Alphabet::Standard),
+            Err(EncodeError::InvalidOutputLength)
+        );
+
+        let mut out = [0u8; 3];
+        decode_into(&mut out, b"Zm9v", Alphabet::Standard).unwrap();
+        assert_eq!(&out, b"foo");
+
+        let mut out = [0u8; 2];
+        assert_eq!(
+            decode_into(&mut out, b"Zm9v", Alphabet::Standard),
             Err(DecodeError::InvalidInputLength)
         );
+    }
 
-        // Input with padding only at end, no content, pad_count=1
+    #[test]
+    fn test_display_error() {
+        assert_eq!(format!("{}", DecodeError::InvalidInput), "invalid base64 character");
+        assert_eq!(format!("{}", DecodeError::InvalidInputLength), "invalid base64 length");
+        assert_eq!(format!("{}", DecodeError::InvalidPadding), "invalid base64 padding");
         assert_eq!(
-            decode_into_constant_time(&mut out, b"=", Alphabet::Standard),
-            Err(DecodeError::InvalidInputLength)
+            format!("{}", EncodeError::InvalidOutputLength),
+            "output buffer size must be exactly equal to decoded_len(input)"
         );
-        assert_eq!(
-            decode_into_constant_time(&mut out, b"==", Alphabet::Standard),
-            Err(DecodeError::InvalidInputLength)
-        );
-
-        // 3 padding characters is invalid
-        assert_eq!(
-            decode_into_constant_time(&mut out, b"A===", Alphabet::Standard),
-            Err(DecodeError::InvalidPadding)
-        );
+        assert_eq!(format!("{}", EncodeError::OutputOverflow), "output length overflows usize::MAX");
     }
 
     #[cfg(feature = "serde")]
     #[test]
-    fn serde_roundtrip() {
+    fn test_serde() {
         #[derive(::serde::Serialize, ::serde::Deserialize)]
         struct Data(#[serde(with = "crate::serde")] Vec<u8>);
 

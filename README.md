@@ -22,7 +22,6 @@ A second, temporary, goal is to reduce supply-chain risks by forking the most-us
 | `acme` | https://github.com/instant-labs/instant-acme | 5e12971830a5907f0aeba4dfd602ec26db4bc30c | TODO |
 | `anyerr` | https://github.com/dtolnay/anyhow | 5a88bc48ca18c9720be292487dcdcbc93004d15a | TODO |
 | `async-trait` | https://github.com/dtolnay/async-trait | 4a00d732460d37e219755bfc6db132b42b8c4af1 | TODO |
-| `base32` | https://github.com/andreasots/base32 | 26441dc8e3a92a5e4b5974cea5e04fcc46f5e4ea | TODO |
 | `constant_time_eq` | https://github.com/cesarb/constant_time_eq | 09a34625babf29e1b622ed46e959ea517986b12a | TODO |
 | `crc32fast` | https://github.com/srijs/rust-crc32fast | 479ecdf0174dd3a0f7d48b2f66a386d8d2369963 | TODO |
 | `embed` | https://github.com/pyrossh/rust-embed | 105fdfebab5820ea0628149ee62b34f6d2df3bb8 | TODO |

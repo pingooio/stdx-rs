@@ -6,7 +6,7 @@ use serde::{
     de::{self, Visitor},
 };
 
-use crate::{Alphabet, decode_into, encode_into, encoded_len};
+use crate::{Alphabet, decode_into, encode_into, encoded_length};
 
 #[cfg_attr(
     all(feature = "alloc", feature = "serde"),
@@ -58,7 +58,7 @@ impl<'de> Visitor<'de> for Base64Visitor {
     fn visit_str<E: de::Error>(self, v: &str) -> Result<Vec<u8>, E> {
         let padding = matches!(FORMAT, Alphabet::Standard | Alphabet::Url);
         let (content_len, _) = crate::strip_padding_info(v.as_bytes(), padding).map_err(de::Error::custom)?;
-        let output_len = crate::decoded_len(content_len).map_err(de::Error::custom)?;
+        let output_len = crate::decoded_length(content_len).map_err(de::Error::custom)?;
         let mut output = vec![0u8; output_len];
         decode_into(&mut output, v.as_bytes(), FORMAT).map_err(de::Error::custom)?;
         Ok(output)
