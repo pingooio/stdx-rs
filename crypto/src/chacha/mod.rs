@@ -154,14 +154,18 @@ impl<const ROUNDS: usize> StreamCipher for ChaChaDjb<ROUNDS> {
             #[cfg(target_arch = "x86_64")]
             if is_x86_feature_detected!("avx512f") && in_out.len() >= 128 {
                 use chacha_avx512::chacha_avx512;
-                chacha_avx512::<ROUNDS>(&mut self.state, in_out, &mut self.last_keystream_block);
+                unsafe {
+                    chacha_avx512::<ROUNDS>(&mut self.state, in_out, &mut self.last_keystream_block);
+                }
                 return;
             }
 
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             if is_x86_feature_detected!("avx2") && in_out.len() >= 128 {
                 use chacha_avx2::chacha_avx2;
-                chacha_avx2::<ROUNDS>(&mut self.state, in_out, &mut self.last_keystream_block);
+                unsafe {
+                    chacha_avx2::<ROUNDS>(&mut self.state, in_out, &mut self.last_keystream_block);
+                }
                 return;
             }
         }

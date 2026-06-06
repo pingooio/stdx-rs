@@ -99,7 +99,7 @@ pub fn chacha_avx2<const ROUNDS: usize>(
 /// Compute 8 64-byte ChaCha blocks in parallel using AVX2 vectors.
 /// The keystream is the 8 64-byte blocks computed in parallel.
 /// [ block1 (64 bytes) || block2 (64 bytes) || block3 (64 bytes) || block4 (64 bytes) ... ]
-#[inline(always)]
+#[inline]
 #[target_feature(enable = "avx2")]
 fn chacha20_avx2_8blocks<const ROUNDS: usize>(
     initial_state: [__m256i; STATE_WORDS],

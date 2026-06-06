@@ -100,7 +100,7 @@ pub fn chacha_avx512<const ROUNDS: usize>(
 /// Compute 16 64-byte ChaCha blocks in parallel using AVX-512 vectors.
 /// The keystream is the 16 64-byte blocks computed in parallel.
 /// [ block1 (64 bytes) || block2 (64 bytes) || block3 (64 bytes) || block4 (64 bytes) ... ]
-#[inline(always)]
+#[inline]
 #[target_feature(enable = "avx512f")]
 fn chacha20_avx512_16blocks<const ROUNDS: usize>(
     initial_state: [__m512i; STATE_WORDS],
