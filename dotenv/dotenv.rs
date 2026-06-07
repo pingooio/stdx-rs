@@ -95,6 +95,8 @@ pub enum ParseErrorKind {
     /// A key containing characters outside the allowed set
     /// (alphanumeric, `_`, `.`, `-`).
     InvalidKey,
+    /// Extra content found after a closing quote.
+    TrailingContent,
 }
 
 impl fmt::Display for ParseErrorKind {
@@ -104,6 +106,7 @@ impl fmt::Display for ParseErrorKind {
             ParseErrorKind::UnmatchedQuote => f.write_str("unmatched quote"),
             ParseErrorKind::EmptyKey => f.write_str("empty key"),
             ParseErrorKind::InvalidKey => f.write_str("invalid key character"),
+            ParseErrorKind::TrailingContent => f.write_str("trailing content after closing quote"),
         }
     }
 }
@@ -211,6 +214,13 @@ fn parse_value(s: &str, line: usize) -> Result<String, Error> {
                     kind: ParseErrorKind::UnmatchedQuote,
                 })
             })?;
+            let after = rest[close + 1..].trim();
+            if !after.is_empty() && !after.starts_with('#') {
+                return Err(Error::Parse(ParseError {
+                    line,
+                    kind: ParseErrorKind::TrailingContent,
+                }));
+            }
             Ok(rest[..close].to_string())
         }
         b'\'' => {
@@ -221,15 +231,26 @@ fn parse_value(s: &str, line: usize) -> Result<String, Error> {
                     kind: ParseErrorKind::UnmatchedQuote,
                 })
             })?;
+            let after = rest[close + 1..].trim();
+            if !after.is_empty() && !after.starts_with('#') {
+                return Err(Error::Parse(ParseError {
+                    line,
+                    kind: ParseErrorKind::TrailingContent,
+                }));
+            }
             Ok(rest[..close].to_string())
         }
         _ => {
-            let stripped = if let Some(pos) = trimmed.find('#') {
-                &trimmed[..pos]
-            } else {
-                trimmed
+            let comment_start = s
+                .as_bytes()
+                .windows(2)
+                .position(|w| w[0].is_ascii_whitespace() && w[1] == b'#')
+                .map(|i| i + 1);
+            let val = match comment_start {
+                Some(pos) => &s[..pos],
+                None => s,
             };
-            Ok(stripped.trim().to_string())
+            Ok(val.trim().to_string())
         }
     }
 }
@@ -319,6 +340,21 @@ mod tests {
         assert_eq!(parse_ok("A1.b-C_2=val"), vec![("A1.b-C_2".into(), "val".into())]);
     }
 
+    #[test]
+    fn key_starting_with_hyphen() {
+        assert_eq!(parse_ok("-KEY=v"), vec![("-KEY".into(), "v".into())]);
+    }
+
+    #[test]
+    fn key_starting_with_dot() {
+        assert_eq!(parse_ok(".KEY=v"), vec![(".KEY".into(), "v".into())]);
+    }
+
+    #[test]
+    fn key_starting_with_underscore() {
+        assert_eq!(parse_ok("_KEY=v"), vec![("_KEY".into(), "v".into())]);
+    }
+
     // ── Double-quoted values ───────────────────────────────────────────────
 
     #[test]
@@ -351,6 +387,21 @@ mod tests {
         assert_eq!(parse_ok("K=\"it's ok\""), vec![("K".into(), "it's ok".into())]);
     }
 
+    #[test]
+    fn double_quoted_whitespace_preserved() {
+        assert_eq!(parse_ok("K=\" hello \""), vec![("K".into(), " hello ".into())]);
+    }
+
+    #[test]
+    fn double_quoted_trailing_content_error() {
+        assert_eq!(parse_kind("K=\"hello\"extra"), ParseErrorKind::TrailingContent);
+    }
+
+    #[test]
+    fn double_quoted_trailing_comment_allowed() {
+        assert_eq!(parse_ok("K=\"hello\" # comment"), vec![("K".into(), "hello".into())]);
+    }
+
     // ── Single-quoted values ───────────────────────────────────────────────
 
     #[test]
@@ -378,6 +429,16 @@ mod tests {
         assert_eq!(parse_ok(r#"K='"hello"'"#), vec![("K".into(), r#""hello""#.into())]);
     }
 
+    #[test]
+    fn single_quoted_whitespace_preserved() {
+        assert_eq!(parse_ok("K=' hello '"), vec![("K".into(), " hello ".into())]);
+    }
+
+    #[test]
+    fn single_quoted_trailing_content_error() {
+        assert_eq!(parse_kind("K='hello'extra"), ParseErrorKind::TrailingContent);
+    }
+
     // ── Quoted example from the spec ────────────────────────────────────────
 
     #[test]
@@ -393,8 +454,8 @@ mod tests {
     }
 
     #[test]
-    fn unquoted_hash_no_space() {
-        assert_eq!(parse_ok("K=val#comment"), vec![("K".into(), "val".into())]);
+    fn unquoted_hash_no_space_not_comment() {
+        assert_eq!(parse_ok("K=val#comment"), vec![("K".into(), "val#comment".into())]);
     }
 
     #[test]
@@ -415,6 +476,26 @@ mod tests {
     #[test]
     fn unquoted_value_with_dots() {
         assert_eq!(parse_ok("HOST=192.168.1.1"), vec![("HOST".into(), "192.168.1.1".into())]);
+    }
+
+    #[test]
+    fn unquoted_value_containing_quote() {
+        assert_eq!(parse_ok("K=hello\"there"), vec![("K".into(), "hello\"there".into())]);
+    }
+
+    #[test]
+    fn unquoted_value_containing_only_hash() {
+        assert_eq!(parse_ok("K=#"), vec![("K".into(), "#".into())]);
+    }
+
+    #[test]
+    fn unquoted_value_hash_without_preceding_space() {
+        assert_eq!(parse_ok("K=val#ue"), vec![("K".into(), "val#ue".into())]);
+    }
+
+    #[test]
+    fn unquoted_hash_with_preceding_space_is_comment() {
+        assert_eq!(parse_ok("K=val #ue"), vec![("K".into(), "val".into())]);
     }
 
     // ── Empty values ───────────────────────────────────────────────────────
@@ -553,6 +634,21 @@ mod tests {
     #[test]
     fn error_unmatched_double_quote_with_hash() {
         assert_eq!(parse_kind("K=\"hello#more"), ParseErrorKind::UnmatchedQuote);
+    }
+
+    #[test]
+    fn error_trailing_content_double_quote() {
+        assert_eq!(parse_kind("K=\"hello\"extra"), ParseErrorKind::TrailingContent);
+    }
+
+    #[test]
+    fn error_trailing_content_single_quote() {
+        assert_eq!(parse_kind("K='hello'extra"), ParseErrorKind::TrailingContent);
+    }
+
+    #[test]
+    fn error_trailing_content_line_number() {
+        assert_eq!(parse_line("A=1\nK=\"v\"x\nB=2"), 2);
     }
 
     #[test]
@@ -713,6 +809,30 @@ mod tests {
         match result.unwrap_err() {
             Error::Io(_) => {}
             _ => panic!("expected Io error"),
+        }
+    }
+
+    #[test]
+    fn load_parse_error() {
+        let dir = env::temp_dir().join(format!("dotenv_test_parse_err_{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let env_path = dir.join(".env");
+        fs::write(&env_path, "A=1\nMALFORMED\nB=2").unwrap();
+
+        let old = env::current_dir().ok();
+        env::set_current_dir(&dir).unwrap();
+
+        let result = load();
+
+        if let Some(p) = old {
+            let _ = env::set_current_dir(p);
+        }
+        let _ = fs::remove_file(&env_path);
+        let _ = fs::remove_dir(&dir);
+
+        match result.unwrap_err() {
+            Error::Parse(e) => assert_eq!(e.line, 2),
+            _ => panic!("expected Parse error"),
         }
     }
 }

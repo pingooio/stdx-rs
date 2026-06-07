@@ -6,7 +6,3 @@ description = "Load environment variables from .env files"
 
 [lib]
 path = "./dotenv.rs"
-
-[features]
-default = ["std"]
-std = []
