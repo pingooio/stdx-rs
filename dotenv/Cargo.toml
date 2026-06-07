@@ -1,0 +1,12 @@
+[package]
+name = "dotenv"
+version = "0.1.0"
+edition = "2024"
+description = "Load environment variables from .env files"
+
+[lib]
+path = "./dotenv.rs"
+
+[features]
+default = ["std"]
+std = []

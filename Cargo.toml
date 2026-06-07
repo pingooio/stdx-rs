@@ -56,6 +56,7 @@ members = [
     "thiserror/impl",
     "tld",
     "unsafe_libyaml",
+    "dotenv",
     "pg",
     "pg-derive"
 ]
