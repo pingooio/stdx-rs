@@ -2,18 +2,49 @@
 
 Rust's extended standard library.
 
-Rust's current biggest problem is its anemic standard library which leads not only to a very fragmented ecosystem with multiples competing packages (so you end up with 10 different libraries to handle time and dates) but also to high supply chain risks (see [Rust has a HUGE supply chain security problem](https://kerkour.com/rust-supply-chain-security-standard-library)).
+Rust's current biggest problem is its anemic standard library which leads not only to a very fragmented ecosystem with multiples competing packages (so you end up with 10 different libraries to handle time and dates) but also to high supply chain risks (see [Supply chain nightmare: How Rust will be attacked and what we can do to mitigate the inevitable](https://kerkour.com/rust-supply-chain-nightmare)).
 
-This is why we are leading the way to create Rust's extended standard library which should provide all the packages for the most-common usecases.
+This is why we are creating Rust's extended standard library which should provide all the packages for the most-common usecases.
 
-Our goal is that `stdx` uses only code from `std` and `stdx`. No third-party imports, no supply chain risks.
-
-
-A second, temporary, goal is to reduce supply-chain risks by forking the most-used libraries so developers can use the `patch` feature of `cargo` to pull their dependencies from a single trusted source instead of 300 different developers who may not have the time to think about security.
+The goal is that `stdx` only uses code from `std` and `stdx`. No third-party imports, no supply chain risks.
 
 
+> **Warning ⚠️**: No stability guarantees at this moment.
 
-## Forks
+## Usage
+
+Import package directly from git, for example:
+```toml
+base64 = { git = "https://github.com/pingooio/stdx-rs", branch = "main" }
+```
+
+## Contributing
+
+Contributions, especially bug reports are welcome.
+
+Other than for minor typos, no pull request will be accepted without a preliminary discussion, so please, open an issue first.
+
+## Development
+
+See `.devcontainer/Dockerfile`.
+
+Then:
+
+```bash
+rustup default stable
+```
+
+And you are ready to <s>Go</s> Rust!
+
+See `Makefile` for common commands.
+
+
+## License
+
+MIT, see [LICENCE.txt](./LICENSE.txt)
+
+
+### Forks
 
 | Package | Forked from | Commit | Original License |
 | --- | --- | --- | --- |
@@ -37,7 +68,6 @@ A second, temporary, goal is to reduce supply-chain risks by forking the most-us
 | `percent_encoding` | https://github.com/servo/rust-ur | 54346fa288e16b25b71c45149d7067c752b450e0 | TODO |
 | `ryu` | https://github.com/dtolnay/ryu | 8234c4d95f97565bfa562cd1572bb0e8ed80cc44 | TODO |
 | `serde_urlencoded` | https://github.com/nox/serde_urlencoded | 0cca840185fa85b39e2cc8a0b2547fff5ace8e68 | TODO |
-| `serde_urlencoded` | https://github.com/nox/serde_urlencoded | 0cca840185fa85b39e2cc8a0b2547fff5ace8e68 | TODO |
 | `serde_yaml` | https://github.com/dtolnay/serde-yaml | 2009506d33767dfc88e979d6bc0d53d09f941c94 | TODO |
 | `single_instance` | https://github.com/WLBF/single-instance | b3fae2c90a24f4a53e5944fc2ab828c1c35944cb | MIT |
 | `tld` | https://github.com/rushmorem/publicsuffix | 47958d65a3eab3a01e4a9cf46ccf40c11a7e8052 | TODO |
@@ -45,16 +75,4 @@ A second, temporary, goal is to reduce supply-chain risks by forking the most-us
 | `uuid` | https://github.com/uuid-rs/uuid | 98fc36df4d3f33669d54f1d7b999888f75d8b71f | TODO |
 
 
-
-## Development
-
-See `.devcontainer/Dockerfile`.
-
-Then:
-
-```bash
-rustup default stable
-```
-
-And you are ready to <s>Go</s> Rust!
 
