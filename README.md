@@ -25,7 +25,7 @@ base64 = { git = "https://github.com/pingooio/stdx-rs", branch = "main" }
 
 ## Contributing
 
-Contributions are welcome, especially bug reports.
+Contributions are welcome, especially bug reports, improvement ideas and new package suggestions.
 
 Other than for minor typos, no pull request will be accepted without a preliminary discussion. Please open an issue first.
 

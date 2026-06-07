@@ -5,17 +5,20 @@ use core::arch::x86_64::*;
 
 use crate::{Alphabet, DecodeError, EncodeError};
 
-/// Encode `data` as hex into `output` using AVX2, with scalar fallback
-/// for the remaining tail.
+/// Encode `data` as hex into `output` using AVX2.
 ///
-/// Processes 32 input bytes per iteration with AVX2, then encodes any
-/// remaining bytes (< 32) via `encode_into_constant_time`.
+/// Processes 32 input bytes per iteration using `_mm256_shuffle_epi8`
+/// table lookups, then encodes any remaining bytes (< 32) via
+/// [`encode_into_constant_time`].
 ///
 /// # Safety
-/// Caller must ensure that AVX2 is available.
+///
+/// The caller must ensure AVX2 is available on the current CPU
+/// (e.g. via `is_x86_feature_detected!("avx2")`). Calling this on a
+/// CPU without AVX2 support will cause an illegal instruction fault.
 #[target_feature(enable = "avx2")]
 pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), EncodeError> {
-    debug_assert!(output.len() >= data.len() * 2);
+    debug_assert!(output.len() == data.len() * 2);
 
     let table = _mm256_broadcastsi128_si256(_mm_loadu_si128(
         match alphabet {
@@ -58,18 +61,22 @@ pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) ->
     Ok(())
 }
 
-/// Decode hex `input` into `output` using AVX2, with scalar fallback
-/// for the remaining tail.
+/// Decode hex `input` into `output` using AVX2.
 ///
-/// Processes 32 hex chars (16 output bytes) per iteration with AVX2,
-/// then decodes any remaining hex chars (< 32) via `decode_into_constant_time`.
+/// Processes 32 hex chars (16 output bytes) per iteration using range
+/// comparison for character classification and nibble extraction, then
+/// decodes any remaining hex chars (< 32) via
+/// [`decode_into_constant_time`].
 ///
 /// # Safety
-/// Caller must ensure that AVX2 is available.
+///
+/// The caller must ensure AVX2 is available on the current CPU
+/// (e.g. via `is_x86_feature_detected!("avx2")`). Calling this on a
+/// CPU without AVX2 support will cause an illegal instruction fault.
 #[target_feature(enable = "avx2")]
 pub unsafe fn decode_into(output: &mut [u8], input: &[u8]) -> Result<(), DecodeError> {
     debug_assert!(input.len() % 2 == 0);
-    debug_assert!(output.len() >= input.len() / 2);
+    debug_assert!(output.len() == input.len() / 2);
 
     let zero = _mm256_setzero_si256();
 

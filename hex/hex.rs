@@ -1,6 +1,46 @@
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+//! Fast hex encoding and decoding with SIMD acceleration, constant-time
+//! operations, and `const fn` support.
+//!
+//! Encoding supports lowercase (`0-9a-f`) and uppercase (`0-9A-F`)
+//! alphabets via [`Alphabet`]. Decoding is case-insensitive.
+//!
+//! # Feature flags
+//!
+//! | Flag    | Description                                             |
+//! |---------|---------------------------------------------------------|
+//! | `std`   | [`std::error::Error`] trait impls (enabled by default)  |
+//! | `alloc` | `String`/`Vec`-returning convenience APIs               |
+//! | `serde` | Serde [`serialize`](crate::serde::serialize)/[`deserialize`](crate::serde::deserialize) helpers  |
+//!
+//! # Performance
+//!
+//! The runtime [`encode_into`] and [`decode_into`] functions
+//! automatically dispatch to SIMD-accelerated paths (AVX2 on x86/x86_64,
+//! NEON on aarch64) for inputs large enough to benefit. For small
+//! payloads or when a constant-time guarantee is required, use
+//! [`encode_into_constant_time`] or [`decode_into_constant_time`].
+//!
+//! # `const fn` support
+//!
+//! [`encode_array`] and [`decode_array`] are `const fn`, enabling hex
+//! encoding and decoding at compile time.
+//!
+//! # Examples
+//!
+//! ```rust
+//! let encoded = hex::encode(b"hello");
+//! assert_eq!(encoded, "68656c6c6f");
+//!
+//! let decoded = hex::decode(b"68656c6c6f").unwrap();
+//! assert_eq!(decoded, b"hello");
+//!
+//! let upper = hex::encode_with_alphabet(b"hello", hex::Alphabet::Upper);
+//! assert_eq!(upper, "68656C6C6F");
+//! ```
+
 #[cfg(any(feature = "alloc", test))]
 extern crate alloc;
 
@@ -16,21 +56,46 @@ mod hex_avx2;
 const ALPHABET_LOWER: [u8; 16] = *b"0123456789abcdef";
 const ALPHABET_UPPER: [u8; 16] = *b"0123456789ABCDEF";
 
+/// The hex character set used for encoding.
+///
+/// | Variant  | Alphabet                    |
+/// |----------|-----------------------------|
+/// | `Lower`  | `0123456789abcdef`          |
+/// | `Upper`  | `0123456789ABCDEF`          |
+///
+/// Decoding accepts any case regardless of the encoding alphabet.
+///
+/// # Example
+///
+/// ```rust
+/// let encoded = hex::encode_with_alphabet(b"\xAB", hex::Alphabet::Lower);
+/// assert_eq!(encoded, "ab");
+///
+/// let encoded = hex::encode_with_alphabet(b"\xAB", hex::Alphabet::Upper);
+/// assert_eq!(encoded, "AB");
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Alphabet {
     Lower,
     Upper,
 }
 
+/// Errors that can occur during hex decoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
+    /// The input contains a character that is not a valid hex digit
+    /// (`0-9`, `a-f`, `A-F`).
     InvalidInput,
+    /// The input length is odd. Hex encoding requires pairs of characters.
     InvalidInputLength,
+    /// The output buffer length does not match `input.len() / 2`.
     InvalidOutputLength,
 }
 
+/// Errors that can occur during hex encoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncodeError {
+    /// The output buffer length does not match `input.len() * 2`.
     InvalidOutputLength,
 }
 
@@ -58,12 +123,29 @@ impl std::error::Error for DecodeError {}
 #[cfg(feature = "std")]
 impl std::error::Error for EncodeError {}
 
+/// Encodes bytes to a lowercase hex string.
+///
+/// This is a convenience wrapper around [`encode_with_alphabet`] using
+/// [`Alphabet::Lower`].
+///
+/// # Example
+///
+/// ```rust
+/// assert_eq!(hex::encode(b"hello"), "68656c6c6f");
+/// ```
 #[cfg(any(feature = "alloc", test))]
 #[inline]
 pub fn encode(data: impl AsRef<[u8]>) -> alloc::string::String {
     encode_with_alphabet(data.as_ref(), Alphabet::Lower)
 }
 
+/// Encodes bytes to a hex string using the given [`Alphabet`].
+///
+/// # Example
+///
+/// ```rust
+/// assert_eq!(hex::encode_with_alphabet(b"hello", hex::Alphabet::Upper), "68656C6C6F");
+/// ```
 #[cfg(any(feature = "alloc", test))]
 #[inline]
 pub fn encode_with_alphabet(data: impl AsRef<[u8]>, alphabet: Alphabet) -> alloc::string::String {
@@ -75,8 +157,8 @@ pub fn encode_with_alphabet(data: impl AsRef<[u8]>, alphabet: Alphabet) -> alloc
 
 /// Encodes `data` into a fixed-size array at compile time.
 ///
-/// The generic parameter `OUT` is the output array length. It must be at
-/// least `data.len() * 2` or a compile-time panic is raised.
+/// The generic parameter `OUT` is the output array length. It must be exactly
+/// `data.len() * 2` long or a compile-time panic is raised.
 ///
 /// # Example
 ///
@@ -94,7 +176,24 @@ pub const fn encode_array<const OUT: usize>(data: &[u8], alphabet: Alphabet) -> 
     result
 }
 
-/// Returns an error if output.len() != data.len() * 2
+/// Encodes bytes into an existing buffer.
+///
+/// Dispatches to a SIMD-accelerated implementation (AVX2 or NEON) when
+/// the target feature is available.
+///
+/// See [`encode_into_constant_time`] for security-sensitive and cryptographic operations.
+///
+/// # Errors
+///
+/// Returns [`EncodeError::InvalidOutputLength`] if `output.len() != data.len() * 2`.
+///
+/// # Example
+///
+/// ```rust
+/// let mut buf = [0u8; 10];
+/// hex::encode_into(&mut buf, b"hello", hex::Alphabet::Lower).unwrap();
+/// assert_eq!(&buf, b"68656c6c6f");
+/// ```
 #[inline]
 pub fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), EncodeError> {
     #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
@@ -219,7 +318,15 @@ const fn check_encode_output_length(data_length: usize, output_length: usize) ->
     Ok(())
 }
 
-/// Helper function that appends the encoded data to a `String`.
+/// Appends the hex-encoded representation of `data` to a [`String`].
+///
+/// # Example
+///
+/// ```rust
+/// let mut s = String::from("tag: ");
+/// hex::encode_into_string(&mut s, b"hello", hex::Alphabet::Lower);
+/// assert_eq!(s, "tag: 68656c6c6f");
+/// ```
 #[cfg(feature = "alloc")]
 pub fn encode_into_string(output: &mut alloc::string::String, data: &[u8], alphabet: Alphabet) {
     let encoded_length = data.len() * 2;
@@ -242,6 +349,21 @@ pub fn encode_into_string(output: &mut alloc::string::String, data: &[u8], alpha
 /// Decode
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// Decodes a hex string into bytes.
+///
+/// Accepts any combination of uppercase and lowercase hex characters.
+///
+/// # Errors
+///
+/// Returns [`DecodeError`] if any character is not a valid or if the input has an
+/// odd number of characters.
+///
+/// # Example
+///
+/// ```rust
+/// let decoded = hex::decode(b"68656c6c6f").unwrap();
+/// assert_eq!(decoded, b"hello");
+/// ```
 #[cfg(any(feature = "alloc", test))]
 pub fn decode(data: impl AsRef<[u8]>) -> Result<alloc::vec::Vec<u8>, DecodeError> {
     let data = data.as_ref();
@@ -252,8 +374,8 @@ pub fn decode(data: impl AsRef<[u8]>) -> Result<alloc::vec::Vec<u8>, DecodeError
 
 /// Decodes a hex string into a fixed-size array at compile time.
 ///
-/// The generic parameter `OUT` is the output array length. It must equal
-/// `data.len() / 2` or an error is returned.
+/// The generic parameter `OUT` is the output array length. It must be exactly
+/// `data.len() / 2` bytes long or a compile-time panic is raised.
 ///
 /// # Example
 ///
@@ -271,6 +393,27 @@ pub const fn decode_array<const OUT: usize>(encoded_data: &[u8]) -> Result<[u8; 
     Ok(result)
 }
 
+/// Decodes a hex string into an existing buffer.
+///
+/// Dispatches to a SIMD-accelerated implementation (AVX2 or NEON) when
+/// the target feature is available.
+///
+/// Accepts any combination of uppercase and lowercase hex characters.
+///
+/// See [`decode_into_constant_time`] for security-sensitive and cryptographic operations.
+///
+/// # Errors
+///
+/// Returns [`DecodeError`] if any character is not a valid hex digit or if the input length is odd
+/// or if `output.len() != encoded_data.len() / 2`.
+///
+/// # Example
+///
+/// ```rust
+/// let mut buf = [0u8; 5];
+/// hex::decode_into(&mut buf, b"68656c6c6f").unwrap();
+/// assert_eq!(&buf, b"hello");
+/// ```
 pub fn decode_into(output: &mut [u8], encoded_data: &[u8]) -> Result<(), DecodeError> {
     #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
     if encoded_data.len() >= 32 {

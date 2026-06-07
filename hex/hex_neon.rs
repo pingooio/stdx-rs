@@ -2,11 +2,17 @@ use core::arch::aarch64::*;
 
 use crate::{Alphabet, DecodeError, EncodeError};
 
-/// Encode `data` as hex into `output` using NEON, with scalar fallback
-/// for the remaining tail.
+/// Encode `data` as hex into `output` using NEON.
 ///
-/// Processes 16 input bytes per iteration with NEON, then encodes any
-/// remaining bytes (< 16) via `encode_into_constant_time`.
+/// Processes 16 input bytes per iteration using `vqtbl1q_u8` table
+/// lookups with `vzip1q_u8`/`vzip2q_u8` interleaving, then encodes any
+/// remaining bytes (< 16) via [`encode_into_constant_time`].
+///
+/// # Safety
+///
+/// The caller must ensure NEON is available on the current CPU
+/// (e.g. via `is_aarch64_feature_detected!("neon")`). Calling this on a
+/// CPU without NEON support will cause an illegal instruction fault.
 #[target_feature(enable = "neon")]
 pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), EncodeError> {
     debug_assert!(output.len() >= data.len() * 2);
@@ -50,11 +56,18 @@ pub unsafe fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) ->
     Ok(())
 }
 
-/// Decode hex `input` into `output` using NEON, with scalar fallback
-/// for the remaining tail.
+/// Decode hex `input` into `output` using NEON.
 ///
-/// Processes 32 hex chars (16 output bytes) per iteration with NEON,
-/// then decodes any remaining hex chars (< 32) via `decode_into_constant_time`.
+/// Processes 32 hex chars (16 output bytes) per iteration using range
+/// comparison for character classification and nibble extraction, then
+/// decodes any remaining hex chars (< 32) via
+/// [`decode_into_constant_time`].
+///
+/// # Safety
+///
+/// The caller must ensure NEON is available on the current CPU
+/// (e.g. via `is_aarch64_feature_detected!("neon")`). Calling this on a
+/// CPU without NEON support will cause an illegal instruction fault.
 #[allow(non_snake_case)]
 #[target_feature(enable = "neon")]
 pub unsafe fn decode_into(output: &mut [u8], input: &[u8]) -> Result<(), DecodeError> {
