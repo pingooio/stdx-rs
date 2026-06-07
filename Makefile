@@ -39,5 +39,5 @@ check_all: check
 
 .PHONY: docs
 docs:
-	cargo doc --no-deps --all-features
+	RUSTDOCFLAGS='--cfg docsrs' cargo +nightly doc --no-deps --all-features
 	node tools/docs-index/docs_index.js
