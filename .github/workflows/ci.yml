@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  test:
+  check:
     strategy:
       fail-fast: false
       matrix:
@@ -15,7 +15,26 @@ jobs:
     env:
       RUSTFLAGS: "-C linker=gcc"
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: recursive
+      - run: rustup update stable
+      - run: sudo apt-get update && sudo apt upgrade && sudo apt-get install -y binutils gcc
+      - run: make check
+
+
+  test:
+    needs:
+      - check
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: "-C linker=gcc"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           submodules: recursive
       - run: rustup update stable
