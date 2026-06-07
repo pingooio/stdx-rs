@@ -3,7 +3,7 @@ use crate::{Uuid, Version};
 impl Uuid {
     /// Create a new version 7 UUID using a time value and random bytes.
     ///
-    /// When the `std` feature is enabled, you can also use [`Uuid::now_v7`].
+    /// When the `std` feature is enabled, you can also use [`Uuid::new_v7`].
     ///
     /// Note that usage of this method requires the `v7` feature of this crate
     /// to be enabled.
