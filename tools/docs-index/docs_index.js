@@ -4,6 +4,7 @@ import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const docDir = join(__dirname, "..", "..", "target", "doc");
+const staticDir = join(docDir, "static.files");
 
 const cratesJsPath = join(docDir, "crates.js");
 if (!existsSync(cratesJsPath)) {
@@ -19,7 +20,50 @@ if (!match) {
 
 const crateNames = JSON.parse(match[1]);
 
-const excluded = new Set(["static.files", "src", "trait.impl", "type.impl", "search.index"]);
+const staticFiles = readdirSync(staticDir);
+
+function findFile(prefix, suffix) {
+  const f = staticFiles.find(f => f.startsWith(prefix) && f.endsWith(suffix));
+  if (!f) throw new Error(`Static file not found: ${prefix}*${suffix}`);
+  return f;
+}
+
+function findFont(name) {
+  const f = staticFiles.find(f => f.startsWith(name));
+  if (!f) throw new Error(`Font not found: ${name}*`);
+  return f;
+}
+
+// Extract rustdoc version info from existing index (if available) for the meta tag
+let rustdocVersion = "unknown";
+let channel = "unknown";
+const existingIndex = join(docDir, "index.html");
+if (existsSync(existingIndex)) {
+  const html = readFileSync(existingIndex, "utf-8");
+  rustdocVersion = html.match(/data-rustdoc-version="([^"]*)"/)?.[1] ?? rustdocVersion;
+  channel = html.match(/data-channel="([^"]*)"/)?.[1] ?? channel;
+}
+
+const normCss = findFile("normalize-", ".css");
+const rdocCss = findFile("rustdoc-", ".css");
+const mainJs = findFile("main-", ".js");
+const storageJs = findFile("storage-", ".js");
+const noscriptCss = findFile("noscript-", ".css");
+const faviconPng = findFile("favicon-32x32-", ".png");
+const faviconSvg = findFile("favicon-", ".svg");
+const searchJs = findFile("search-", ".js");
+const stringdexJs = findFile("stringdex-", ".js");
+const settingsJs = findFile("settings-", ".js");
+
+const fonts = [
+  "SourceSerif4-Regular-",
+  "FiraSans-Italic-",
+  "FiraSans-Regular-",
+  "FiraSans-MediumItalic-",
+  "FiraSans-Medium-",
+  "SourceCodePro-Regular-",
+  "SourceCodePro-Semibold-",
+].map(findFont);
 
 function readCrateMeta(name) {
   const indexPath = join(docDir, name, "index.html");
@@ -47,16 +91,16 @@ const indexHtml = `<!DOCTYPE html><html lang="en"><head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="generator" content="rustdoc">
 <title>stdx-rs — Workspace documentation</title>
-<script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>\`<link rel="preload" as="font" type="font/woff2"href="./static.files/$\{f}">\`).join(""))</script>
-<link rel="stylesheet" href="./static.files/normalize-9960930a.css">
-<link rel="stylesheet" href="./static.files/rustdoc-17e0aaed.css">
-<meta name="rustdoc-vars" data-root-path="./" data-static-root-path="./static.files/" data-current-crate="stdx_rs" data-themes="" data-resource-suffix="" data-rustdoc-version="1.96.0" data-channel="1.96.0" data-search-js="search-b5634cc7.js" data-stringdex-js="stringdex-2da4960a.js" data-settings-js="settings-170eb4bf.js">
-<script src="./static.files/storage-41dd4d93.js"></script>
+<script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","${fonts.join(",")}".split(",").map(f=>\`<link rel="preload" as="font" type="font/woff2"href="./static.files/$\{f}">\`).join(""))</script>
+<link rel="stylesheet" href="./static.files/${normCss}">
+<link rel="stylesheet" href="./static.files/${rdocCss}">
+<meta name="rustdoc-vars" data-root-path="./" data-static-root-path="./static.files/" data-current-crate="stdx_rs" data-themes="" data-resource-suffix="" data-rustdoc-version="${rustdocVersion}" data-channel="${channel}" data-search-js="${searchJs}" data-stringdex-js="${stringdexJs}" data-settings-js="${settingsJs}">
+<script src="./static.files/${storageJs}"></script>
 <script defer src="./crates.js"></script>
-<script defer src="./static.files/main-5013f961.js"></script>
-<noscript><link rel="stylesheet" href="./static.files/noscript-f7c3ffd8.css"></noscript>
-<link rel="alternate icon" type="image/png" href="./static.files/favicon-32x32-eab170b8.png">
-<link rel="icon" type="image/svg+xml" href="./static.files/favicon-044be391.svg">
+<script defer src="./static.files/${mainJs}"></script>
+<noscript><link rel="stylesheet" href="./static.files/${noscriptCss}"></noscript>
+<link rel="alternate icon" type="image/png" href="./static.files/${faviconPng}">
+<link rel="icon" type="image/svg+xml" href="./static.files/${faviconSvg}">
 </head><body class="rustdoc mod crate">
 <a class="skip-main-content" href="#main-content">Skip to main content</a>
 <rustdoc-topbar><h2><a href="#">Workspace stdx-rs</a></h2></rustdoc-topbar>
