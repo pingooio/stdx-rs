@@ -49,3 +49,5 @@ node_modules/
 # Rust
 target/
 # Cargo.lock
+
+_ai/

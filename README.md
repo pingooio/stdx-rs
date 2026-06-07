@@ -2,14 +2,14 @@
 
 Rust's extended standard library.
 
-Rust's current biggest problem is its anemic standard library which leads not only to a very fragmented ecosystem with multiples competing packages (so you end up with 10 different libraries to handle time and dates) but also to high supply chain risks (see [Supply chain nightmare: How Rust will be attacked and what we can do to mitigate the inevitable](https://kerkour.com/rust-supply-chain-nightmare)).
+Rust's biggest problem is its anemic standard library which leads not only to a very fragmented ecosystem with multiples competing packages (so you end up with 10 different packages to handle time and dates and 15 different crypto libraries) but also to high supply chain risks (see [Supply chain nightmare: How Rust will be attacked and what we can do to mitigate the inevitable](https://kerkour.com/rust-supply-chain-nightmare)).
 
 This is why we are creating Rust's extended standard library which should provide all the packages for the most-common usecases.
 
-The goal is that `stdx` only uses code from `std` and `stdx`. No third-party imports, no supply chain risks.
+The goal is that `stdx` only uses code from `std` and `stdx`. No third-party imports, no supply chain risks, no ecosystem fragmentation.
 
 
-> **Warning ⚠️**: No stability guarantees at this moment.
+> **Warning ⚠️**: No stability guarantees can be provided at this moment. Use at your own risks.
 
 ## Usage
 
@@ -18,17 +18,22 @@ Import package directly from git, for example:
 base64 = { git = "https://github.com/pingooio/stdx-rs", branch = "main" }
 ```
 
+## Documentation
+
+[Docs](https://pingooio.github.io/stdx-rs)
+
+
 ## Contributing
 
-Contributions, especially bug reports are welcome.
+Contributions are welcome, especially bug reports.
 
-Other than for minor typos, no pull request will be accepted without a preliminary discussion, so please, open an issue first.
+Other than for minor typos, no pull request will be accepted without a preliminary discussion. Please open an issue first.
 
 ## Development
 
 See `.devcontainer/Dockerfile`.
 
-Then:
+then:
 
 ```bash
 rustup default stable
@@ -36,7 +41,7 @@ rustup default stable
 
 And you are ready to <s>Go</s> Rust!
 
-See `Makefile` for common commands.
+See `Makefile` for the most common commands used during the development workflow.
 
 
 ## License
@@ -73,6 +78,3 @@ MIT, see [LICENCE.txt](./LICENSE.txt)
 | `tld` | https://github.com/rushmorem/publicsuffix | 47958d65a3eab3a01e4a9cf46ccf40c11a7e8052 | TODO |
 | `unsafe_libyaml` | https://crates.io/crates/unsafe-libyaml | 417668ce6565ece14bbd9b4a73137d9241ea1365 | TODO |
 | `uuid` | https://github.com/uuid-rs/uuid | 98fc36df4d3f33669d54f1d7b999888f75d8b71f | TODO |
-
-
-
