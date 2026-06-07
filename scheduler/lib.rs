@@ -8,6 +8,7 @@ use std::{
 
 use chrono::Utc;
 use tokio::{sync::RwLock, task::JoinHandle};
+#[cfg(feature = "tracing")]
 use tracing::*;
 
 use crate::{
@@ -80,6 +81,7 @@ impl JobExecutorInternal {
 
     /// Run pending jobs in the JobExecutor.
     async fn run_pending_jobs(&self) {
+        #[cfg(feature = "tracing")]
         trace!("Check pending jobs");
         let jobs = self.jobs.read().await;
         for job_scheduler in jobs.iter() {
@@ -94,6 +96,7 @@ impl JobExecutorInternal {
                     let name = job_clone.job.name().to_owned();
 
                     let fut = instrument(timestamp, group.clone(), name.clone(), async move {
+                        #[cfg(feature = "tracing")]
                         info!("scheduler: starting task {name}");
                         let start = std::time::Instant::now();
                         let result = job_clone.run().await;
@@ -101,8 +104,12 @@ impl JobExecutorInternal {
                         let duration = start.elapsed();
 
                         match result {
-                            Ok(()) => info!("scheduler: task {name} completed successfully in {duration:?}"),
+                            Ok(()) => {
+                                #[cfg(feature = "tracing")]
+                                info!("scheduler: task {name} completed successfully in {duration:?}")
+                            }
                             Err(err) => {
+                                #[cfg(feature = "tracing")]
                                 error!("scheduler: task {name} failed in {duration:?} with errors: Err: {err:?}")
                             }
                         }
@@ -110,6 +117,7 @@ impl JobExecutorInternal {
 
                     tokio::spawn(fut);
                 } else {
+                    #[cfg(feature = "tracing")]
                     debug!(
                         "Job [{}/{}] is pending but already running. It will not be executed.",
                         job_scheduler.job.group(),
@@ -122,6 +130,7 @@ impl JobExecutorInternal {
 
     /// Adds a job to the JobExecutor.
     async fn add_job_with_scheduler<S: Into<Scheduler>>(&self, schedule: S, job: Job) {
+        #[cfg(feature = "tracing")]
         debug!("Add job to scheduler. Group [{}] - Name [{}]", job.group(), job.name());
         let mut jobs = self.jobs.write().await;
         jobs.push(Arc::new(JobScheduler::new(schedule.into(), job)));
@@ -180,15 +189,18 @@ impl JobExecutor {
         if !was_running {
             let executor = self.executor.clone();
             Ok(tokio::spawn(async move {
+                #[cfg(feature = "tracing")]
                 debug!("Starting the job executor");
                 while executor.is_running() {
                     executor.run_pending_jobs().await;
                     tokio::time::sleep(Duration::from_millis(executor.sleep_between_checks_ms.load(Ordering::SeqCst)))
                         .await;
                 }
+                #[cfg(feature = "tracing")]
                 debug!("Job executor stopped");
             }))
         } else {
+            #[cfg(feature = "tracing")]
             warn!("The JobExecutor is already running.");
             Err(SchedulerError::JobExecutionStateError {
                 message: "The JobExecutor is already running.".to_owned(),
@@ -200,8 +212,10 @@ impl JobExecutor {
     pub async fn stop(&self, graceful: bool) -> Result<(), SchedulerError> {
         let was_running = self.executor.running.swap(false, Ordering::SeqCst);
         if was_running {
+            #[cfg(feature = "tracing")]
             debug!("Stopping the job executor");
             if graceful {
+                #[cfg(feature = "tracing")]
                 debug!("Wait for all Jobs to complete");
                 while self.executor.is_running_job().await {
                     tokio::time::sleep(Duration::from_millis(
@@ -209,10 +223,12 @@ impl JobExecutor {
                     ))
                     .await;
                 }
+                #[cfg(feature = "tracing")]
                 debug!("All Jobs completed");
             }
             Ok(())
         } else {
+            #[cfg(feature = "tracing")]
             warn!("The JobExecutor is not running.");
             Err(SchedulerError::JobExecutionStateError {
                 message: "The JobExecutor is not running.".to_owned(),

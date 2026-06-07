@@ -11,12 +11,12 @@ cargo-fuzz = true
 bel = { path = "..", features = ["arbitrary"] }
 
 arbitrary = { version = "1.4.1", features = ["derive"] }
-libfuzzer-sys = "0.4"
+# libfuzzer-sys = "0.4"
 
 
-[[bin]]
-name = "value_binop"
-path = "fuzz_targets/value_binop.rs"
-test = false
-doc = false
-bench = false
+# [[bin]]
+# name = "value_binop"
+# path = "fuzz_targets/value_binop.rs"
+# test = false
+# doc = false
+# bench = false

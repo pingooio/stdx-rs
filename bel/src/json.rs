@@ -1,4 +1,3 @@
-use base64::prelude::*;
 #[cfg(feature = "time")]
 use chrono::Duration;
 use thiserror::Error;
@@ -51,7 +50,7 @@ impl Value {
             Value::Float(f) => f.into(),
             Value::String(ref s) => s.to_string().into(),
             Value::Bool(b) => b.into(),
-            Value::Bytes(ref b) => BASE64_STANDARD.encode(b.as_slice()).to_string().into(),
+            Value::Bytes(ref b) => base64::encode(b.as_slice(), base64::Alphabet::Standard).into(),
             Value::Null => serde_json::Value::Null,
             #[cfg(feature = "time")]
             Value::Timestamp(ref dt) => dt.to_rfc3339().into(),

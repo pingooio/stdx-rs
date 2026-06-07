@@ -63,13 +63,13 @@ pub(crate) unsafe fn unsafe_main(mut stdin: &mut dyn Read, stdout: &mut dyn Writ
     let event = event.as_mut_ptr();
     loop {
         if yaml_parser_parse(parser, event).fail {
-            let mut error = format!("Parse error: {}", CStr::from_ptr((*parser).problem));
-            if (*parser).problem_mark.line != 0 || (*parser).problem_mark.column != 0 {
+            let mut error = format!("Parse error: {}", CStr::from_ptr((&(*parser)).problem));
+            if (&(*parser)).problem_mark.line != 0 || (&(*parser)).problem_mark.column != 0 {
                 let _ = write!(
                     error,
                     "\nLine: {} Column: {}",
-                    ((*parser).problem_mark.line).wrapping_add(1_u64),
-                    ((*parser).problem_mark.column).wrapping_add(1_u64),
+                    ((&(*parser)).problem_mark.line).wrapping_add(1_u64),
+                    ((&(*parser)).problem_mark.column).wrapping_add(1_u64),
                 );
             }
             yaml_parser_delete(parser);

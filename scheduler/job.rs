@@ -2,6 +2,7 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use chrono::{DateTime, Utc};
 use tokio::sync::{Mutex, RwLock};
+#[cfg(feature = "tracing")]
 use tracing::*;
 
 use crate::{error::SchedulerError, scheduler::Scheduler};
@@ -123,6 +124,7 @@ impl Job {
         if let Some(retries) = self.retries_after_failure {
             for attempt in 1..=retries {
                 if let Err(e) = run_result {
+                    #[cfg(feature = "tracing")]
                     warn!(
                         "Execution failed for job [{}/{}] - Retry execution, attempt {}/{}. Previous err: {}",
                         self.group, self.name, attempt, retries, e

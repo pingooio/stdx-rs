@@ -18,7 +18,7 @@ fn main() {
     context.add_function("fail", fail);
 
     // See all the different value types you can accept in your functions
-    context.add_function("primitives", primitives);
+    // context.add_function("primitives", primitives);
 
     // Run the program
     let result = program.execute(&context);

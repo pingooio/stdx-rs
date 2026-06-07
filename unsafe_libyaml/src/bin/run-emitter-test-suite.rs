@@ -136,10 +136,10 @@ pub(crate) unsafe fn unsafe_main(stdin: &mut dyn Read, mut stdout: &mut dyn Writ
             break Err("Memory error: Not enough memory for creating an event".into());
         }
         if yaml_emitter_emit(emitter, event).fail {
-            break Err(match (*emitter).error {
+            break Err(match (&(*emitter)).error {
                 YAML_MEMORY_ERROR => "Memory error: Not enough memory for emitting".into(),
-                YAML_WRITER_ERROR => format!("Writer error: {}", CStr::from_ptr((*emitter).problem)).into(),
-                YAML_EMITTER_ERROR => format!("Emitter error: {}", CStr::from_ptr((*emitter).problem)).into(),
+                YAML_WRITER_ERROR => format!("Writer error: {}", CStr::from_ptr((&(*emitter)).problem)).into(),
+                YAML_EMITTER_ERROR => format!("Emitter error: {}", CStr::from_ptr((&(*emitter)).problem)).into(),
                 // Couldn't happen.
                 _ => "Internal error".into(),
             });

@@ -369,6 +369,7 @@ impl ser::Serializer for Serializer {
     where
         T: ?Sized + Serialize,
     {
+        #[cfg(feature = "ip")]
         if name == "IpAddr" {
             return value.serialize(IpSerializer {});
         }

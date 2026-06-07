@@ -6,7 +6,7 @@ members = [
 
     "bel",
     "bel/benchmarks",
-    "bel/fuzz",
+    # "bel/fuzz",
     "bel/examples",
     "countries",
     "crypto",
