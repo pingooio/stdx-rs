@@ -1,6 +1,53 @@
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+//! Fast base64 encoding and decoding with SIMD acceleration, constant-time
+//! operations, and `const fn` support.
+//!
+//! Four alphabet variants are available via [`Alphabet`]:
+//!
+//! | Variant             | Characters       | Padding |
+//! |---------------------|------------------|---------|
+//! | `Standard`          | `A-Za-z0-9+/`    | `=`     |
+//! | `StandardNoPadding` | `A-Za-z0-9+/`    | none    |
+//! | `Url`               | `A-Za-z0-9-_`    | `=`     |
+//! | `UrlNoPadding`      | `A-Za-z0-9-_`    | none    |
+//!
+//! # Feature flags
+//!
+//! | Flag    | Description                                             |
+//! |---------|---------------------------------------------------------|
+//! | `std`   | [`std::error::Error`] trait impls (enabled by default)  |
+//! | `alloc` | `String`/`Vec`-returning convenience APIs               |
+//! | `serde` | Serde [`serialize`](crate::serde::serialize)/[`deserialize`](crate::serde::deserialize) helpers  |
+//!
+//! # Performance
+//!
+//! The [`encode_into`] and [`decode_into`] functions
+//! automatically dispatch to SIMD-accelerated paths (AVX2 on x86/x86_64,
+//! NEON on aarch64). When a constant-time guarantee is required, use
+//! [`encode_into_constant_time`] or [`decode_into_constant_time`].
+//!
+//! # `const fn` support
+//!
+//! [`encode_array`] and [`decode_array`] are `const fn`, enabling base64
+//! encoding and decoding at compile time.
+//!
+//! # Examples
+//!
+//! ```rust
+//! use base64::{Alphabet, encode, decode};
+//!
+//! let encoded = encode(b"hello world", Alphabet::Standard);
+//! assert_eq!(encoded, "aGVsbG8gd29ybGQ=");
+//!
+//! let decoded = decode(b"aGVsbG8gd29ybGQ=", Alphabet::Standard).unwrap();
+//! assert_eq!(decoded, b"hello world");
+//!
+//! let url = encode(b"hello world", Alphabet::Url);
+//! assert_eq!(url, "aGVsbG8gd29ybGQ=");
+//! ```
+
 #[cfg(any(feature = "alloc", test))]
 extern crate alloc;
 
@@ -15,6 +62,23 @@ mod base64_avx2;
 
 const PAD: u8 = b'=';
 
+/// The base64 alphabet used for encoding and decoding.
+///
+/// | Variant             | Characters       | Padding |
+/// |---------------------|------------------|---------|
+/// | `Standard`          | `A-Za-z0-9+/`    | `=`     |
+/// | `StandardNoPadding` | `A-Za-z0-9+/`    | none    |
+/// | `Url`               | `A-Za-z0-9-_`    | `=`     |
+/// | `UrlNoPadding`      | `A-Za-z0-9-_`    | none    |
+///
+/// # Example
+///
+/// ```rust
+/// use base64::Alphabet;
+///
+/// let encoded = base64::encode(b"hello", Alphabet::Url);
+/// assert_eq!(encoded, "aGVsbG8=");
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Alphabet {
     Standard,
@@ -30,16 +94,25 @@ impl Alphabet {
     }
 }
 
+/// Errors that can occur during base64 encoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncodeError {
+    /// The output buffer length does not match the expected encoded length.
     InvalidOutputLength,
+    /// The encoded output length overflows `usize`.
     OutputOverflow,
 }
 
+/// Errors that can occur during base64 decoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
+    /// The input contains a character that is not valid for the chosen
+    /// [`Alphabet`].
     InvalidInput,
+    /// The input length is not valid for base64 decoding.
     InvalidInputLength,
+    /// The input has invalid padding (e.g. missing `=` when expected,
+    /// unexpected `=`, or wrong number of padding characters).
     InvalidPadding,
 }
 
@@ -72,8 +145,17 @@ impl std::error::Error for DecodeError {}
 /// Encode
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// Returns the size in bytes of the input data after Base64 encoding.
+/// Returns the size in bytes of the input data after base64 encoding.
+///
 /// Returns `None` if the output size overflows `usize`.
+///
+/// # Example
+///
+/// ```rust
+/// assert_eq!(base64::encoded_length(3, true), Some(4));
+/// assert_eq!(base64::encoded_length(1, false), Some(2));
+/// assert_eq!(base64::encoded_length(usize::MAX, true), None);
+/// ```
 pub const fn encoded_length(data_length: usize, padding: bool) -> Option<usize> {
     let complete_chunks = data_length / 3;
     let remaining = data_length % 3;
@@ -92,6 +174,14 @@ pub const fn encoded_length(data_length: usize, padding: bool) -> Option<usize> 
     }
 }
 
+/// Encodes bytes to a base64 string using the given [`Alphabet`].
+///
+/// # Example
+///
+/// ```rust
+/// let encoded = base64::encode(b"hello world", base64::Alphabet::Standard);
+/// assert_eq!(encoded, "aGVsbG8gd29ybGQ=");
+/// ```
 #[cfg(feature = "alloc")]
 pub fn encode(data: impl AsRef<[u8]>, alphabet: Alphabet) -> alloc::string::String {
     let data = data.as_ref();
@@ -103,6 +193,17 @@ pub fn encode(data: impl AsRef<[u8]>, alphabet: Alphabet) -> alloc::string::Stri
 }
 
 /// Encodes `data` into a fixed-size array at compile time.
+///
+/// The generic parameter `OUT` is the output array length. It must be exactly
+/// the encoded length of `data` or a compile-time panic is raised.
+///
+/// # Example
+///
+/// ```rust
+/// const DATA: [u8; 3] = [0x66, 0x6F, 0x6F];
+/// const B64: [u8; 4] = base64::encode_array::<4>(&DATA, base64::Alphabet::Standard);
+/// assert_eq!(&B64, b"Zm9v");
+/// ```
 pub const fn encode_array<const OUT: usize>(data: &[u8], alphabet: Alphabet) -> [u8; OUT] {
     let mut out_buffer = [0u8; OUT];
     match encode_into_constant_time(&mut out_buffer, data, alphabet) {
@@ -112,6 +213,25 @@ pub const fn encode_array<const OUT: usize>(data: &[u8], alphabet: Alphabet) -> 
     out_buffer
 }
 
+/// Encodes bytes into an existing buffer.
+///
+/// Dispatches to a SIMD-accelerated implementation (AVX2 or NEON) when
+/// the target feature is available.
+///
+/// See [`encode_into_constant_time`] for security-sensitive and cryptographic operations.
+///
+/// # Errors
+///
+/// Returns [`EncodeError`] if `output.len()` does not match the expected encoded
+/// length or if the encoded length overflows `usize`.
+///
+/// # Example
+///
+/// ```rust
+/// let mut buf = [0u8; 16];
+/// base64::encode_into(&mut buf, b"hello world", base64::Alphabet::Standard).unwrap();
+/// assert_eq!(&buf, b"aGVsbG8gd29ybGQ=");
+/// ```
 pub fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), EncodeError> {
     #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
     if data.len() >= 48 {
@@ -258,7 +378,15 @@ pub const fn encode_into_constant_time(output: &mut [u8], data: &[u8], alphabet:
     Ok(())
 }
 
-/// Helper function that appends the encoded data to a `String`.
+/// Appends the base64-encoded representation of `data` to a [`String`].
+///
+/// # Example
+///
+/// ```rust
+/// let mut s = String::from("tag: ");
+/// base64::encode_into_string(&mut s, b"hello", base64::Alphabet::Standard);
+/// assert_eq!(s, "tag: aGVsbG8=");
+/// ```
 #[cfg(feature = "alloc")]
 pub fn encode_into_string(output: &mut alloc::string::String, data: &[u8], alphabet: Alphabet) {
     let encoded_length = encoded_length(data.len(), alphabet.is_padded()).expect("output length overflow");
@@ -335,7 +463,20 @@ const fn sextet_to_base64_char(v: u8, alphabet: Alphabet) -> u8 {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 /// Decode
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Decodes a base64 string into bytes.
 ///
+/// # Errors
+///
+/// Returns [`DecodeError`] if any character is invalid for the chosen
+/// [`Alphabet`], the input length is not valid, or padding is incorrect.
+///
+/// # Example
+///
+/// ```rust
+/// let decoded = base64::decode(b"aGVsbG8=", base64::Alphabet::Standard).unwrap();
+/// assert_eq!(decoded, b"hello");
+/// ```
 #[cfg(feature = "alloc")]
 pub fn decode(data: impl AsRef<[u8]>, alphabet: Alphabet) -> Result<alloc::vec::Vec<u8>, DecodeError> {
     let data = data.as_ref();
@@ -347,6 +488,17 @@ pub fn decode(data: impl AsRef<[u8]>, alphabet: Alphabet) -> Result<alloc::vec::
 }
 
 /// Decodes a base64 string into a fixed-size array at compile time.
+///
+/// The generic parameter `OUT` is the output array length. It must be exactly
+/// the decoded length of the input or a an error is returned.
+///
+/// # Example
+///
+/// ```rust
+/// const RESULT: Result<[u8; 5], base64::DecodeError> =
+///     base64::decode_array::<5>(b"aGVsbG8=", base64::Alphabet::Standard);
+/// assert_eq!(RESULT.unwrap(), *b"hello");
+/// ```
 pub const fn decode_array<const OUT: usize>(encoded_data: &[u8], alphabet: Alphabet) -> Result<[u8; OUT], DecodeError> {
     let mut result = [0u8; OUT];
     match decode_into_constant_time(&mut result, encoded_data, alphabet) {
@@ -355,6 +507,26 @@ pub const fn decode_array<const OUT: usize>(encoded_data: &[u8], alphabet: Alpha
     }
 }
 
+/// Decodes a base64 string into an existing buffer.
+///
+/// Dispatches to a SIMD-accelerated implementation (AVX2 or NEON) when
+/// the target feature is available.
+///
+/// See [`decode_into_constant_time`] for security-sensitive and cryptographic operations.
+///
+/// # Errors
+///
+/// Returns [`DecodeError`] if any character is invalid for the chosen
+/// [`Alphabet`], if the input length is not valid, if padding is incorrect,
+/// or if `output.len()` is too small to hold the decoded data.
+///
+/// # Example
+///
+/// ```rust
+/// let mut buf = [0u8; 5];
+/// base64::decode_into(&mut buf, b"aGVsbG8=", base64::Alphabet::Standard).unwrap();
+/// assert_eq!(&buf, b"hello");
+/// ```
 pub fn decode_into(output: &mut [u8], encoded_data: &[u8], alphabet: Alphabet) -> Result<(), DecodeError> {
     let (content_len, _) = strip_padding_info(encoded_data, alphabet.is_padded())?;
     let computed_output = decoded_length(content_len)?;

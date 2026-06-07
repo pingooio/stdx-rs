@@ -17,10 +17,9 @@
 //!
 //! # Performance
 //!
-//! The runtime [`encode_into`] and [`decode_into`] functions
+//! The [`encode_into`] and [`decode_into`] functions
 //! automatically dispatch to SIMD-accelerated paths (AVX2 on x86/x86_64,
-//! NEON on aarch64) for inputs large enough to benefit. For small
-//! payloads or when a constant-time guarantee is required, use
+//! NEON on aarch64). When a constant-time guarantee is required, use
 //! [`encode_into_constant_time`] or [`decode_into_constant_time`].
 //!
 //! # `const fn` support
@@ -375,7 +374,7 @@ pub fn decode(data: impl AsRef<[u8]>) -> Result<alloc::vec::Vec<u8>, DecodeError
 /// Decodes a hex string into a fixed-size array at compile time.
 ///
 /// The generic parameter `OUT` is the output array length. It must be exactly
-/// `data.len() / 2` bytes long or a compile-time panic is raised.
+/// `data.len() / 2` bytes long or an error panic is returned.
 ///
 /// # Example
 ///
