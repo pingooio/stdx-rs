@@ -2,14 +2,16 @@
 
 Rust's extended standard library.
 
-Rust's biggest problem is its anemic standard library which leads not only to a very fragmented ecosystem with multiples competing packages (so you end up with 10 different packages to handle time and dates and 15 different crypto libraries) but also to high supply chain risks (see [Supply chain nightmare: How Rust will be attacked and what we can do to mitigate the inevitable](https://kerkour.com/rust-supply-chain-nightmare)).
+Rust's biggest problem is its anemic standard library which leads not only to a very fragmented ecosystem with multiple competing packages (so you end up with 10 different packages to handle time and dates and 15 different crypto libraries) but also to high supply chain risks (see [Supply chain nightmare: How Rust will be attacked and what we can do to mitigate the inevitable](https://kerkour.com/rust-supply-chain-nightmare)).
 
-This is why we are creating Rust's extended standard library which should provide all the packages for the most-common usecases.
+This is why we are creating Rust's extended standard library which should provide all the packages for the most-common use cases.
 
 The goal is that `stdx` only uses code from `std` and `stdx`. No third-party imports, no supply chain risks, no ecosystem fragmentation.
 
+Once the idea has proven to be valuable, the goal is to donate the entire codebase to the Rust Foundation to build trust and drive adoption.
 
-> **Warning ⚠️**: No stability guarantees can be provided at this moment. Use at your own risks.
+
+> **Warning ⚠️**: No stability guarantees can be provided at this moment. Use at your own risk.
 
 ## Usage
 
@@ -70,7 +72,7 @@ MIT, see [LICENCE.txt](./LICENSE.txt)
 | `memmem` | https://github.com/jneem/memmem | d6e6a0b1fb391539cf8511e7a2de76016d86a870 | TODO |
 | `mimeguess` | https://github.com/abonander/mime_guess | 1ae11679916b18fcced93c11104b7aed53bd35a2 | TODO |
 | `num_cpus` | https://github.com/seanmonstar/num_cpus | 7c03fc930cc47a9b94e8ca66ca44ef1a454c8f51 | TODO |
-| `percent_encoding` | https://github.com/servo/rust-ur | 54346fa288e16b25b71c45149d7067c752b450e0 | TODO |
+| `percent_encoding` | https://github.com/servo/rust-url | 54346fa288e16b25b71c45149d7067c752b450e0 | TODO |
 | `ryu` | https://github.com/dtolnay/ryu | 8234c4d95f97565bfa562cd1572bb0e8ed80cc44 | TODO |
 | `serde_urlencoded` | https://github.com/nox/serde_urlencoded | 0cca840185fa85b39e2cc8a0b2547fff5ace8e68 | TODO |
 | `serde_yaml` | https://github.com/dtolnay/serde-yaml | 2009506d33767dfc88e979d6bc0d53d09f941c94 | TODO |
