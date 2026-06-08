@@ -6,3 +6,6 @@ description = "Load environment variables from .env files"
 
 [lib]
 path = "./dotenv.rs"
+
+[dependencies]
+dotenv-derive = { path = "./dotenv-derive" }

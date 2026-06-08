@@ -787,6 +787,18 @@ dependencies = [
 [[package]]
 name = "dotenv"
 version = "0.1.0"
+dependencies = [
+ "dotenv-derive",
+]
+
+[[package]]
+name = "dotenv-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "dunce"
@@ -2077,6 +2089,14 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
+]
+
+[[package]]
+name = "retry"
+version = "0.1.0"
+dependencies = [
+ "rand",
+ "tokio",
 ]
 
 [[package]]

@@ -45,6 +45,7 @@ members = [
     "percent_encoding",
     "pin_project_lite",
     "postmark",
+    "retry",
     "ryu",
     "s3",
     "scheduler",
@@ -57,6 +58,7 @@ members = [
     "tld",
     "unsafe_libyaml",
     "dotenv",
+    "dotenv/dotenv-derive",
     "pg",
     "pg-derive"
 ]

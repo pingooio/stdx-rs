@@ -38,8 +38,108 @@
 //! - Multi-line values are not supported.
 //! - Variable substitution (e.g. `${FOO}`) is not supported.
 //! - Export syntax (`export KEY=value`) is not supported.
+//!
+//! # Deserializing into structs with `FromEnv`
+//!
+//! This crate provides a [`FromEnv`] trait (and a [`#[derive(FromEnv)]`](FromEnv)
+//! proc-macro) for constructing typed structs directly from environment
+//! variables.
+//!
+//! ## Basic usage
+//!
+//! ```rust,ignore
+//! use dotenv::FromEnv;
+//!
+//! #[derive(FromEnv)]
+//! struct Config {
+//!     #[env(rename = "MY_HOST")]
+//!     host: String,
+//!     #[env(rename = "MY_PORT")]
+//!     port: u16,
+//! }
+//!
+//! let cfg = Config::from_env().unwrap();
+//! ```
+//!
+//! ## Default values
+//!
+//! Use `#[env(default)]` for any type that implements [`Default`] (yields the
+//! default when unset — e.g. `None` for [`Option<T>`], `0` for numbers, `""`
+//! for [`String`]) or `#[env(default = expr)]` for any type:
+//!
+//! ```rust,ignore
+//! #[derive(FromEnv)]
+//! struct Config {
+//!     #[env(rename = "MY_HOST")]
+//!     host: String,
+//!     #[env(default)]
+//!     verbose: Option<bool>,
+//!     #[env(default)]
+//!     timeout: u64,
+//!     #[env(rename = "MY_PORT", default = 8080)]
+//!     port: u16,
+//! }
+//! ```
+//!
+//! In all cases the environment variable is checked first — the default
+//! value is only used when the variable is not set.
+//!
+//! ## Custom parsers
+//!
+//! When the standard [`FromStr`] parsing is insufficient, provide a custom
+//! parser via `#[env(with = "func")]`. The function signature must be
+//! `fn(&str, &str) -> Result<T, FromEnvError>`:
+//!
+//! ```rust,ignore
+//! use dotenv::{FromEnv, FromEnvError};
+//!
+//! fn parse_port(_var: &str, val: &str) -> Result<u16, FromEnvError> {
+//!     val.parse().map_err(|e| FromEnvError::invalid("MY_PORT", val, e))
+//! }
+//!
+//! #[derive(FromEnv)]
+//! struct Config {
+//!     #[env(rename = "MY_PORT", with = "parse_port")]
+//!     port: u16,
+//! }
+//! ```
+//!
+//! ## Nested structs
+//!
+//! Fields whose type also implements [`FromEnv`] are automatically detected
+//! and populated as nested structs. The parent's field name (in
+//! `SCREAMING_SNAKE_CASE`) is used as a prefix so that child fields are read
+//! from prefixed variable names:
+//!
+//! ```rust,ignore
+//! #[derive(FromEnv)]
+//! struct AppConfig {
+//!     database: Database,
+//!     debug: bool,       // reads DEBUG
+//! }
+//!
+//! #[derive(FromEnv)]
+//! struct Database {
+//!     url: String,       // reads DATABASE_URL
+//!     pool_size: u32,    // reads DATABASE_POOL_SIZE
+//! }
+//! ```
+//!
+//! ## Custom `FromEnvValue` implementations
+//!
+//! For leaf types that need special parsing logic, implement [`FromEnvValue`]
+//! directly on your type. Types that implement [`FromStr`] get a blanket impl
+//! automatically.
+//!
+//! ## Convenience function
+//!
+//! The function [`from_env`] lets you avoid importing the trait:
+//!
+//! ```rust,ignore
+//! let cfg: Config = dotenv::from_env().unwrap();
+//! ```
 
-use std::{collections::HashSet, env, fmt, fs, io};
+use std::{collections::HashSet, env, fmt, fmt::Display, fs, io, str::FromStr};
 
 /// Errors that can occur when loading a `.env` file.
 #[derive(Debug)]
@@ -208,12 +308,10 @@ fn parse_value(s: &str, line: usize) -> Result<String, Error> {
     match trimmed.as_bytes()[0] {
         b'"' => {
             let rest = &trimmed[1..];
-            let close = rest.find('"').ok_or_else(|| {
-                Error::Parse(ParseError {
-                    line,
-                    kind: ParseErrorKind::UnmatchedQuote,
-                })
-            })?;
+            let close = rest.find('"').ok_or(Error::Parse(ParseError {
+                line,
+                kind: ParseErrorKind::UnmatchedQuote,
+            }))?;
             let after = rest[close + 1..].trim();
             if !after.is_empty() && !after.starts_with('#') {
                 return Err(Error::Parse(ParseError {
@@ -225,12 +323,10 @@ fn parse_value(s: &str, line: usize) -> Result<String, Error> {
         }
         b'\'' => {
             let rest = &trimmed[1..];
-            let close = rest.find('\'').ok_or_else(|| {
-                Error::Parse(ParseError {
-                    line,
-                    kind: ParseErrorKind::UnmatchedQuote,
-                })
-            })?;
+            let close = rest.find('\'').ok_or(Error::Parse(ParseError {
+                line,
+                kind: ParseErrorKind::UnmatchedQuote,
+            }))?;
             let after = rest[close + 1..].trim();
             if !after.is_empty() && !after.starts_with('#') {
                 return Err(Error::Parse(ParseError {
@@ -253,6 +349,169 @@ fn parse_value(s: &str, line: usize) -> Result<String, Error> {
             Ok(val.trim().to_string())
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// FromEnv trait and derive support
+// ---------------------------------------------------------------------------
+
+pub use dotenv_derive::FromEnv;
+
+/// Error returned by [`FromEnv::from_env`].
+///
+/// # Example
+///
+/// ```
+/// # use dotenv::FromEnvError;
+/// let err = FromEnvError::missing("MY_VAR");
+/// assert_eq!(err.to_string(), "environment variable `MY_VAR` is not set");
+///
+/// let err = FromEnvError::invalid("PORT", "abc", "invalid digit");
+/// assert_eq!(
+///     err.to_string(),
+///     "environment variable `PORT` has invalid value `abc`: invalid digit"
+/// );
+/// ```
+#[derive(Debug, Clone)]
+pub enum FromEnvError {
+    /// An environment variable was not set.
+    Missing(String),
+    /// An environment variable was set but could not be parsed.
+    Invalid {
+        /// The name of the environment variable.
+        var: String,
+        /// The raw value of the environment variable.
+        value: String,
+        /// A description of why parsing failed.
+        message: String,
+    },
+}
+
+impl fmt::Display for FromEnvError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FromEnvError::Missing(var) => write!(f, "environment variable `{var}` is not set"),
+            FromEnvError::Invalid {
+                var,
+                value,
+                message,
+            } => {
+                write!(f, "environment variable `{var}` has invalid value `{value}`: {message}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for FromEnvError {}
+
+impl FromEnvError {
+    pub fn missing(var: impl Into<String>) -> Self {
+        FromEnvError::Missing(var.into())
+    }
+
+    pub fn invalid(var: impl Into<String>, value: impl Into<String>, message: impl Into<String>) -> Self {
+        FromEnvError::Invalid {
+            var: var.into(),
+            value: value.into(),
+            message: message.into(),
+        }
+    }
+}
+
+/// Trait for types that can be constructed from environment variables.
+///
+/// Usually derived with [`#[derive(FromEnv)]`](FromEnv).
+pub trait FromEnv: Sized {
+    /// Load `Self` from environment variables using an empty prefix.
+    fn from_env() -> Result<Self, FromEnvError> {
+        Self::from_env_with_prefix("")
+    }
+
+    /// Load `Self` from environment variables, prepending `prefix` to each
+    /// env-var name derived from field names.
+    ///
+    /// This is used internally to support nested structs — each parent field
+    /// passes its own SCREAMING_SNAKE name plus `_` as the child's prefix.
+    fn from_env_with_prefix(prefix: &str) -> Result<Self, FromEnvError>;
+}
+
+/// Trait for converting a raw env-var string into a typed value.
+///
+/// Implementations are provided for all [`FromStr`] types via a blanket impl.
+/// You can implement this trait for custom types that need special parsing.
+///
+/// # Example
+///
+/// ```
+/// use dotenv::FromEnvValue;
+///
+/// let n = <u16 as FromEnvValue>::from_env_value("42".into()).unwrap();
+/// assert_eq!(n, 42);
+///
+/// let b = <bool as FromEnvValue>::from_env_value("true".into()).unwrap();
+/// assert!(b);
+///
+/// let err = <u16 as FromEnvValue>::from_env_value("abc".into()).unwrap_err();
+/// assert!(!err.is_empty());
+/// ```
+pub trait FromEnvValue: Sized {
+    /// Convert the raw string value into `Self`.
+    fn from_env_value(s: String) -> Result<Self, String>;
+}
+
+impl<T: FromStr> FromEnvValue for T
+where
+    T::Err: Display,
+{
+    fn from_env_value(s: String) -> Result<Self, String> {
+        s.parse::<T>().map_err(|e| e.to_string())
+    }
+}
+
+/// Auto-dispatch trait for un-attributed `#[derive(FromEnv)]` fields.
+///
+/// For types that implement [`FromEnv`] (nested structs), calls
+/// `from_env_with_prefix`. For leaf types listed in the built-in impls,
+/// reads the env var and parses via [`FromStr`].
+///
+/// You should not need to implement this trait directly.
+pub trait FromEnvAuto: Sized {
+    fn from_env_auto(prefix: &str, var_name: &str) -> Result<Self, FromEnvError>;
+}
+
+impl<T: FromEnv> FromEnvAuto for T {
+    fn from_env_auto(prefix: &str, _var_name: &str) -> Result<Self, FromEnvError> {
+        Self::from_env_with_prefix(prefix)
+    }
+}
+
+macro_rules! impl_from_env_auto_leaf {
+    ($($t:ty),* $(,)?) => {
+        $(impl FromEnvAuto for $t {
+            fn from_env_auto(_prefix: &str, var_name: &str) -> Result<Self, FromEnvError> {
+                let val = ::std::env::var(var_name)
+                    .map_err(|_| FromEnvError::missing(var_name))?;
+                <Self as FromEnvValue>::from_env_value(val.clone())
+                    .map_err(|e| FromEnvError::invalid(var_name, val, e))
+            }
+        })*
+    };
+}
+
+impl_from_env_auto_leaf!(String, bool, u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, f32, f64,);
+
+/// Convenience function to load a `FromEnv` type from environment variables.
+///
+/// Equivalent to `<T as FromEnv>::from_env()` but doesn't require importing
+/// the `FromEnv` trait.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let config: Config = dotenv::from_env().unwrap();
+/// ```
+pub fn from_env<T: FromEnv>() -> Result<T, FromEnvError> {
+    T::from_env()
 }
 
 // ---------------------------------------------------------------------------
@@ -355,6 +614,16 @@ mod tests {
         assert_eq!(parse_ok("_KEY=v"), vec![("_KEY".into(), "v".into())]);
     }
 
+    #[test]
+    fn key_only_dots() {
+        assert_eq!(parse_ok("...=value"), vec![("...".into(), "value".into())]);
+    }
+
+    #[test]
+    fn key_only_hyphens() {
+        assert_eq!(parse_ok("---=value"), vec![("---".into(), "value".into())]);
+    }
+
     // ── Double-quoted values ───────────────────────────────────────────────
 
     #[test]
@@ -439,6 +708,11 @@ mod tests {
         assert_eq!(parse_kind("K='hello'extra"), ParseErrorKind::TrailingContent);
     }
 
+    #[test]
+    fn single_quoted_trailing_comment_allowed() {
+        assert_eq!(parse_ok("K='hello' # comment"), vec![("K".into(), "hello".into())]);
+    }
+
     // ── Quoted example from the spec ────────────────────────────────────────
 
     #[test]
@@ -515,6 +789,11 @@ mod tests {
         assert_eq!(parse_ok("K=   # comment"), vec![("K".into(), "".into())]);
     }
 
+    #[test]
+    fn empty_double_quoted_value_with_comment() {
+        assert_eq!(parse_ok("K=\"\" # comment"), vec![("K".into(), "".into())]);
+    }
+
     // ── Whitespace handling ────────────────────────────────────────────────
 
     #[test]
@@ -535,6 +814,16 @@ mod tests {
     #[test]
     fn tabs_as_whitespace() {
         assert_eq!(parse_ok("\tK\t=\tv"), vec![("K".into(), "v".into())]);
+    }
+
+    #[test]
+    fn tab_after_equals() {
+        assert_eq!(parse_ok("K=\tval"), vec![("K".into(), "val".into())]);
+    }
+
+    #[test]
+    fn double_equals_value() {
+        assert_eq!(parse_ok("K==v"), vec![("K".into(), "=v".into())]);
     }
 
     // ── Comments ───────────────────────────────────────────────────────────
