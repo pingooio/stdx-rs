@@ -1,8 +1,8 @@
-use json_rpc::{Error, RequestMessage, Server};
+use json_rpc::{Error, RequestMessage, Server, ServerConfig};
 
 #[tokio::main]
 async fn main() {
-    let mut server: Server<()> = Server::new();
+    let mut server: Server<()> = Server::new(ServerConfig::default());
 
     server.register("add", async move |_: (), (a, b): (i64, i64)| Ok::<_, Error>(a + b));
 
@@ -42,7 +42,7 @@ async fn main() {
 
     let notif = serde_json::from_str(r#"{"jsonrpc":"2.0","method":"add","params":[1,1]}"#).unwrap();
     let resp = server.handle((), RequestMessage::Single(notif)).await;
-    println!("notif      => {:?}", resp); // Empty
+    println!("notif      => {:?}", resp); // None
 
     // --- Method not found ---
 
@@ -66,8 +66,11 @@ async fn main() {
     println!("batch      => {}", json_from_resp(&resp));
 }
 
-fn json_from_resp(message: &json_rpc::ResponseMessage) -> String {
-    message.to_json().unwrap().unwrap_or_else(|| "nothing".to_string())
+fn json_from_resp(message: &Option<json_rpc::ResponseMessage>) -> String {
+    match message {
+        Some(m) => serde_json::to_string(m).unwrap(),
+        None => "nothing".to_string(),
+    }
 }
 
 async fn divide(_: (), (a, b): (i64, i64)) -> Result<i64, Error> {

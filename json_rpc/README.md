@@ -32,16 +32,14 @@ struct AddResult {
 ### Creating a server
 
 ```rust
-use jsonrpc::{Error, Server};
+use jsonrpc::{Error, Server, ServerConfig};
 
-// Context can be any Clone type your handlers need — DB pool, config, etc.
-// Wrap expensive state in Arc for cheap clones.
 #[derive(Clone)]
 struct AppState {
     prefix: String,
 }
 
-let mut server: Server<AppState> = Server::new();
+let mut server: Server<AppState> = Server::new(ServerConfig::default());
 
 server.register("add", |ctx: AppState, params: AddParams| async move {
     Ok::<_, Error>(AddResult {
@@ -64,8 +62,8 @@ let state = AppState { prefix: String::new() };
 let response = server.handle(state, message).await;
 
 // Serialize the response back to JSON for the transport:
-if let Some(json) = response.to_json().unwrap() {
-    println!("{}", json);
+if let Some(response) = response {
+    println!("{}", response.to_json().unwrap());
     // => {"jsonrpc":"2.0","result":{"sum":7},"id":1}
 }
 ```
@@ -82,7 +80,7 @@ server.register("log", |_: AppState, msg: String| async move {
 let json = r#"{"jsonrpc":"2.0","method":"log","params":"hello"}"#;
 let request: Request = serde_json::from_str(json).unwrap();
 let response = server.handle(&state, jsonrpc::RequestMessage::Single(request)).await;
-assert!(matches!(response, ResponseMessage::Empty));
+assert!(response.is_none());
 ```
 
 ### Handling a batch
@@ -94,8 +92,8 @@ let json = r#"[
 ]"#;
 let message: jsonrpc::RequestMessage = serde_json::from_str(json).unwrap();
 let response = server.handle(state, message).await;
-if let Some(json) = response.to_json().unwrap() {
-    println!("{json}");
+if let Some(response) = response {
+    println!("{}", response.to_json().unwrap());
     // => [{"jsonrpc":"2.0","result":{"sum":3},"id":"1"},
     //     {"jsonrpc":"2.0","result":{"sum":7},"id":"2"}]
 }
@@ -140,18 +138,14 @@ server.register("div", |_: AppState, (a, b): (i64, i64)| async move {
 use std::sync::Arc;
 
 use axum::{
-    extract::{Json, State},
+    extract::{State, Json},
     extract::rejection::JsonRejection,
     http::StatusCode,
     response::IntoResponse,
     routing::post,
     Router,
 };
-use jsonrpc::{Error, Id, RequestMessage, Response, ResponseMessage, Server};
-use serde_json::Value;
-
-#[derive(Clone)]
-struct AppState { /* ... */ }
+use json_rpc::{Error, Id, RequestMessage, Response, Server, ServerConfig};
 
 async fn rpc_handler(
     State(server): State<Arc<Server<AppState>>>,
@@ -162,24 +156,19 @@ async fn rpc_handler(
         Ok(Json(p)) => p,
         Err(_) => {
             let err = Response::error(Id::Null, Error::parse_error());
-            let value = serde_json::to_value(err).unwrap();
-            return (StatusCode::OK, Json(value)).into_response();
+            return (StatusCode::OK, Json(err)).into_response();
         }
     };
 
-    let response = server.handle((*state).clone(), message).await;
-    match response.to_json().unwrap() {
-        Some(json) => {
-            let value: Value = serde_json::from_str(&json).unwrap();
-            (StatusCode::OK, Json(value)).into_response()
-        }
+    match server.handle((*state).clone(), message).await {
+        Some(response) => (StatusCode::OK, Json(response)).into_response(),
         None => StatusCode::NO_CONTENT.into_response(),
     }
 }
 
 #[tokio::main]
 async fn main() {
-    let mut server: Server<AppState> = Server::new();
+    let mut server: Server<AppState> = Server::new(ServerConfig::default());
     server.register("ping", |_: AppState, ()| async move {
         Ok::<_, Error>("pong".to_string())
     });
@@ -204,7 +193,7 @@ use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let mut server: Server<()> = Server::new();
+    let mut server: jsonrpc::Server<()> = jsonrpc::Server::new(jsonrpc::ServerConfig::default());
     server.register("ping", |_: (), ()| async move {
         Ok::<_, Error>("pong".to_string())
     });
@@ -230,8 +219,8 @@ async fn main() -> std::io::Result<()> {
             };
 
             let response = server.handle((), message).await;
-            if let Some(json) = response.to_json().unwrap() {
-                writer.write_all(json.as_bytes()).await?;
+            if let Some(response) = response {
+                writer.write_all(response.to_json().unwrap().as_bytes()).await?;
                 writer.write_all(b"\n").await?;
             }
         }

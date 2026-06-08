@@ -13,4 +13,4 @@ pub use error_code::ErrorCode;
 pub use id::Id;
 pub use request::{Request, RequestId, RequestMessage};
 pub use response::{Error, Response};
-pub use server::{ResponseMessage, Server};
+pub use server::{ResponseMessage, Server, ServerConfig};
