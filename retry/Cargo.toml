@@ -1,0 +1,12 @@
+[package]
+name = "retry"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Retry async operations with configurable backoff strategies"
+
+[dependencies]
+tokio = { workspace = true }
+
+[dev-dependencies]
+rand = { workspace = true }
