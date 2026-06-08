@@ -5,7 +5,7 @@
 //! # Quick start
 //!
 //! ```rust,ignore
-//! dotenv::load();
+//! dotenv::load()?;
 //! ```
 //!
 //! Call [`load`] near the start of your program to load a `.env` file
@@ -64,7 +64,7 @@
 //! ## Default values
 //!
 //! Use `#[env(default)]` for any type that implements [`Default`] (yields the
-//! default when unset — e.g. `None` for [`Option<T>`], `0` for numbers, `""`
+//! default when unset e.g. `None` for [`Option<T>`], `0` for numbers, `""`
 //! for [`String`]) or `#[env(default = expr)]` for any type:
 //!
 //! ```rust,ignore
@@ -81,7 +81,7 @@
 //! }
 //! ```
 //!
-//! In all cases the environment variable is checked first — the default
+//! In all cases the environment variable is checked first. The default
 //! value is only used when the variable is not set.
 //!
 //! ## Custom parsers
@@ -430,7 +430,7 @@ pub trait FromEnv: Sized {
     /// Load `Self` from environment variables, prepending `prefix` to each
     /// env-var name derived from field names.
     ///
-    /// This is used internally to support nested structs — each parent field
+    /// This is used internally to support nested structs. Each parent field
     /// passes its own SCREAMING_SNAKE name plus `_` as the child's prefix.
     fn from_env_with_prefix(prefix: &str) -> Result<Self, FromEnvError>;
 }
@@ -540,7 +540,7 @@ mod tests {
         }
     }
 
-    // Unsafe helper for tests — tests are single-threaded
+    // Unsafe helper for tests. Tests are single-threaded
     unsafe fn set_env(k: &str, v: &str) {
         unsafe { env::set_var(k, v) };
     }

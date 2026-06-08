@@ -2,20 +2,20 @@
 
 Rust's extended standard library.
 
-Rust's biggest problem is its anemic standard library which leads not only to a very fragmented ecosystem with multiple competing packages (so you end up with 10 different packages to handle time and dates and 15 different crypto libraries) but also to high supply chain risks (see [Supply chain nightmare: How Rust will be attacked and what we can do to mitigate the inevitable](https://kerkour.com/rust-supply-chain-nightmare)).
+Rust's biggest problem is its anemic standard library leading not only to a very fragmented ecosystem with multiple competing packages (so you end up with 10 different packages to handle time and 15 crypto libraries) but also to elevated supply chain risks (see [Supply chain nightmare: How Rust will be attacked and what we can do to mitigate the inevitable](https://kerkour.com/rust-supply-chain-nightmare)).
 
-This is why we are creating Rust's extended standard library which should provide all the packages for the most-common use cases.
+This is why we are creating Rust's extended standard library, inspired by Go's extensive standard library and `golang.org/x/...` packages.
 
 The goal is that `stdx` only uses code from `std` and `stdx`. No third-party imports, no supply chain risks, no ecosystem fragmentation.
 
-Once the idea has proven to be valuable, the goal is to donate the entire codebase to the Rust Foundation to build trust and drive adoption.
+Once the idea has proven to be valuable, we plan to donate the entire codebase to the Rust Foundation to build trust and drive adoption.
 
 
-> **Warning ⚠️**: No stability guarantees can be provided at this moment. Use at your own risk.
+> **Warning ⚠️**: The project is moving fast, we can't provide any stability guarantees at this moment. Use at your own risk.
 
 ## Usage
 
-Import package directly from git, for example:
+Import packages directly from git, for example:
 ```toml
 base64 = { git = "https://github.com/pingooio/stdx-rs", branch = "main" }
 ```
@@ -43,7 +43,7 @@ rustup default stable
 
 And you are ready to <s>Go</s> Rust!
 
-See `Makefile` for the most common commands used during the development workflow.
+See `Makefile` for the most common commands used during development.
 
 
 ## License
