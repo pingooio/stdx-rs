@@ -1,9 +1,14 @@
-use alloc::vec::Vec;
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 use core::{fmt, marker::PhantomData, str};
 #[cfg(feature = "serde")]
 use std::collections::HashMap;
 
-use crate::error::{ReadError, ReadErrorKind};
+use crate::error::ReadError;
+#[cfg(feature = "std")]
+use crate::error::ReadErrorKind;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum State {
@@ -63,6 +68,7 @@ pub struct Reader<R> {
     state: State,
     delimiter: u8,
     headers_parsed: bool,
+    pending_cr: bool,
     pub(crate) headers: Vec<String>,
     #[cfg(feature = "serde")]
     pub(crate) header_map: Option<HashMap<String, usize>>,
@@ -89,6 +95,7 @@ fn is_newline(b: u8) -> bool {
     b == b'\n' || b == b'\r'
 }
 
+#[cfg(feature = "std")]
 impl<R: std::io::Read> Reader<R> {
     /// Create a reader from any `std::io::Read` source.
     ///
@@ -107,6 +114,7 @@ impl<R: std::io::Read> Reader<R> {
             state: State::StartOfField,
             delimiter: b',',
             headers_parsed: false,
+            pending_cr: false,
             headers: Vec::new(),
             #[cfg(feature = "serde")]
             header_map: None,
@@ -189,6 +197,8 @@ impl<R: std::io::Read> Reader<R> {
         }
         if self.start < self.end && self.buf[self.start] == b'\n' {
             self.start += 1;
+        } else if self.start > 0 && self.start >= self.end && self.buf[self.start - 1] == b'\r' {
+            self.pending_cr = true;
         }
         self.line += 1;
     }
@@ -200,19 +210,42 @@ impl<R: std::io::Read> Reader<R> {
         self.state = State::StartOfField;
 
         loop {
-            if self.start >= self.end && !self.fill_buf().ok()? {
-                if self.ranges.is_empty() && self.state == State::StartOfField {
-                    return None;
+            if self.start >= self.end {
+                match self.fill_buf() {
+                    Err(e) => {
+                        self.eof = true;
+                        return match self.state {
+                            State::InQuoted => Some(self.build_row_with(Some(e))),
+                            _ => {
+                                self.finalize_current_field();
+                                Some(self.build_row_with(Some(e)))
+                            }
+                        };
+                    }
+                    Ok(false) => {
+                        if self.ranges.is_empty() && self.state == State::StartOfField {
+                            return None;
+                        }
+                        return match self.state {
+                            State::InQuoted => Some(self.build_row_with(Some(ReadError::new(
+                                ReadErrorKind::UnterminatedQuote,
+                                self.line,
+                                0,
+                            )))),
+                            _ => {
+                                self.finalize_current_field();
+                                Some(self.build_row_with(None))
+                            }
+                        };
+                    }
+                    Ok(true) => {}
                 }
-                return match self.state {
-                    State::InQuoted => {
-                        Some(self.build_row_with(Some(ReadError::new(ReadErrorKind::UnterminatedQuote, self.line, 0))))
-                    }
-                    _ => {
-                        self.finalize_current_field();
-                        Some(self.build_row_with(None))
-                    }
-                };
+            }
+
+            if self.pending_cr && self.buf[self.start] == b'\n' {
+                self.start += 1;
+                self.pending_cr = false;
+                continue;
             }
 
             let byte = self.buf[self.start];
@@ -287,6 +320,17 @@ impl<R: std::io::Read> Reader<R> {
                             self.scratch.extend_from_slice(&self.buf[self.start..quote_pos]);
                             let after_quote = quote_pos + 1;
                             if after_quote < self.end && self.buf[after_quote] == b'"' {
+                                self.scratch.push(b'"');
+                                self.start = after_quote + 1;
+                            } else if after_quote < self.end {
+                                self.ranges.push(FieldRange {
+                                    start: self.scratch_field_start,
+                                    end: self.scratch.len(),
+                                    src: Src::Scratch,
+                                });
+                                self.start = after_quote;
+                                self.state = State::AfterQuote;
+                            } else if self.fill_buf().ok().unwrap_or(false) && self.buf[after_quote] == b'"' {
                                 self.scratch.push(b'"');
                                 self.start = after_quote + 1;
                             } else {
@@ -492,14 +536,14 @@ pub struct Rows<'r, R> {
     _marker: PhantomData<&'r mut Reader<R>>,
 }
 
+#[cfg(feature = "std")]
 impl<'r, R: std::io::Read> Iterator for Rows<'r, R> {
     type Item = Row<'r>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let reader = unsafe { &mut *self.reader };
-        match reader.read_row() {
-            Some(row) => Some(unsafe { core::mem::transmute::<Row<'_>, Row<'r>>(row) }),
-            None => None,
-        }
+        reader
+            .read_row()
+            .map(|row| unsafe { core::mem::transmute::<Row<'_>, Row<'r>>(row) })
     }
 }

@@ -7,6 +7,8 @@ pub enum ReadErrorKind {
     UnterminatedQuote,
     /// Characters appeared after a closing quote before a delimiter or newline.
     TrailingContent,
+    /// An I/O error occurred while reading the underlying source.
+    Io,
 }
 
 /// An error returned when parsing a CSV row.
@@ -46,6 +48,9 @@ impl fmt::Display for ReadError {
                     self.line, self.column
                 )
             }
+            ReadErrorKind::Io => {
+                write!(f, "I/O error at line {}, column {}", self.line, self.column)
+            }
         }
     }
 }
@@ -57,7 +62,7 @@ impl std::error::Error for ReadError {}
 impl From<std::io::Error> for ReadError {
     fn from(_e: std::io::Error) -> Self {
         ReadError {
-            kind: ReadErrorKind::TrailingContent,
+            kind: ReadErrorKind::Io,
             line: 0,
             column: 0,
         }

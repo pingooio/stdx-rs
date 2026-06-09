@@ -1,4 +1,4 @@
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 
 use csv2::*;
 
@@ -11,13 +11,63 @@ fn collect_rows(data: &[u8]) -> Vec<Vec<String>> {
     out
 }
 
-fn collect_rows_result(data: &[u8]) -> Result<Vec<Vec<String>>, ReadError> {
-    let mut reader = Reader::from_reader(Cursor::new(data));
-    let mut out = Vec::new();
-    for row in reader.rows() {
-        out.push(row.all()?);
+/// Forces reads in small chunks to exercise buffer-boundary code paths.
+struct ChunkReader {
+    data: Vec<u8>,
+    pos: usize,
+    chunk: usize,
+}
+
+impl ChunkReader {
+    fn new(data: &[u8], chunk: usize) -> Self {
+        ChunkReader {
+            data: data.to_vec(),
+            pos: 0,
+            chunk,
+        }
     }
-    Ok(out)
+}
+
+impl Read for ChunkReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let to_read = self.chunk.min(buf.len()).min(self.data.len() - self.pos);
+        buf[..to_read].copy_from_slice(&self.data[self.pos..self.pos + to_read]);
+        self.pos += to_read;
+        Ok(to_read)
+    }
+}
+
+/// A reader that returns an error after yielding the given number of bytes.
+struct ErrorAfterReader {
+    data: Vec<u8>,
+    pos: usize,
+    limit: usize,
+}
+
+impl ErrorAfterReader {
+    fn new(data: Vec<u8>, limit: usize) -> Self {
+        ErrorAfterReader {
+            data,
+            pos: 0,
+            limit,
+        }
+    }
+}
+
+impl Read for ErrorAfterReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.pos >= self.limit {
+            return Err(std::io::Error::new(std::io::ErrorKind::Other, "simulated IO error"));
+        }
+        let to_read = self
+            .limit
+            .saturating_sub(self.pos)
+            .min(buf.len())
+            .min(self.data.len() - self.pos);
+        buf[..to_read].copy_from_slice(&self.data[self.pos..self.pos + to_read]);
+        self.pos += to_read;
+        Ok(to_read)
+    }
 }
 
 // ── Reader: Basic Parsing ──────────────────────────────────────────
@@ -459,4 +509,319 @@ fn test_roundtrip_quotes_commas() {
         out.push(row.all().unwrap());
     }
     assert_eq!(out[0], vec!["hello, world", "foo\"bar"]);
+}
+
+// ── Reader: Buffer boundary tests ──────────────────────────────────
+
+#[test]
+fn test_chunked_escaped_quote_at_buffer_boundary() {
+    let data = b"\"hello\"\"world\",second\n";
+    let mut reader = Reader::from_reader(ChunkReader::new(data, 1));
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    assert_eq!(row.len(), 2);
+    let fields: Vec<&str> = row.fields().unwrap().collect();
+    assert_eq!(fields[0], "hello\"world");
+    assert_eq!(fields[1], "second");
+}
+
+#[test]
+fn test_chunked_escaped_quote_pair_at_boundary() {
+    let before = "x".repeat(100);
+    let data = format!("\"{before}\"\"more\",rest\n");
+    let mut reader = Reader::from_reader(ChunkReader::new(data.as_bytes(), 16));
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    let fields: Vec<&str> = row.fields().unwrap().collect();
+    let expected = format!("{before}\"more");
+    assert_eq!(fields[0], expected);
+}
+
+#[test]
+fn test_chunked_crlf_at_boundary() {
+    let before = "x".repeat(16380);
+    let data = format!("first,{before}\r\nsecond,line\n");
+    let mut reader = Reader::from_reader(ChunkReader::new(data.as_bytes(), 16));
+    let mut rows = reader.rows();
+    let row1 = rows.next().unwrap();
+    assert_eq!(row1.len(), 2);
+    assert_eq!(row1.fields().unwrap().collect::<Vec<&str>>()[1].len(), 16380);
+    let row2 = rows.next().unwrap();
+    assert_eq!(row2.len(), 2);
+    let fields: Vec<&str> = row2.fields().unwrap().collect();
+    assert_eq!(fields[0], "second");
+    assert_eq!(fields[1], "line");
+}
+
+#[test]
+fn test_chunked_delimiter_at_boundary() {
+    let data = b"abc,def,ghi\n123,456,789\n";
+    let mut reader = Reader::from_reader(ChunkReader::new(data, 4));
+    let rows: Vec<Vec<String>> = reader.rows().map(|r| r.all().unwrap()).collect();
+    assert_eq!(rows[0], vec!["abc", "def", "ghi"]);
+    assert_eq!(rows[1], vec!["123", "456", "789"]);
+}
+
+#[test]
+fn test_chunked_quoted_field_spanning_multiple_reads() {
+    let inner = "x".repeat(50000);
+    let data = format!("a,\"{inner}\",b\nc,d,e\n");
+    let mut reader = Reader::from_reader(ChunkReader::new(data.as_bytes(), 4096));
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    assert_eq!(row.len(), 3);
+    let fields: Vec<&str> = row.fields().unwrap().collect();
+    assert_eq!(fields[0], "a");
+    assert_eq!(fields[1], inner);
+    assert_eq!(fields[2], "b");
+}
+
+// ── Reader: IO error propagation ────────────────────────────────────
+
+#[test]
+fn test_io_error_reported() {
+    let data = b"a,b\n1,2\n3,4\n";
+    let reader = ErrorAfterReader::new(data.to_vec(), 5);
+    let mut reader = Reader::from_reader(reader);
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    assert!(row.error().is_none());
+    assert_eq!(row.all().unwrap(), vec!["a", "b"]);
+    let row = rows.next().unwrap();
+    assert!(row.error().is_some());
+    assert!(matches!(row.error().unwrap().kind(), ReadErrorKind::Io));
+    assert!(rows.next().is_none());
+}
+
+#[test]
+fn test_io_error_while_in_quoted() {
+    let data = b"a,\"unterminated data that never closes\n";
+    let reader = ErrorAfterReader::new(data.to_vec(), 10);
+    let mut reader = Reader::from_reader(reader);
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    assert!(row.error().is_some());
+}
+
+// ── Reader: More edge cases ────────────────────────────────────────
+
+#[test]
+fn test_only_blank_lines() {
+    let rows = collect_rows(b"\n\n\n\r\n\r\n");
+    assert_eq!(rows.len(), 0);
+}
+
+#[test]
+fn test_single_quoted_field_only() {
+    let rows = collect_rows(b"\"hello\"\n");
+    assert_eq!(rows[0], vec!["hello"]);
+}
+
+#[test]
+fn test_all_quoted_fields() {
+    let rows = collect_rows(b"\"a\",\"b\",\"c\"\n\"1\",\"2\",\"3\"\n");
+    assert_eq!(rows[0], vec!["a", "b", "c"]);
+    assert_eq!(rows[1], vec!["1", "2", "3"]);
+}
+
+#[test]
+fn test_quote_in_middle_of_unquoted_field() {
+    let rows = collect_rows(b"hello\"world,foo\n");
+    assert_eq!(rows[0], vec!["hello\"world", "foo"]);
+}
+
+#[test]
+fn test_trailing_delimiter_with_newline() {
+    let rows = collect_rows(b"a,b,\n");
+    assert_eq!(rows[0], vec!["a", "b", ""]);
+}
+
+#[test]
+fn test_blank_line_between_data() {
+    let rows = collect_rows(b"a,b\n\nc,d\n");
+    assert_eq!(rows.len(), 2);
+}
+
+#[test]
+fn test_row_with_single_field_no_newline() {
+    let rows = collect_rows(b"hello");
+    assert_eq!(rows[0], vec!["hello"]);
+}
+
+#[test]
+fn test_three_delimiters_empty_fields() {
+    let rows = collect_rows(b",,,\n");
+    assert_eq!(rows[0], vec!["", "", "", ""]);
+}
+
+#[test]
+fn test_leading_trailing_blank_lines() {
+    let rows = collect_rows(b"\n\na,b\nc,d\n\n\n");
+    assert_eq!(rows.len(), 2);
+}
+
+// ── Reader: Row method tests ───────────────────────────────────────
+
+#[test]
+fn test_row_debug() {
+    let mut reader = Reader::from_reader(Cursor::new(b"hello,world\n"));
+    let row = reader.rows().next().unwrap();
+    let debug = format!("{:?}", row);
+    assert!(debug.starts_with("["), "debug starts with '[', got: {debug}");
+    assert!(debug.contains("hello"), "debug contains 'hello', got: {debug}");
+}
+
+#[test]
+fn test_row_len_and_is_empty() {
+    let mut reader = Reader::from_reader(Cursor::new(b"a,b,c\nhello\n"));
+    let mut rows = reader.rows();
+    let r = rows.next().unwrap();
+    assert_eq!(r.len(), 3);
+    assert!(!r.is_empty());
+    // blank lines are skipped — next row is "hello"
+    let r = rows.next().unwrap();
+    assert_eq!(r.len(), 1);
+    assert!(!r.is_empty());
+}
+
+#[test]
+fn test_fields_exact_size_iterator() {
+    use std::iter::ExactSizeIterator;
+    let mut reader = Reader::from_reader(Cursor::new(b"a,b,c\n"));
+    let row = reader.rows().next().unwrap();
+    let fields = row.fields().unwrap();
+    assert_eq!(fields.len(), 3);
+}
+
+#[test]
+fn test_row_all_error_propagation() {
+    let mut reader = Reader::from_reader(Cursor::new(b"\"hello\" garbage\n"));
+    let row = reader.rows().next().unwrap();
+    assert!(row.all().is_err());
+}
+
+// ── Reader: Headers ─────────────────────────────────────────────────
+
+#[test]
+fn test_headers_empty_csv() {
+    let mut reader = Reader::from_reader(Cursor::new(b""));
+    let headers = reader.parse_headers().unwrap();
+    assert!(headers.is_empty());
+    assert!(reader.rows().next().is_none());
+}
+
+#[test]
+fn test_headers_none_before_parse() {
+    let reader = Reader::from_reader(Cursor::new(b"a,b\n1,2\n"));
+    assert!(reader.headers().is_none());
+}
+
+#[test]
+fn test_headers_after_parse() {
+    let mut reader = Reader::from_reader(Cursor::new(b"name,age\nAlice,30\n"));
+    reader.parse_headers().unwrap();
+    assert_eq!(reader.headers().unwrap(), &["name", "age"]);
+}
+
+// ── Reader: Error display ──────────────────────────────────────────
+
+#[test]
+fn test_error_display_unterminated_quote() {
+    let e = ReadError::new(ReadErrorKind::UnterminatedQuote, 5, 10);
+    let s = e.to_string();
+    assert!(s.contains("unterminated quote"));
+    assert!(s.contains("line 5"));
+}
+
+#[test]
+fn test_error_display_trailing_content() {
+    let e = ReadError::new(ReadErrorKind::TrailingContent, 3, 0);
+    let s = e.to_string();
+    assert!(s.contains("trailing content"));
+}
+
+#[test]
+fn test_error_display_io() {
+    let e = ReadError::new(ReadErrorKind::Io, 1, 0);
+    let s = e.to_string();
+    assert!(s.contains("I/O error"));
+}
+
+// ── Writer: additional edge cases ──────────────────────────────────
+
+#[test]
+fn test_writer_empty_row() {
+    let mut w = Writer::new(Vec::new());
+    let empty: &[&str] = &[];
+    w.write_row(empty).unwrap();
+    let result = String::from_utf8(w.into_inner().unwrap()).unwrap();
+    assert_eq!(result, "\r\n");
+}
+
+#[test]
+fn test_writer_newline_in_field() {
+    let mut w = Writer::new(Vec::new());
+    w.write_row(["hello\nworld"]).unwrap();
+    let result = String::from_utf8(w.into_inner().unwrap()).unwrap();
+    assert_eq!(result, "\"hello\nworld\"\r\n");
+}
+
+#[test]
+fn test_writer_cr_in_field() {
+    let mut w = Writer::new(Vec::new());
+    w.write_row(["hello\rworld"]).unwrap();
+    let result = String::from_utf8(w.into_inner().unwrap()).unwrap();
+    assert_eq!(result, "\"hello\rworld\"\r\n");
+}
+
+#[test]
+fn test_writer_no_rows() {
+    let w = Writer::new(Vec::new());
+    let result = w.into_inner().unwrap();
+    assert!(result.is_empty());
+}
+
+#[test]
+fn test_writer_flush_twice() {
+    let mut w = Writer::new(Vec::new());
+    w.write_row(["a"]).unwrap();
+    w.flush().unwrap();
+    w.flush().unwrap();
+    let result = String::from_utf8(w.into_inner().unwrap()).unwrap();
+    assert_eq!(result, "a\r\n");
+}
+
+// ── Reader: set_delimiter builder pattern ──────────────────────────
+
+#[test]
+fn test_set_delimiter_chaining() {
+    let data = b"a:b:c\n1:2:3\n";
+    let mut reader = Reader::from_reader(Cursor::new(data));
+    reader.set_delimiter(b':').set_delimiter(b':');
+    let rows: Vec<Vec<String>> = reader.rows().map(|r| r.all().unwrap()).collect();
+    assert_eq!(rows[0], vec!["a", "b", "c"]);
+}
+
+// ── Writer: Auto-quote with special chars combined ──────────────────
+
+#[test]
+fn test_writer_field_with_delimiter_and_quote() {
+    let mut w = Writer::new(Vec::new());
+    w.write_row([r#"hello, "world""#]).unwrap();
+    let result = String::from_utf8(w.into_inner().unwrap()).unwrap();
+    assert_eq!(result, "\"hello, \"\"world\"\"\"\r\n");
+}
+
+// ── Roundtrip: additional ──────────────────────────────────────────
+
+#[test]
+fn test_roundtrip_with_newlines_in_fields() {
+    let mut w = Writer::new(Vec::new());
+    w.write_row(["hello\nworld", "foo\r\nbar"]).unwrap();
+    let csv_data = w.into_inner().unwrap();
+    let mut out = Vec::new();
+    for row in Reader::from_reader(Cursor::new(csv_data)).rows() {
+        out.push(row.all().unwrap());
+    }
+    assert_eq!(out[0], vec!["hello\nworld", "foo\r\nbar"]);
 }
