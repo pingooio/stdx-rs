@@ -1,96 +1,98 @@
-//! A lightweight CSV parser and writer, compatible with `no_std` environments.
+#![cfg_attr(not(feature = "std"), no_std)]
+//! A fast, low-allocation CSV parser with optional serde support.
 //!
 //! # Quick start
 //!
-//! ```no_run
-//! use csv::Reader;
+//! ```rust
+//! let data = b"name,age,city\nAlice,30,NYC\nBob,25,LA\n";
+//! let mut reader = csv::Reader::from_reader(std::io::Cursor::new(data));
 //!
-//! let data = b"name,age\nAlice,30\nBob,25\n";
-//! let mut sum = 0u32;
-//!
-//! for result in Reader::new(data).rows() {
-//!     let row = result?;
-//!     // Access raw fields (including surrounding quotes) via indexing
-//!     let name = &row[0];  // &str
-//!     // Or via get_raw
-//!     if let Some(name) = row.get_raw(0) {
-//!         // name: &str
+//! for row in reader.rows() {
+//!     for field in row.fields().unwrap() {
+//!         // field: &str — already unescaped, no surrounding quotes, `""` resolved
 //!     }
+//!     let fields: Vec<String> = row.all().unwrap();
 //! }
-//! # Ok::<_, csv::ReadError>(())
 //! ```
 //!
-//! Rows are yielded via [`Reader::rows`], which returns an iterator over
-//! [`Row`] values. Each [`Row`] owns its data and can outlive the reader.
+//! # Features
+//!
+//! | Flag | Default | Description |
+//! |------|---------|-------------|
+//! | `std` | on | Enables `std::io::Read`, `Writer`, and `std::error::Error` impls. |
+//! | `serde` | off | Enables `Row::deserialize()` for `#[derive(Deserialize)]`. |
 //!
 //! # Streaming from `std::io::Read`
 //!
-//! With the `std` feature (enabled by default), you can stream CSV data
-//! from any `std::io::Read` source without loading the entire input:
-//!
 //! ```no_run
-//! # use std::fs::File;
-//! # use csv::Reader;
+//! use std::fs::File;
+//! use csv::Reader;
+//!
 //! let file = File::open("data.csv")?;
-//! for result in Reader::from_reader(file).rows() {
-//!     let row = result?;
-//!     // ...
-//! }
-//! # Ok::<_, Box<dyn std::error::Error>>(())
-//! ```
+//! let mut reader = Reader::from_reader(file);
 //!
-//! # Unescaped fields
-//!
-//! Use [`Row::fields`] to iterate over unescaped fields (quotes stripped,
-//! `""` resolved):
-//!
-//! ```no_run
-//! # use csv::Reader;
-//! let data = b"\"hello\",\"foo\"\"bar\"\n";
-//! for result in Reader::new(data).rows() {
-//!     let row = result?;
-//!     let fields: Vec<String> = row.fields().map(|f| f.into_owned()).collect();
-//!     // fields: ["hello", "foo\"bar"]
+//! for row in reader.rows() {
+//!     let name = row.fields()?.next().unwrap();
+//!     println!("{name}");
 //! }
 //! # Ok::<_, csv::ReadError>(())
 //! ```
 //!
-//! # Writing CSV
-//!
-//! The [`Writer`] (requires `std`) writes CSV data to any `std::io::Write`
-//! sink, automatically quoting fields that contain delimiters, quotes,
-//! or newlines:
+//! # Headers
 //!
 //! ```no_run
-//! # use csv::Writer;
+//! use csv::Reader;
+//! let data = b"name,age\nAlice,30\n";
+//! let mut reader = Reader::from_reader(std::io::Cursor::new(data));
+//! let headers = reader.parse_headers()?;
+//! for row in reader.rows() {
+//! }
+//! # Ok::<_, csv::ReadError>(())
+//! ```
+//!
+//! # Serde (requires `serde` feature)
+//!
+//! ```no_run
+//! # #[cfg(feature = "serde")] {
+//! use csv::Reader;
+//! use serde::Deserialize;
+//!
+//! #[derive(Deserialize)]
+//! struct Record { name: String, age: u32 }
+//!
+//! let mut reader = Reader::from_reader(std::io::Cursor::new(b"name,age\nAlice,30\n"));
+//! reader.parse_headers()?;
+//!
+//! for row in reader.rows() {
+//!     let rec: Record = row.deserialize()?;
+//!     println!("{} is {}", rec.name, rec.age);
+//! }
+//! # }
+//! # Ok::<_, csv::ReadError>(())
+//! ```
+//!
+//! When [`parse_headers`] is called before iterating, struct fields are
+//! matched to CSV columns by name. Without it, fields are mapped positionally.
+//!
+//! # Writer
+//!
+//! ```no_run
+//! use csv::Writer;
+//!
 //! let mut w = Writer::new(Vec::new());
-//! w.write_row(["name", "age", "city"])?;
-//! w.write_row(["Alice", "30", "New York, NY"])?;
+//! w.write_row(["name", "age"])?;
+//! w.write_row(["Alice", "30"])?;
 //! let bytes = w.into_inner()?;
 //! # Ok::<_, csv::WriteError>(())
 //! ```
 //!
-//! # Feature flags
+//! # Design
 //!
-//! | Flag    | Default | Description                              |
-//! |---------|---------|------------------------------------------|
-//! | `std`   | on      | Enables `From<std::io::Error>`, `Writer`, and [`Reader::from_reader`]. |
-//!
-//! # Errors
-//!
-//! Parsing errors are surfaced per row via [`ReadError`]. The error
-//! includes the line number and kind (unterminated quote, trailing
-//! content after a quoted field, invalid UTF-8, or I/O error).
-//!
-//! # `no_std` support
-//!
-//! Disable default features to use the crate in a `no_std` environment.
-//! The crate still requires `alloc` for its internal buffers.
-//!
-//! [`Reader::from_reader`]: Reader::from_reader
-//! [`Row::fields`]: Row::fields
-//!
-#![cfg_attr(not(feature = "std"), no_std)]
+//! * **Zero per-row allocations**: `rows()` reuses internal buffers.
+//! * **Eager unescaping**: quotes are stripped and `""` resolved during parsing.
+//! * **SIMD scanning**: uses `memchr3` to bulk-scan for delimiters, quotes, and newlines.
+//! * **Borrowed rows**: `Row<'_>` borrows from the `Reader` and cannot outlive it.
+//! * **Streaming**: rows are parsed on-demand from `std::io::Read`.
 
 extern crate alloc;
 
@@ -103,7 +105,10 @@ mod reader;
 #[cfg(feature = "std")]
 mod writer;
 
+#[cfg(feature = "serde")]
+mod serde;
+
 pub use error::{ReadError, ReadErrorKind, WriteError};
-pub use reader::{Fields, Reader, Row, RowIntoIter, Rows};
+pub use reader::{Fields, Reader, Row, Rows};
 #[cfg(feature = "std")]
 pub use writer::Writer;

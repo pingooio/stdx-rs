@@ -1,20 +1,16 @@
+#[cfg(feature = "serde")]
+use alloc::collections::BTreeMap;
 use alloc::{
-    borrow::Cow,
     string::{String, ToString},
     vec::Vec,
 };
-use core::{ops::Index, str};
+use core::{fmt, marker::PhantomData, str};
 
-use crate::error::{ReadError, ReadErrorKind};
+use crate::error::ReadError;
+#[cfg(feature = "std")]
+use crate::error::ReadErrorKind;
 
-#[derive(Copy, Clone, Debug)]
-struct FieldRange {
-    start: usize,
-    end: usize,
-    quoted: bool,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum State {
     StartOfField,
     InUnquoted,
@@ -22,526 +18,576 @@ enum State {
     AfterQuote,
 }
 
-/// Parses CSV data from a byte slice or a `std::io::Read` source.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Src {
+    Buf,
+    Scratch,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FieldRange {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) src: Src,
+}
+
+/// Reads CSV data from a `std::io::Read` source.
 ///
-/// Create an iterator over rows with [`Reader::rows`]:
+/// Rows are yielded by calling [`rows`], which returns an iterator
+/// of `Row<'_>`. Errors are deferred to the [`Row`] methods.
+///
+/// # Example
 ///
 /// ```no_run
-/// # use csv::Reader;
-/// let data = b"name,age\nAlice,30\nBob,25\n";
-/// for row in Reader::new(data).rows() {
-///     let row = row?;
-///     // ...
+/// use csv::Reader;
+/// use std::fs::File;
+///
+/// let mut reader = Reader::from_reader(File::open("data.csv")?);
+/// for row in reader.rows() {
+///     for field in row.fields()? {
+///     }
 /// }
 /// # Ok::<_, csv::ReadError>(())
 /// ```
-pub struct Reader {
-    buf: Vec<u8>,
-    pos: usize,
-    field_ranges: Vec<FieldRange>,
-    field_start: usize,
-    field_start_column: usize,
-    state: State,
+///
+/// # Headers
+///
+/// Use [`parse_headers`] to read the first row as column headers.
+///
+/// [`rows`]: Reader::rows
+/// [`parse_headers`]: Reader::parse_headers
+pub struct Reader<R> {
+    pub(crate) buf: Vec<u8>,
+    pub(crate) scratch: Vec<u8>,
+    pub(crate) ranges: Vec<FieldRange>,
+    start: usize,
+    end: usize,
     line: usize,
-    column: usize,
+    field_start: usize,
+    scratch_field_start: usize,
+    state: State,
     delimiter: u8,
-    flexible: bool,
+    headers_parsed: bool,
+    pending_cr: bool,
+    pub(crate) headers: Vec<String>,
+    #[cfg(feature = "serde")]
+    pub(crate) header_map: Option<BTreeMap<String, usize>>,
+    source: R,
     eof: bool,
-
-    #[cfg(feature = "std")]
-    source: Option<Box<dyn std::io::Read>>,
 }
 
-impl Reader {
-    /// Create a reader from a byte slice. The data is copied into
-    /// an internal buffer. This constructor is available with or
-    /// without the `std` feature.
-    pub fn new(data: &[u8]) -> Self {
-        Reader {
-            buf: data.to_vec(),
-            pos: 0,
-            field_ranges: Vec::new(),
-            field_start: 0,
-            field_start_column: 1,
-            state: State::StartOfField,
-            line: 1,
-            column: 1,
-            delimiter: b',',
-            flexible: false,
-            eof: true,
-            #[cfg(feature = "std")]
-            source: None,
-        }
-    }
-
+impl<R> Reader<R> {
     /// Set the field delimiter byte (default is `,`).
     pub fn set_delimiter(&mut self, byte: u8) -> &mut Self {
         self.delimiter = byte;
         self
     }
 
-    /// Allow variable numbers of fields per row (default `false`).
-    pub fn set_flexible(&mut self, yes: bool) -> &mut Self {
-        self.flexible = yes;
-        self
+    /// Return the column headers, if [`parse_headers`] was called.
+    ///
+    /// [`parse_headers`]: Reader::parse_headers
+    pub fn headers(&self) -> Option<&[String]> {
+        if self.headers_parsed { Some(&self.headers) } else { None }
+    }
+}
+
+fn is_newline(b: u8) -> bool {
+    b == b'\n' || b == b'\r'
+}
+
+#[cfg(feature = "std")]
+impl<R: std::io::Read> Reader<R> {
+    /// Create a reader from any `std::io::Read` source.
+    ///
+    /// Data is streamed in chunks as rows are parsed, without loading
+    /// the entire input into memory.
+    pub fn from_reader(source: R) -> Self {
+        Reader {
+            buf: Vec::with_capacity(65536),
+            scratch: Vec::new(),
+            ranges: Vec::new(),
+            start: 0,
+            end: 0,
+            line: 1,
+            field_start: 0,
+            scratch_field_start: 0,
+            state: State::StartOfField,
+            delimiter: b',',
+            headers_parsed: false,
+            pending_cr: false,
+            headers: Vec::new(),
+            #[cfg(feature = "serde")]
+            header_map: None,
+            source,
+            eof: false,
+        }
     }
 
-    /// Read all rows from this CSV source.
+    /// Read and return the first row as column headers.
     ///
-    /// Consumes the reader and returns an iterator yielding
-    /// [`Result<Row, ReadError>`].
+    /// Must be called before iterating with [`rows`]. The parsed headers
+    /// are stored internally and used by [`Row::deserialize`] for
+    /// header-based field mapping.
+    pub fn parse_headers(&mut self) -> Result<Vec<String>, ReadError> {
+        self.headers_parsed = true;
+        let row = match self.read_row() {
+            Some(row) => row,
+            None => return Ok(Vec::new()),
+        };
+        let h: Vec<String> = row.fields()?.map(|s| s.to_string()).collect();
+        self.headers = h.clone();
+        #[cfg(feature = "serde")]
+        {
+            self.header_map = Some(h.iter().enumerate().map(|(i, name)| (name.clone(), i)).collect());
+        }
+        Ok(h)
+    }
+
+    /// Return an iterator over the remaining rows.
     ///
-    /// # Example
+    /// If [`parse_headers`] was called, iteration starts after the header
+    /// row. Otherwise, it starts from the first row.
     ///
     /// ```no_run
-    /// # use csv::Reader;
-    /// let data = b"a,b,c\n1,2,3\n";
-    /// let mut total = 0usize;
-    /// for row in Reader::new(data).rows() {
-    ///     total += row?.len();
+    /// use csv::Reader;
+    /// let mut reader = Reader::from_reader(std::io::Cursor::new(b"a,b\n1,2\n"));
+    /// for row in reader.rows() {
+    ///     for field in row.fields()? {
+    ///     }
     /// }
-    /// assert_eq!(total, 6);
     /// # Ok::<_, csv::ReadError>(())
     /// ```
-    pub fn rows(self) -> Rows {
+    pub fn rows(&mut self) -> Rows<'_, R> {
         Rows {
             reader: self,
+            _marker: PhantomData,
         }
     }
 
-    fn read_row(&mut self) -> Result<Option<Row>, ReadError> {
-        self.field_ranges.clear();
-        self.state = State::StartOfField;
-
-        loop {
-            if self.pos >= self.buf.len() && !self.fill_buf()? {
-                return if self.field_ranges.is_empty() && self.state == State::StartOfField {
-                    Ok(None)
-                } else {
-                    if self.state == State::InQuoted {
-                        return Err(ReadError::new(
-                            ReadErrorKind::UnterminatedQuote,
-                            self.line,
-                            self.column_at(self.field_start),
-                        ));
-                    }
-                    match self.state {
-                        State::InUnquoted => {
-                            self.field_ranges.push(FieldRange {
-                                start: self.field_start,
-                                end: self.pos,
-                                quoted: false,
-                            });
-                        }
-                        State::AfterQuote => {
-                            self.field_ranges.push(FieldRange {
-                                start: self.field_start,
-                                end: self.pos,
-                                quoted: true,
-                            });
-                        }
-                        State::StartOfField => {
-                            if !self.field_ranges.is_empty() {
-                                self.field_ranges.push(FieldRange {
-                                    start: self.pos,
-                                    end: self.pos,
-                                    quoted: false,
-                                });
-                            }
-                        }
-                        State::InQuoted => unreachable!(),
-                    }
-                    Ok(Some(self.make_row()?))
-                };
+    fn compact(&mut self) {
+        if self.start > 0 {
+            let remaining = self.end - self.start;
+            if remaining > 0 {
+                self.buf.copy_within(self.start..self.end, 0);
             }
-
-            if self.pos >= self.buf.len() {
-                break;
-            }
-
-            let byte = self.buf[self.pos];
-
-            match self.state {
-                State::StartOfField => {
-                    if byte == b'\r' || byte == b'\n' {
-                        if !self.field_ranges.is_empty() {
-                            self.field_ranges.push(FieldRange {
-                                start: self.pos,
-                                end: self.pos,
-                                quoted: false,
-                            });
-                        }
-                        self.consume_line_end();
-                        if self.field_ranges.is_empty() {
-                            continue;
-                        }
-                        return Ok(Some(self.make_row()?));
-                    }
-                    if byte == self.delimiter {
-                        self.field_ranges.push(FieldRange {
-                            start: self.pos,
-                            end: self.pos,
-                            quoted: false,
-                        });
-                        self.pos += 1;
-                        self.column += 1;
-                        continue;
-                    }
-                    if byte == b'"' {
-                        self.field_start = self.pos;
-                        self.field_start_column = self.column;
-                        self.state = State::InQuoted;
-                        self.pos += 1;
-                        self.column += 1;
-                    } else {
-                        self.field_start = self.pos;
-                        self.field_start_column = self.column;
-                        self.state = State::InUnquoted;
-                        self.pos += 1;
-                        self.column += 1;
-                    }
-                }
-
-                State::InUnquoted => {
-                    if byte == self.delimiter {
-                        self.field_ranges.push(FieldRange {
-                            start: self.field_start,
-                            end: self.pos,
-                            quoted: false,
-                        });
-                        self.state = State::StartOfField;
-                        self.pos += 1;
-                        self.column = 1;
-                    } else if byte == b'\r' || byte == b'\n' {
-                        self.field_ranges.push(FieldRange {
-                            start: self.field_start,
-                            end: self.pos,
-                            quoted: false,
-                        });
-                        self.consume_line_end();
-                        return Ok(Some(self.make_row()?));
-                    } else {
-                        self.pos += 1;
-                        self.column += 1;
-                    }
-                }
-
-                State::InQuoted => {
-                    if byte == b'"' {
-                        self.state = State::AfterQuote;
-                        self.pos += 1;
-                        self.column += 1;
-                    } else {
-                        self.pos += 1;
-                        self.column += 1;
-                    }
-                }
-
-                State::AfterQuote => {
-                    if byte == b'"' {
-                        self.state = State::InQuoted;
-                        self.pos += 1;
-                        self.column += 1;
-                    } else if byte == self.delimiter {
-                        self.field_ranges.push(FieldRange {
-                            start: self.field_start,
-                            end: self.pos,
-                            quoted: true,
-                        });
-                        self.state = State::StartOfField;
-                        self.pos += 1;
-                        self.column = 1;
-                    } else if byte == b'\r' || byte == b'\n' {
-                        self.field_ranges.push(FieldRange {
-                            start: self.field_start,
-                            end: self.pos,
-                            quoted: true,
-                        });
-                        self.consume_line_end();
-                        return Ok(Some(self.make_row()?));
-                    } else {
-                        return Err(ReadError::new(
-                            ReadErrorKind::TrailingContent,
-                            self.line,
-                            self.column_at(self.field_start),
-                        ));
-                    }
-                }
-            }
+            self.buf.truncate(remaining);
+            self.end = remaining;
+            self.start = 0;
         }
-
-        Ok(None)
-    }
-
-    fn make_row(&mut self) -> Result<Row, ReadError> {
-        let ranges = core::mem::take(&mut self.field_ranges);
-        if ranges.is_empty() {
-            return Ok(Row {
-                input: String::new(),
-                fields: Vec::new(),
-            });
-        }
-        let buf_start = ranges[0].start;
-        let buf_end = ranges.last().unwrap().end;
-        let raw = self.buf[buf_start..buf_end].to_vec();
-        let input = String::from_utf8(raw).map_err(|_| ReadError::new(ReadErrorKind::InvalidUtf8, self.line, 0))?;
-        let fields: Vec<FieldRange> = ranges
-            .iter()
-            .map(|r| FieldRange {
-                start: r.start - buf_start,
-                end: r.end - buf_start,
-                quoted: r.quoted,
-            })
-            .collect();
-        if self.pos > 0 {
-            self.buf.drain(..self.pos);
-            self.pos = 0;
-        }
-        Ok(Row {
-            input,
-            fields,
-        })
-    }
-
-    fn consume_line_end(&mut self) {
-        if self.pos < self.buf.len() && self.buf[self.pos] == b'\r' {
-            self.pos += 1;
-        }
-        if self.pos < self.buf.len() && self.buf[self.pos] == b'\n' {
-            self.pos += 1;
-        }
-        self.line += 1;
-        self.column = 1;
     }
 
     fn fill_buf(&mut self) -> Result<bool, ReadError> {
         if self.eof {
             return Ok(false);
         }
-        #[cfg(feature = "std")]
-        {
-            if let Some(source) = &mut self.source {
-                let mut tmp = [0u8; 8192];
-                let n = source.read(&mut tmp)?;
-                if n == 0 {
-                    self.eof = true;
-                    return Ok(false);
-                }
-                self.buf.extend_from_slice(&tmp[..n]);
-                return Ok(true);
-            }
+        let mut tmp = [0u8; 16384];
+        let n = self.source.read(&mut tmp)?;
+        if n == 0 {
+            self.eof = true;
+            return Ok(false);
         }
-        Ok(false)
+        self.buf.extend_from_slice(&tmp[..n]);
+        self.end = self.buf.len();
+        Ok(true)
     }
 
-    fn column_at(&self, _pos: usize) -> usize {
-        self.field_start_column
+    fn consume_newline(&mut self) {
+        if self.start < self.end && self.buf[self.start] == b'\r' {
+            self.start += 1;
+        }
+        if self.start < self.end && self.buf[self.start] == b'\n' {
+            self.start += 1;
+        } else if self.start > 0 && self.start >= self.end && self.buf[self.start - 1] == b'\r' {
+            self.pending_cr = true;
+        }
+        self.line += 1;
+    }
+
+    fn validate_utf8(&self) -> Option<ReadError> {
+        for fr in &self.ranges {
+            let ok = match fr.src {
+                Src::Buf => core::str::from_utf8(&self.buf[fr.start..fr.end]).is_ok(),
+                Src::Scratch => core::str::from_utf8(&self.scratch[fr.start..fr.end]).is_ok(),
+            };
+            if !ok {
+                return Some(ReadError::new(ReadErrorKind::InvalidUtf8, self.line, 0));
+            }
+        }
+        None
+    }
+
+    fn read_row<'s>(&'s mut self) -> Option<Row<'s>> {
+        self.compact();
+        self.ranges.clear();
+        self.scratch.clear();
+        self.state = State::StartOfField;
+
+        loop {
+            if self.start >= self.end {
+                match self.fill_buf() {
+                    Err(e) => {
+                        self.eof = true;
+                        return match self.state {
+                            State::InQuoted => Some(self.build_row_with(Some(e))),
+                            _ => {
+                                self.finalize_current_field();
+                                Some(self.build_row_with(Some(e)))
+                            }
+                        };
+                    }
+                    Ok(false) => {
+                        if self.ranges.is_empty() && self.state == State::StartOfField {
+                            return None;
+                        }
+                        return match self.state {
+                            State::InQuoted => Some(self.build_row_with(Some(ReadError::new(
+                                ReadErrorKind::UnterminatedQuote,
+                                self.line,
+                                0,
+                            )))),
+                            _ => {
+                                self.finalize_current_field();
+                                Some(self.build_row_with(None))
+                            }
+                        };
+                    }
+                    Ok(true) => {}
+                }
+            }
+
+            if self.pending_cr && self.buf[self.start] == b'\n' {
+                self.start += 1;
+                self.pending_cr = false;
+                continue;
+            }
+
+            let byte = self.buf[self.start];
+
+            match self.state {
+                State::StartOfField => {
+                    if byte == b'\r' || byte == b'\n' {
+                        if !self.ranges.is_empty() {
+                            self.ranges.push(FieldRange {
+                                start: self.start,
+                                end: self.start,
+                                src: Src::Buf,
+                            });
+                        }
+                        self.consume_newline();
+                        if self.ranges.is_empty() {
+                            continue;
+                        }
+                        return Some(self.build_row_with(None));
+                    }
+                    self.field_start = self.start;
+                    if byte == self.delimiter {
+                        self.ranges.push(FieldRange {
+                            start: self.start,
+                            end: self.start,
+                            src: Src::Buf,
+                        });
+                        self.start += 1;
+                        continue;
+                    }
+                    if byte == b'"' {
+                        self.scratch_field_start = self.scratch.len();
+                        self.start += 1;
+                        self.state = State::InQuoted;
+                    } else {
+                        self.start += 1;
+                        self.state = State::InUnquoted;
+                    }
+                }
+
+                State::InUnquoted => {
+                    let haystack = &self.buf[self.start..self.end];
+                    match memchr::memchr3(self.delimiter, b'\r', b'\n', haystack) {
+                        Some(offset) => {
+                            let pos = self.start + offset;
+                            self.ranges.push(FieldRange {
+                                start: self.field_start,
+                                end: pos,
+                                src: Src::Buf,
+                            });
+                            let b = self.buf[pos];
+                            if b == self.delimiter {
+                                self.start = pos + 1;
+                                self.state = State::StartOfField;
+                            } else {
+                                self.start = pos;
+                                self.consume_newline();
+                                return Some(self.build_row_with(None));
+                            }
+                        }
+                        None => {
+                            self.start = self.end;
+                        }
+                    }
+                }
+
+                State::InQuoted => {
+                    let haystack = &self.buf[self.start..self.end];
+                    match memchr::memchr(b'"', haystack) {
+                        Some(offset) => {
+                            let quote_pos = self.start + offset;
+                            self.scratch.extend_from_slice(&self.buf[self.start..quote_pos]);
+                            let after_quote = quote_pos + 1;
+                            if after_quote < self.end && self.buf[after_quote] == b'"' {
+                                self.scratch.push(b'"');
+                                self.start = after_quote + 1;
+                            } else if after_quote < self.end {
+                                self.ranges.push(FieldRange {
+                                    start: self.scratch_field_start,
+                                    end: self.scratch.len(),
+                                    src: Src::Scratch,
+                                });
+                                self.start = after_quote;
+                                self.state = State::AfterQuote;
+                            } else if self.fill_buf().ok().unwrap_or(false) && self.buf[after_quote] == b'"' {
+                                self.scratch.push(b'"');
+                                self.start = after_quote + 1;
+                            } else {
+                                self.ranges.push(FieldRange {
+                                    start: self.scratch_field_start,
+                                    end: self.scratch.len(),
+                                    src: Src::Scratch,
+                                });
+                                self.start = after_quote;
+                                self.state = State::AfterQuote;
+                            }
+                        }
+                        None => {
+                            self.scratch.extend_from_slice(&self.buf[self.start..self.end]);
+                            self.start = self.end;
+                        }
+                    }
+                }
+
+                State::AfterQuote => {
+                    if byte == self.delimiter {
+                        self.start += 1;
+                        self.state = State::StartOfField;
+                    } else if is_newline(byte) {
+                        self.consume_newline();
+                        return Some(self.build_row_with(None));
+                    } else {
+                        return Some(self.build_row_with(Some(ReadError::new(
+                            ReadErrorKind::TrailingContent,
+                            self.line,
+                            0,
+                        ))));
+                    }
+                }
+            }
+        }
+    }
+
+    fn finalize_current_field(&mut self) {
+        match self.state {
+            State::InUnquoted => {
+                self.ranges.push(FieldRange {
+                    start: self.field_start,
+                    end: self.start,
+                    src: Src::Buf,
+                });
+            }
+            State::AfterQuote => {}
+            State::StartOfField => {
+                if !self.ranges.is_empty() {
+                    self.ranges.push(FieldRange {
+                        start: self.start,
+                        end: self.start,
+                        src: Src::Buf,
+                    });
+                }
+            }
+            State::InQuoted => unreachable!(),
+        }
+    }
+
+    fn build_row_with(&self, error: Option<ReadError>) -> Row<'_> {
+        let error = error.or_else(|| self.validate_utf8());
+        Row {
+            buf: &self.buf[..self.end],
+            scratch: &self.scratch,
+            ranges: &self.ranges,
+            error,
+            #[cfg(feature = "serde")]
+            header_map: self.header_map.as_ref(),
+        }
     }
 }
 
 #[cfg(feature = "std")]
-impl Reader {
-    /// Create a reader from any `std::io::Read` source. Data is streamed
-    /// in chunks as rows are read, without loading the entire input.
+impl<'a> Reader<&'a [u8]> {
+    /// Create a reader from a byte slice for in-memory parsing.
     ///
-    /// # Example
+    /// This is a convenience wrapper around `from_reader`.
     ///
-    /// ```no_run
-    /// # use std::fs::File;
-    /// # use csv::Reader;
-    /// let file = File::open("data.csv").unwrap();
-    /// for row in Reader::from_reader(file).rows() {
-    ///     let row = row?;
-    ///     // ...
-    /// }
-    /// # Ok::<_, csv::ReadError>(())
+    /// ```rust
+    /// use csv::Reader;
+    /// let mut reader = Reader::from_bytes(b"a,b\n1,2\n");
+    /// let fields: Vec<Vec<String>> = reader.rows().map(|r| r.all().unwrap()).collect();
+    /// assert_eq!(fields, vec![vec!["a".to_string(), "b".to_string()], vec!["1".to_string(), "2".to_string()]]);
     /// ```
-    pub fn from_reader(reader: impl std::io::Read + 'static) -> Self {
-        Reader {
-            buf: Vec::new(),
-            pos: 0,
-            field_ranges: Vec::new(),
-            field_start: 0,
-            field_start_column: 1,
-            state: State::StartOfField,
-            line: 1,
-            column: 1,
-            delimiter: b',',
-            flexible: false,
-            eof: false,
-            source: Some(Box::new(reader)),
-        }
+    pub fn from_bytes(bytes: &'a [u8]) -> Self {
+        Reader::from_reader(bytes)
     }
 }
 
 /// A single row of CSV data.
 ///
-/// A `Row` owns its data, so it can outlive the reader used to create it.
-/// Fields are validated as UTF-8 at parse time, so all access methods
-/// return `&str`.
+/// Borrows from the `Reader` that produced it and cannot outlive it.
+/// Fields are already unescaped: surrounding quotes are stripped and
+/// `""` escape sequences are resolved to `"`.
 ///
-/// Raw fields (including surrounding quotes) are accessed via [`get_raw`].
-/// Unescaped fields (quotes stripped, `""` resolved) are accessed via
-/// [`fields`].
+/// Errors from parsing are stored in the [`Row`] and returned when
+/// accessing fields via [`fields`] or [`all`].
 ///
-/// [`get_raw`]: Row::get_raw
 /// [`fields`]: Row::fields
-#[derive(Clone, Debug)]
-pub struct Row {
-    input: String,
-    fields: Vec<FieldRange>,
+/// [`all`]: Row::all
+pub struct Row<'a> {
+    buf: &'a [u8],
+    scratch: &'a [u8],
+    ranges: &'a [FieldRange],
+    error: Option<ReadError>,
+    #[cfg(feature = "serde")]
+    pub(crate) header_map: Option<&'a BTreeMap<String, usize>>,
 }
 
-impl Row {
-    /// Number of fields in this row.
+impl Row<'_> {
+    /// Return the parse error, if any.
+    pub fn error(&self) -> Option<&ReadError> {
+        self.error.as_ref()
+    }
+
+    /// Number of fields in this row (0 on error).
     pub fn len(&self) -> usize {
-        self.fields.len()
+        self.ranges.len()
     }
 
     /// Returns `true` if the row has no fields.
     pub fn is_empty(&self) -> bool {
-        self.fields.is_empty()
+        self.ranges.is_empty()
     }
 
-    /// Return the raw field at `index`, or `None` if out of bounds.
-    /// Includes surrounding quotes for quoted fields.
-    pub fn get_raw(&self, index: usize) -> Option<&str> {
-        let range = self.fields.get(index)?;
-        Some(&self.input[range.start..range.end])
-    }
-
-    /// Iterate over unescaped fields, yielding `Cow<str>`.
+    /// Iterate over all fields as `&str`, zero allocation.
     ///
-    /// For quoted fields, surrounding quotes are stripped and `""`
-    /// escape sequences are resolved to a single `"`. Returns
-    /// `Cow::Borrowed` when no escaping is needed.
-    pub fn fields(&self) -> Fields<'_> {
-        Fields {
-            input: &self.input,
-            ranges: self.fields.iter(),
+    /// Returns an error if this row was the result of a parse failure.
+    ///
+    /// ```no_run
+    /// use csv::Reader;
+    /// let mut reader = Reader::from_reader(std::io::Cursor::new(b"\"hello\",world\n"));
+    /// for row in reader.rows() {
+    ///     for field in row.fields()? {
+    ///     }
+    /// }
+    /// # Ok::<_, csv::ReadError>(())
+    /// ```
+    pub fn fields(&self) -> Result<Fields<'_>, ReadError> {
+        if let Some(e) = &self.error {
+            return Err(e.clone());
+        }
+        Ok(Fields {
+            buf: self.buf,
+            scratch: self.scratch,
+            iter: self.ranges.iter(),
+        })
+    }
+
+    /// Collect all fields into owned `String`s.
+    ///
+    /// Returns an error if this row was the result of a parse failure.
+    pub fn all(&self) -> Result<Vec<String>, ReadError> {
+        Ok(self.fields()?.map(|f| f.to_string()).collect())
+    }
+}
+
+impl<'a> fmt::Debug for Row<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.error {
+            Some(e) => write!(f, "Row(Err({e}))"),
+            None => f
+                .debug_list()
+                .entries(self.ranges.iter().map(|r| {
+                    let slice = match r.src {
+                        Src::Buf => &self.buf[r.start..r.end],
+                        Src::Scratch => &self.scratch[r.start..r.end],
+                    };
+                    // SAFETY: `build_row_with` validates every field range as
+                    // valid UTF-8 before constructing the `Row`.
+                    unsafe { str::from_utf8_unchecked(slice) }
+                }))
+                .finish(),
         }
     }
 }
 
-impl Index<usize> for Row {
-    type Output = str;
-
-    fn index(&self, index: usize) -> &str {
-        self.get_raw(index).expect("Row index out of bounds")
-    }
-}
-
-/// An owning iterator over raw field strings in a [`Row`].
+/// A zero-allocation iterator over the fields of a [`Row`].
 ///
-/// Created by iterating over a `Row` by value.
-pub struct RowIntoIter {
-    input: String,
-    ranges: alloc::vec::IntoIter<FieldRange>,
-}
-
-impl Iterator for RowIntoIter {
-    type Item = String;
-
-    fn next(&mut self) -> Option<String> {
-        let range = self.ranges.next()?;
-        Some(self.input[range.start..range.end].to_string())
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.ranges.size_hint()
-    }
-}
-
-impl ExactSizeIterator for RowIntoIter {
-    fn len(&self) -> usize {
-        self.ranges.len()
-    }
-}
-
-impl IntoIterator for Row {
-    type Item = String;
-    type IntoIter = RowIntoIter;
-
-    fn into_iter(self) -> RowIntoIter {
-        RowIntoIter {
-            input: self.input,
-            ranges: self.fields.into_iter(),
-        }
-    }
-}
-
-/// Iterator over unescaped fields in a [`Row`], yielding `Cow<str>`.
-///
-/// Created by [`Row::fields`]. Returns `Cow::Borrowed` when the field
-/// requires no escaping (the common case), and `Cow::Owned` only when
-/// `""` escape sequences in quoted fields need to be resolved.
+/// Yields `&str` for each field. Created by [`Row::fields`].
 pub struct Fields<'a> {
-    input: &'a str,
-    ranges: core::slice::Iter<'a, FieldRange>,
+    buf: &'a [u8],
+    scratch: &'a [u8],
+    iter: core::slice::Iter<'a, FieldRange>,
 }
 
 impl<'a> Iterator for Fields<'a> {
-    type Item = Cow<'a, str>;
+    type Item = &'a str;
 
-    fn next(&mut self) -> Option<Cow<'a, str>> {
-        let range = self.ranges.next()?;
-        let raw = &self.input[range.start..range.end];
-
-        if range.quoted {
-            if raw.len() < 2 {
-                return Some(Cow::Borrowed(""));
-            }
-            let content = &raw[1..raw.len() - 1];
-            if content.contains("\"\"") {
-                Some(Cow::Owned(content.replace("\"\"", "\"")))
-            } else {
-                Some(Cow::Borrowed(content))
-            }
-        } else {
-            Some(Cow::Borrowed(raw))
-        }
+    fn next(&mut self) -> Option<&'a str> {
+        let r = self.iter.next()?;
+        let slice = match r.src {
+            Src::Buf => &self.buf[r.start..r.end],
+            Src::Scratch => &self.scratch[r.start..r.end],
+        };
+        // SAFETY: `build_row_with` validates every field range as valid UTF-8
+        // before constructing the `Row`, so the byte slice is guaranteed to be
+        // valid UTF-8 at this point.
+        Some(unsafe { str::from_utf8_unchecked(slice) })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.ranges.size_hint()
+        self.iter.size_hint()
     }
 }
 
-impl<'a> ExactSizeIterator for Fields<'a> {
-    fn len(&self) -> usize {
-        self.ranges.len()
-    }
-}
+impl<'a> ExactSizeIterator for Fields<'a> {}
 
-/// An iterator over the rows of a CSV reader.
+/// An iterator over the rows of a CSV source.
 ///
-/// Created by [`Reader::rows`]. Each item is a [`Result<Row, ReadError>`]
-/// so errors from malformed CSV data are surfaced per row.
-///
-/// # Example
+/// Created by [`Reader::rows`]. Each item is a [`Row<'_>`](Row) with
+/// errors deferred to its methods.
 ///
 /// ```no_run
-/// # use csv::Reader;
-/// let data = b"a,b,c\n1,2,3\n";
-/// for result in Reader::new(data).rows() {
-///     match result {
-///         Ok(row) => println!("got {} fields", row.len()),
-///         Err(e) => eprintln!("error at line {}: {e}", e.line),
-///     }
+/// use csv::Reader;
+/// let mut reader = Reader::from_reader(std::io::Cursor::new(b"a,b\n1,2\n"));
+/// for row in reader.rows() {
+///     let fields = row.all()?;
 /// }
+/// # Ok::<_, csv::ReadError>(())
 /// ```
-pub struct Rows {
-    reader: Reader,
+pub struct Rows<'r, R> {
+    reader: *mut Reader<R>,
+    _marker: PhantomData<&'r mut Reader<R>>,
 }
 
-impl Iterator for Rows {
-    type Item = Result<Row, ReadError>;
+#[cfg(feature = "std")]
+impl<'r, R: std::io::Read> Iterator for Rows<'r, R> {
+    type Item = Row<'r>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.reader.read_row() {
-            Ok(Some(row)) => Some(Ok(row)),
-            Ok(None) => None,
-            Err(e) => Some(Err(e)),
-        }
+        // SAFETY: `Rows` holds a `PhantomData<&'r mut Reader<R>>` that
+        // semantically borrows the reader for `'r`. The raw pointer is
+        // derived from that borrow and remains valid for `'r` since the
+        // `Rows` iterator owns the mutable access.
+        let reader = unsafe { &mut *self.reader };
+        reader
+            .read_row()
+            // SAFETY: The returned `Row<'_>` borrows from `reader`, which is
+            // borrowed as `&'r mut Reader<R>`. The borrow checker prevents
+            // holding a `Row` across the next call to `next()`, so
+            // transmuting to `Row<'r>` is sound.
+            .map(|row| unsafe { core::mem::transmute::<Row<'_>, Row<'r>>(row) })
     }
 }

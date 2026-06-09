@@ -4,23 +4,24 @@ use crate::error::WriteError;
 
 /// Writes CSV data to a `std::io::Write` sink.
 ///
-/// The writer handles auto-quoting of fields that contain the delimiter,
-/// newlines, or double-quotes. It also validates that all rows have the
-/// same number of fields (unless flexible mode is enabled).
+/// Fields containing the delimiter, a newline, or a double-quote are
+/// automatically quoted. `""` escape sequences are used for quotes
+/// within quoted fields.
 ///
-/// Internal buffering is used to avoid many small writes to the
-/// underlying writer. Callers should not wrap the writer in a
-/// `BufWriter`.
+/// Internal buffering is used to avoid many small writes. Callers should
+/// not wrap the writer in a `BufWriter`.
 ///
 /// # Example
 ///
 /// ```no_run
-/// # use csv::Writer;
+/// use csv::Writer;
+///
 /// let mut w = Writer::new(Vec::new());
-/// w.write_row(["name", "age", "city"]).unwrap();
-/// w.write_row(["Alice", "30", "New York, NY"]).unwrap();
-/// let result = String::from_utf8(w.into_inner().unwrap()).unwrap();
+/// w.write_row(["name", "age", "city"])?;
+/// w.write_row(["Alice", "30", "New York, NY"])?;
+/// let result = String::from_utf8(w.into_inner()?).unwrap();
 /// assert_eq!(result, "name,age,city\r\nAlice,30,\"New York, NY\"\r\n");
+/// # Ok::<_, csv::WriteError>(())
 /// ```
 pub struct Writer<W: Write> {
     writer: Option<W>,
@@ -34,6 +35,9 @@ pub struct Writer<W: Write> {
 
 impl<W: Write> Writer<W> {
     /// Create a new writer wrapping the given output sink.
+    ///
+    /// The writer starts with default comma delimiter and strict
+    /// field-count validation (all rows must have the same number of fields).
     pub fn new(writer: W) -> Self {
         Writer {
             writer: Some(writer),
@@ -47,23 +51,33 @@ impl<W: Write> Writer<W> {
     }
 
     /// Set the field delimiter byte (default is `,`).
+    ///
+    /// ```no_run
+    /// use csv::Writer;
+    /// let mut w = Writer::new(Vec::new());
+    /// w.delimiter(b'\t');
+    /// w.write_row(["a", "b", "c"])?;
+    /// # Ok::<_, csv::WriteError>(())
+    /// ```
     pub fn delimiter(&mut self, byte: u8) -> &mut Self {
         self.delimiter = byte;
         self
     }
 
-    /// Enable flexible mode, which skips the field count consistency check.
+    /// Enable or disable the field count consistency check.
+    ///
+    /// When `false` (default), all rows must have the same number of fields.
+    /// When `true`, rows are allowed to vary in width.
     pub fn flexible(&mut self, yes: bool) -> &mut Self {
         self.flexible = yes;
         self
     }
 
-    /// Write a single row. Each element in the iterator is written as a
-    /// CSV field. Fields are auto-quoted if they contain the delimiter,
-    /// a newline (`\n` or `\r`), or a double-quote (`"`).
+    /// Write a single row.
     ///
-    /// Whitespace trimming is never performed. The empty byte slice `&[]`
-    /// produces an empty field.
+    /// Each element in the iterator is written as a CSV field. Fields are
+    /// auto-quoted if they contain the delimiter, a newline (`\n` or `\r`),
+    /// or a double-quote (`"`).
     ///
     /// # Errors
     ///
@@ -88,7 +102,6 @@ impl<W: Write> Writer<W> {
         self.buf.extend_from_slice(b"\r\n");
         self.row_count += 1;
 
-        // Validate field count
         match self.num_fields {
             Some(expected) if !self.flexible && field_count != expected => {
                 return Err(WriteError::InconsistentFieldCount {
@@ -103,7 +116,6 @@ impl<W: Write> Writer<W> {
             _ => {}
         }
 
-        // Flush buffer if it's large enough
         if self.buf.len() >= 8192 {
             self.flush()?;
         }

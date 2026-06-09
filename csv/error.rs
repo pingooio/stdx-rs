@@ -1,52 +1,70 @@
 use core::fmt;
 
-/// Kinds of errors that can occur when reading CSV data.
-#[derive(Debug)]
+extern crate alloc;
+#[cfg(feature = "std")]
+use alloc::boxed::Box;
+use alloc::string::String;
+
+/// Kinds of errors that can occur while reading CSV data.
+#[derive(Clone, Debug, PartialEq)]
 pub enum ReadErrorKind {
     /// A quoted field was opened but never closed before end of input.
     UnterminatedQuote,
-    /// Non-delimiter, non-newline content appeared after a closing quote.
+    /// Characters appeared after a closing quote before a delimiter or newline.
     TrailingContent,
-    /// An I/O error from the underlying read source.
-    #[cfg(feature = "std")]
-    Io(std::io::Error),
-    /// The CSV data contains invalid UTF-8.
+    /// A field contained invalid UTF-8 bytes.
     InvalidUtf8,
+    /// A serde deserialization error occurred. Carries the error message.
+    #[cfg(feature = "serde")]
+    Deserialize(String),
+    /// An I/O error occurred while reading the underlying source.
+    Io,
 }
 
-impl fmt::Display for ReadErrorKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ReadErrorKind::UnterminatedQuote => f.write_str("unterminated quote"),
-            ReadErrorKind::TrailingContent => f.write_str("trailing content after closing quote"),
-            ReadErrorKind::InvalidUtf8 => f.write_str("invalid UTF-8 in CSV data"),
-            #[cfg(feature = "std")]
-            ReadErrorKind::Io(e) => write!(f, "I/O error: {e}"),
-        }
-    }
-}
-
-/// Errors that can occur when reading CSV data.
+/// An error returned when parsing a CSV row.
+///
+/// Includes the line number, the kind of error, and when applicable an
+/// inner source error (e.g. the original `std::io::Error`).
+#[derive(Debug)]
 pub struct ReadError {
-    kind: ReadErrorKind,
-    /// 1-indexed line number
+    pub kind: ReadErrorKind,
     pub line: usize,
-    /// 1-indexed byte offset within the line
     pub column: usize,
+    #[cfg(feature = "std")]
+    source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
 }
 
 impl ReadError {
-    pub(crate) fn new(kind: ReadErrorKind, line: usize, column: usize) -> Self {
+    pub fn new(kind: ReadErrorKind, line: usize, column: usize) -> Self {
         ReadError {
             kind,
             line,
             column,
+            #[cfg(feature = "std")]
+            source: None,
         }
     }
 
-    /// Returns a reference to the [`ReadErrorKind`] of this error.
     pub fn kind(&self) -> &ReadErrorKind {
         &self.kind
+    }
+
+    /// The inner source error, if any (e.g. the original `std::io::Error` or serde error).
+    #[cfg(feature = "std")]
+    pub fn into_source(self) -> Option<Box<dyn std::error::Error + Send + Sync + 'static>> {
+        self.source
+    }
+}
+
+impl Clone for ReadError {
+    fn clone(&self) -> Self {
+        ReadError {
+            kind: self.kind.clone(),
+            line: self.line,
+            column: self.column,
+            #[cfg(feature = "std")]
+            source: None,
+        }
     }
 }
 
@@ -59,55 +77,54 @@ impl fmt::Display for ReadError {
             ReadErrorKind::TrailingContent => {
                 write!(
                     f,
-                    "trailing content after closing quote at line {}, column {}",
+                    "trailing content after quoted field at line {}, column {}",
                     self.line, self.column
                 )
             }
             ReadErrorKind::InvalidUtf8 => {
-                write!(f, "invalid UTF-8 at line {}", self.line)
+                write!(f, "invalid UTF-8 at line {}, column {}", self.line, self.column)
             }
-            #[cfg(feature = "std")]
-            ReadErrorKind::Io(e) => write!(f, "I/O error at line {}, column {}: {}", self.line, self.column, e),
+            #[cfg(feature = "serde")]
+            ReadErrorKind::Deserialize(msg) => {
+                write!(f, "deserialization error at line {}, column {}: {msg}", self.line, self.column)
+            }
+            ReadErrorKind::Io => {
+                write!(f, "I/O error at line {}, column {}", self.line, self.column)
+            }
         }
-    }
-}
-
-impl fmt::Debug for ReadError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ReadError({})", self)
     }
 }
 
 #[cfg(feature = "std")]
 impl std::error::Error for ReadError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match &self.kind {
-            ReadErrorKind::Io(e) => Some(e),
-            _ => None,
-        }
+        self.source
+            .as_ref()
+            .map(|b| b.as_ref() as &(dyn std::error::Error + 'static))
     }
 }
+
+#[cfg(all(not(feature = "std"), feature = "serde"))]
+impl core::error::Error for ReadError {}
 
 #[cfg(feature = "std")]
 impl From<std::io::Error> for ReadError {
     fn from(e: std::io::Error) -> Self {
-        ReadError::new(ReadErrorKind::Io(e), 0, 0)
+        ReadError {
+            kind: ReadErrorKind::Io,
+            line: 0,
+            column: 0,
+            source: Some(Box::new(e)),
+        }
     }
 }
 
-/// Errors that can occur when writing CSV data.
+/// An error returned when writing CSV data.
 #[derive(Debug)]
 pub enum WriteError {
-    /// The records have inconsistent field counts.
-    InconsistentFieldCount {
-        /// Number of fields expected.
-        expected: usize,
-        /// Number of fields found in the offending record.
-        found: usize,
-        /// The 1-indexed record number where the mismatch occurred.
-        row: usize,
-    },
-    /// An I/O error from the underlying writer.
+    /// The number of fields in a row differs from previous rows.
+    InconsistentFieldCount { expected: usize, found: usize, row: usize },
+    /// An I/O error occurred while writing.
     #[cfg(feature = "std")]
     Io(std::io::Error),
 }
@@ -120,7 +137,7 @@ impl fmt::Display for WriteError {
                 found,
                 row,
             } => {
-                write!(f, "expected {expected} fields, found {found} fields at row {row}")
+                write!(f, "expected {expected} fields, found {found} in row {row}")
             }
             #[cfg(feature = "std")]
             WriteError::Io(e) => write!(f, "I/O error: {e}"),

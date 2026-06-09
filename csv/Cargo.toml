@@ -9,6 +9,9 @@ path = "./csv.rs"
 
 [features]
 default = ["std"]
-std = []
+std = ["serde?/std"]
+serde = ["dep:serde"]
 
 [dependencies]
+memchr = { workspace = true }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }

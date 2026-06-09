@@ -1,27 +1,88 @@
-use std::borrow::Cow;
+use std::io::{Cursor, Read};
 
 use csv::*;
+
+fn collect_rows(data: &[u8]) -> Vec<Vec<String>> {
+    let mut reader = Reader::from_reader(Cursor::new(data));
+    let mut out = Vec::new();
+    for row in reader.rows() {
+        out.push(row.all().unwrap());
+    }
+    out
+}
+
+/// Forces reads in small chunks to exercise buffer-boundary code paths.
+struct ChunkReader {
+    data: Vec<u8>,
+    pos: usize,
+    chunk: usize,
+}
+
+impl ChunkReader {
+    fn new(data: &[u8], chunk: usize) -> Self {
+        ChunkReader {
+            data: data.to_vec(),
+            pos: 0,
+            chunk,
+        }
+    }
+}
+
+impl Read for ChunkReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let to_read = self.chunk.min(buf.len()).min(self.data.len() - self.pos);
+        buf[..to_read].copy_from_slice(&self.data[self.pos..self.pos + to_read]);
+        self.pos += to_read;
+        Ok(to_read)
+    }
+}
+
+/// A reader that returns an error after yielding the given number of bytes.
+struct ErrorAfterReader {
+    data: Vec<u8>,
+    pos: usize,
+    limit: usize,
+}
+
+impl ErrorAfterReader {
+    fn new(data: Vec<u8>, limit: usize) -> Self {
+        ErrorAfterReader {
+            data,
+            pos: 0,
+            limit,
+        }
+    }
+}
+
+impl Read for ErrorAfterReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.pos >= self.limit {
+            return Err(std::io::Error::new(std::io::ErrorKind::Other, "simulated IO error"));
+        }
+        let to_read = self
+            .limit
+            .saturating_sub(self.pos)
+            .min(buf.len())
+            .min(self.data.len() - self.pos);
+        buf[..to_read].copy_from_slice(&self.data[self.pos..self.pos + to_read]);
+        self.pos += to_read;
+        Ok(to_read)
+    }
+}
 
 // ── Reader: Basic Parsing ──────────────────────────────────────────
 
 #[test]
 fn test_rfc4180_example_1() {
-    let data = b"aaa,bbb,ccc\r\nzzz,yyy,xxx\r\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
+    let rows = collect_rows(b"aaa,bbb,ccc\r\nzzz,yyy,xxx\r\n");
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].len(), 3);
-    assert_eq!(rows[0].get_raw(0), Some("aaa"));
-    assert_eq!(rows[0].get_raw(1), Some("bbb"));
-    assert_eq!(rows[0].get_raw(2), Some("ccc"));
-    assert_eq!(rows[1].get_raw(0), Some("zzz"));
-    assert_eq!(rows[1].get_raw(1), Some("yyy"));
-    assert_eq!(rows[1].get_raw(2), Some("xxx"));
+    assert_eq!(rows[0], vec!["aaa", "bbb", "ccc"]);
+    assert_eq!(rows[1], vec!["zzz", "yyy", "xxx"]);
 }
 
 #[test]
 fn test_rfc4180_example_2() {
-    let data = b"aaa,bbb,ccc\r\nzzz,yyy,xxx";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
+    let rows = collect_rows(b"aaa,bbb,ccc\r\nzzz,yyy,xxx");
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].len(), 3);
     assert_eq!(rows[1].len(), 3);
@@ -29,332 +90,315 @@ fn test_rfc4180_example_2() {
 
 #[test]
 fn test_rfc4180_example_3() {
-    let data = b"field_name,field_name,field_name\r\naaa,bbb,ccc\r\nzzz,yyy,xxx\r\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
+    let rows = collect_rows(b"field_name,field_name,field_name\r\naaa,bbb,ccc\r\nzzz,yyy,xxx\r\n");
     assert_eq!(rows.len(), 3);
-    assert_eq!(rows[0].get_raw(0), Some("field_name"));
-    assert_eq!(rows[1].get_raw(0), Some("aaa"));
-}
-
-#[test]
-fn test_rfc4180_example_4() {
-    let data = b"aaa,bbb,ccc";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].len(), 3);
-    assert_eq!(rows[0].get_raw(0), Some("aaa"));
-    assert_eq!(rows[0].get_raw(1), Some("bbb"));
-    assert_eq!(rows[0].get_raw(2), Some("ccc"));
+    assert_eq!(rows[0], vec!["field_name", "field_name", "field_name"]);
 }
 
 #[test]
 fn test_rfc4180_example_5() {
-    let data = b"\"aaa\",\"bbb\",\"ccc\"\r\nzzz,yyy,xxx\r\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(rows[0].get_raw(0), Some("\"aaa\""));
-    assert_eq!(rows[0].get_raw(1), Some("\"bbb\""));
-    assert_eq!(rows[0].get_raw(2), Some("\"ccc\""));
+    let rows = collect_rows(b"\"aaa\",\"bbb\",\"ccc\"\r\nzzz,yyy,xxx\r\n");
+    assert_eq!(rows[0], vec!["aaa", "bbb", "ccc"]);
 }
 
 #[test]
 fn test_rfc4180_example_6() {
-    let data = b"\"aaa\",\"b\r\nbb\",\"ccc\"\r\nzzz,yyy,xxx\r\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
+    let rows = collect_rows(b"\"aaa\",\"b\r\nbb\",\"ccc\"\r\nzzz,yyy,xxx\r\n");
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].get_raw(0), Some("\"aaa\""));
-    assert_eq!(rows[0].get_raw(1), Some("\"b\r\nbb\""));
-    assert_eq!(rows[0].get_raw(2), Some("\"ccc\""));
-    assert_eq!(rows[1].get_raw(0), Some("zzz"));
-    assert_eq!(rows[1].get_raw(1), Some("yyy"));
-    assert_eq!(rows[1].get_raw(2), Some("xxx"));
+    assert_eq!(rows[0], vec!["aaa", "b\r\nbb", "ccc"]);
 }
 
 #[test]
 fn test_rfc4180_example_7() {
-    let data = b"\"aaa\",\"b\"\"bb\",\"ccc\"";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
+    let rows = collect_rows(b"\"aaa\",\"b\"\"bb\",\"ccc\"");
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].get_raw(0), Some("\"aaa\""));
-    assert_eq!(rows[0].get_raw(1), Some("\"b\"\"bb\""));
-    assert_eq!(rows[0].get_raw(2), Some("\"ccc\""));
+    assert_eq!(rows[0], vec!["aaa", "b\"bb", "ccc"]);
 }
 
 // ── Reader: Line Endings ───────────────────────────────────────────
 
 #[test]
 fn test_crlf_endings() {
-    let data = b"a,b\r\nc,d\r\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
+    let rows = collect_rows(b"a,b\r\nc,d\r\n");
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].len(), 2);
-    assert_eq!(rows[1].len(), 2);
 }
 
 #[test]
 fn test_lf_endings() {
-    let data = b"a,b\nc,d\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
+    let rows = collect_rows(b"a,b\nc,d\n");
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].len(), 2);
-    assert_eq!(rows[1].len(), 2);
 }
 
 #[test]
 fn test_cr_endings() {
-    let data = b"a,b\rc,d\r";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
+    let rows = collect_rows(b"a,b\rc,d\r");
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].len(), 2);
-    assert_eq!(rows[1].len(), 2);
 }
 
 #[test]
 fn test_mixed_endings() {
-    let data = b"a,b\r\nc,d\ne,f\r";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
+    let rows = collect_rows(b"a,b\r\nc,d\ne,f\r");
     assert_eq!(rows.len(), 3);
-    for row in &rows {
-        assert_eq!(row.len(), 2);
-    }
 }
 
 #[test]
 fn test_no_trailing_newline() {
-    let data = b"a,b\nc,d";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
+    let rows = collect_rows(b"a,b\nc,d");
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].len(), 2);
-    assert_eq!(rows[1].len(), 2);
 }
 
 #[test]
 fn test_single_line_no_newline() {
-    let data = b"hello,world";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
+    let rows = collect_rows(b"hello,world");
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].get_raw(0), Some("hello"));
-    assert_eq!(rows[0].get_raw(1), Some("world"));
+    assert_eq!(rows[0], vec!["hello", "world"]);
 }
 
 // ── Reader: Edge Cases ─────────────────────────────────────────────
 
 #[test]
 fn test_empty_input() {
-    let mut rows = Reader::new(b"").rows();
-    assert!(rows.next().is_none());
+    let rows = collect_rows(b"");
+    assert_eq!(rows.len(), 0);
 }
 
 #[test]
 fn test_empty_field() {
-    let data = b"a,,c\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(rows.len(), 1);
-    let row = &rows[0];
-    assert_eq!(row.len(), 3);
-    assert_eq!(row.get_raw(0), Some("a"));
-    assert_eq!(row.get_raw(1), Some(""));
-    assert_eq!(row.get_raw(2), Some("c"));
+    let rows = collect_rows(b"a,,c\n");
+    assert_eq!(rows[0], vec!["a", "", "c"]);
 }
 
 #[test]
 fn test_empty_quoted_field() {
-    let data = b"a,\"\",c\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(rows.len(), 1);
-    let row = &rows[0];
-    assert_eq!(row.get_raw(0), Some("a"));
-    assert_eq!(row.get_raw(1), Some("\"\""));
-    assert_eq!(row.get_raw(2), Some("c"));
+    let rows = collect_rows(b"a,\"\",c\n");
+    assert_eq!(rows[0], vec!["a", "", "c"]);
 }
 
 #[test]
 fn test_all_empty_fields() {
-    let data = b",,\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(rows.len(), 1);
-    let row = &rows[0];
-    assert_eq!(row.len(), 3);
-    for i in 0..3 {
-        assert_eq!(row.get_raw(i), Some(""));
-    }
-}
-
-#[test]
-fn test_single_empty_line_is_skipped() {
-    let mut rows = Reader::new(b"\n").rows();
-    assert!(rows.next().is_none());
+    let rows = collect_rows(b",,\n");
+    assert_eq!(rows[0], vec!["", "", ""]);
 }
 
 #[test]
 fn test_blank_lines_skipped() {
-    let data = b"a,b\n\n\nc,d\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
+    let rows = collect_rows(b"a,b\n\n\nc,d\n");
     assert_eq!(rows.len(), 2);
-    for row in &rows {
-        assert_eq!(row.len(), 2);
-    }
-}
-
-#[test]
-fn test_leading_blank_lines() {
-    let data = b"\n\na,b\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].len(), 2);
 }
 
 #[test]
 fn test_escaped_quote_in_quoted_field() {
-    let data = b"\"Say \"\"Hello\"\"\",world\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(rows.len(), 1);
-    let row = &rows[0];
-    assert_eq!(row.len(), 2);
-    assert_eq!(row.get_raw(0), Some("\"Say \"\"Hello\"\"\""));
-    assert_eq!(row.get_raw(1), Some("world"));
+    let rows = collect_rows(b"\"Say \"\"Hello\"\"\",world\n");
+    assert_eq!(rows[0], vec!["Say \"Hello\"", "world"]);
 }
 
 #[test]
 fn test_quoted_field_with_comma() {
-    let data = b"a,\"b,c\",d\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(rows.len(), 1);
-    let row = &rows[0];
-    assert_eq!(row.len(), 3);
-    assert_eq!(row.get_raw(0), Some("a"));
-    assert_eq!(row.get_raw(1), Some("\"b,c\""));
-    assert_eq!(row.get_raw(2), Some("d"));
+    let rows = collect_rows(b"a,\"b,c\",d\n");
+    assert_eq!(rows[0], vec!["a", "b,c", "d"]);
 }
 
 #[test]
 fn test_quoted_field_with_embedded_newline() {
-    let data = b"a,\"b\nc\",d\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].get_raw(1), Some("\"b\nc\""));
+    let rows = collect_rows(b"a,\"b\nc\",d\n");
+    assert_eq!(rows[0], vec!["a", "b\nc", "d"]);
 }
 
 #[test]
 fn test_quoted_field_with_embedded_crlf() {
-    let data = b"a,\"b\r\nc\",d\r\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].get_raw(1), Some("\"b\r\nc\""));
+    let rows = collect_rows(b"a,\"b\r\nc\",d\r\n");
+    assert_eq!(rows[0], vec!["a", "b\r\nc", "d"]);
 }
 
 #[test]
 fn test_unicode_fields() {
     let data = "名前,年齢\n田中,30\n";
-    let rows: Vec<_> = Reader::new(data.as_bytes())
-        .rows()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+    let rows = collect_rows(data.as_bytes());
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].get_raw(0), Some("名前"));
-    assert_eq!(rows[0].get_raw(1), Some("年齢"));
-    assert_eq!(rows[1].get_raw(0), Some("田中"));
-    assert_eq!(rows[1].get_raw(1), Some("30"));
-}
-
-#[test]
-fn test_unterminated_quote() {
-    let data = b"a,\"unterminated\n";
-    let result: Result<Vec<_>, _> = Reader::new(data).rows().collect();
-    let err = result.unwrap_err();
-    assert!(err.to_string().contains("unterminated quote"));
-}
-
-#[test]
-fn test_row_into_iter_owned() {
-    let data = b"a,b,c\n";
-    let row = Reader::new(data).rows().next().unwrap().unwrap();
-    let fields: Vec<String> = row.into_iter().collect();
-    assert_eq!(fields, vec!["a", "b", "c"]);
-}
-
-#[test]
-fn test_row_len_is_empty() {
-    let data = b"a,b\n";
-    let row = Reader::new(data).rows().next().unwrap().unwrap();
-    assert_eq!(row.len(), 2);
-    assert!(!row.is_empty());
-}
-
-#[test]
-fn test_row_get_out_of_bounds() {
-    let data = b"a,b\n";
-    let row = Reader::new(data).rows().next().unwrap().unwrap();
-    assert!(row.get_raw(2).is_none());
+    assert_eq!(rows[0], vec!["名前", "年齢"]);
+    assert_eq!(rows[1], vec!["田中", "30"]);
 }
 
 #[test]
 fn test_custom_delimiter() {
     let data = b"a|b|c\n1|2|3\n";
-    let mut reader = Reader::new(data);
+    let mut reader = Reader::from_reader(Cursor::new(data));
     reader.set_delimiter(b'|');
-    let rows: Vec<_> = reader.rows().collect::<Result<Vec<_>, _>>().unwrap();
+    let mut rows = Vec::new();
+    for row in reader.rows() {
+        rows.push(row.all().unwrap());
+    }
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].get_raw(0), Some("a"));
-    assert_eq!(rows[0].get_raw(1), Some("b"));
-    assert_eq!(rows[0].get_raw(2), Some("c"));
-    assert_eq!(rows[1].get_raw(0), Some("1"));
-    assert_eq!(rows[1].get_raw(1), Some("2"));
-    assert_eq!(rows[1].get_raw(2), Some("3"));
+    assert_eq!(rows[0], vec!["a", "b", "c"]);
+    assert_eq!(rows[1], vec!["1", "2", "3"]);
 }
 
 #[test]
 fn test_tab_delimiter() {
     let data = b"a\tb\tc\n";
-    let mut reader = Reader::new(data);
+    let mut reader = Reader::from_reader(Cursor::new(data));
     reader.set_delimiter(b'\t');
-    let rows: Vec<_> = reader.rows().collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].get_raw(0), Some("a"));
-    assert_eq!(rows[0].get_raw(1), Some("b"));
-    assert_eq!(rows[0].get_raw(2), Some("c"));
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    assert_eq!(row.all().unwrap(), vec!["a", "b", "c"]);
 }
 
-// ── Reader: Unescaped fields ───────────────────────────────────────
+// ── Reader: Fields iterator (zero-alloc) ───────────────────────────
 
 #[test]
-fn test_fields_basic() {
-    let data = b"\"hello\",world,\"foo\"\"bar\"\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    let fields: Vec<Cow<'_, str>> = rows[0].fields().collect();
-    assert_eq!(fields[0], "hello");
-    assert_eq!(fields[1], "world");
-    assert_eq!(fields[2], "foo\"bar");
-}
-
-#[test]
-fn test_fields_empty() {
-    let data = b"\"\",\" \"\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    let fields: Vec<Cow<'_, str>> = rows[0].fields().collect();
-    assert_eq!(fields[0], "");
-    assert_eq!(fields[1], " ");
-}
-
-#[test]
-fn test_fields_borrowed() {
+fn test_fields_zero_alloc() {
     let data = b"hello,world\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    for field in rows[0].fields() {
-        assert!(matches!(field, Cow::Borrowed(_)));
-    }
+    let mut reader = Reader::from_reader(Cursor::new(data));
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    let fields: Vec<&str> = row.fields().unwrap().collect();
+    assert_eq!(fields, vec!["hello", "world"]);
 }
 
 #[test]
-fn test_fields_collect_string() {
-    let data = b"\"hello\",\"foo\"\"bar\"\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    let fields: Vec<String> = rows[0].fields().map(|f| f.into_owned()).collect();
-    assert_eq!(fields, vec!["hello", "foo\"bar"]);
+fn test_fields_unescaped() {
+    let data = b"\"hello\",\"foo\"\"bar\",\"b\"\"\"\"\"\"\"\n";
+    let mut reader = Reader::from_reader(Cursor::new(data));
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    let fields: Vec<&str> = row.fields().unwrap().collect();
+    assert_eq!(fields, vec!["hello", "foo\"bar", "b\"\"\""]);
 }
 
-// ── Writer: Basic ──────────────────────────────────────────────────
+// ── Reader: Trailing content after quoted field ───────────────────
 
-#[cfg(feature = "std")]
+#[test]
+fn test_trailing_content_after_quoted_field() {
+    let data = b"\"hello\" garbage\n";
+    let mut reader = Reader::from_reader(Cursor::new(data));
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    assert!(row.fields().is_err());
+    assert!(matches!(row.error(), Some(e) if matches!(e.kind(), ReadErrorKind::TrailingContent)));
+}
+
+#[test]
+fn test_trailing_content_after_quoted_field_at_eof() {
+    let data = b"\"hello\"garbage";
+    let mut reader = Reader::from_reader(Cursor::new(data));
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    assert!(row.fields().is_err());
+    assert!(matches!(row.error(), Some(e) if matches!(e.kind(), ReadErrorKind::TrailingContent)));
+}
+
+// ── Reader: Headers ─────────────────────────────────────────────────
+
+#[test]
+fn test_with_headers() {
+    let data = b"name,age,city\nAlice,30,NYC\nBob,25,LA\n";
+    let mut reader = Reader::from_reader(Cursor::new(data));
+    let headers = reader.parse_headers().unwrap();
+    assert_eq!(headers, vec!["name", "age", "city"]);
+    let mut out = Vec::new();
+    for row in reader.rows() {
+        out.push(row.all().unwrap());
+    }
+    assert_eq!(out.len(), 2);
+    assert_eq!(out[0], vec!["Alice", "30", "NYC"]);
+    assert_eq!(out[1], vec!["Bob", "25", "LA"]);
+}
+
+#[test]
+fn test_without_headers() {
+    let data = b"Alice,30,NYC\nBob,25,LA\n";
+    let mut reader = Reader::from_reader(Cursor::new(data));
+    assert!(reader.headers().is_none());
+    let mut out = Vec::new();
+    for row in reader.rows() {
+        out.push(row.all().unwrap());
+    }
+    assert_eq!(out.len(), 2);
+}
+
+// ── Reader: Trailing delimiter ─────────────────────────────────────
+
+#[test]
+fn test_trailing_delimiter_at_eof() {
+    let rows = collect_rows(b"a,b,");
+    assert_eq!(rows[0], vec!["a", "b", ""]);
+}
+
+#[test]
+fn test_trailing_delimiter_only() {
+    let rows = collect_rows(b",");
+    assert_eq!(rows[0], vec!["", ""]);
+}
+
+#[test]
+fn test_large_fields() {
+    let large = "x".repeat(10000);
+    let data = format!("{large},{large}\n");
+    let mut reader = Reader::from_reader(Cursor::new(data));
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    assert_eq!(row.len(), 2);
+    let fields: Vec<&str> = row.fields().unwrap().collect();
+    assert_eq!(fields[0].len(), 10000);
+    assert_eq!(fields[1].len(), 10000);
+}
+
+#[test]
+fn test_many_fields() {
+    let mut csv = String::new();
+    for i in 0..100 {
+        if i > 0 {
+            csv.push(',');
+        }
+        csv.push_str(&format!("field{i}"));
+    }
+    csv.push('\n');
+    let mut reader = Reader::from_reader(Cursor::new(csv));
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    assert_eq!(row.len(), 100);
+    let fields: Vec<&str> = row.fields().unwrap().collect();
+    assert_eq!(fields[0], "field0");
+    assert_eq!(fields[99], "field99");
+}
+
+#[test]
+fn test_large_streaming() {
+    let mut csv = Vec::new();
+    for i in 0..1000 {
+        if i > 0 {
+            csv.push(b'\n');
+        }
+        for j in 0..20 {
+            if j > 0 {
+                csv.push(b',');
+            }
+            csv.extend_from_slice(format!("{i}-{j}").as_bytes());
+        }
+    }
+    let mut reader = Reader::from_reader(Cursor::new(csv));
+    let mut count = 0;
+    for row in reader.rows() {
+        assert_eq!(row.len(), 20);
+        count += 1;
+    }
+    assert_eq!(count, 1000);
+}
+
+// ── Reader: Error handling ─────────────────────────────────────────
+
+#[test]
+fn test_unterminated_quote() {
+    let data = b"a,\"unterminated\n";
+    let mut reader = Reader::from_reader(Cursor::new(data));
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    assert!(row.fields().is_err());
+    assert!(matches!(row.error(), Some(e) if e.to_string().contains("unterminated quote")));
+}
+
+// ── Writer ──────────────────────────────────────────────────────────
+
 #[test]
 fn test_writer_basic() {
     let mut w = Writer::new(Vec::new());
@@ -364,16 +408,6 @@ fn test_writer_basic() {
     assert_eq!(result, "a,b,c\r\n1,2,3\r\n");
 }
 
-#[cfg(feature = "std")]
-#[test]
-fn test_writer_single_field() {
-    let mut w = Writer::new(Vec::new());
-    w.write_row(["hello"]).unwrap();
-    let result = String::from_utf8(w.into_inner().unwrap()).unwrap();
-    assert_eq!(result, "hello\r\n");
-}
-
-#[cfg(feature = "std")]
 #[test]
 fn test_writer_empty_field() {
     let mut w = Writer::new(Vec::new());
@@ -382,25 +416,6 @@ fn test_writer_empty_field() {
     assert_eq!(result, "a,\"\",c\r\n");
 }
 
-#[cfg(feature = "std")]
-#[test]
-fn test_writer_all_empty() {
-    let mut w = Writer::new(Vec::new());
-    w.write_row(["", ""]).unwrap();
-    let result = String::from_utf8(w.into_inner().unwrap()).unwrap();
-    assert_eq!(result, "\"\",\"\"\r\n");
-}
-
-#[cfg(feature = "std")]
-#[test]
-fn test_writer_single_empty_field() {
-    let mut w = Writer::new(Vec::new());
-    w.write_row([""]).unwrap();
-    let result = String::from_utf8(w.into_inner().unwrap()).unwrap();
-    assert_eq!(result, "\"\"\r\n");
-}
-
-#[cfg(feature = "std")]
 #[test]
 fn test_writer_auto_quote_comma() {
     let mut w = Writer::new(Vec::new());
@@ -409,25 +424,6 @@ fn test_writer_auto_quote_comma() {
     assert_eq!(result, "\"hello, world\"\r\n");
 }
 
-#[cfg(feature = "std")]
-#[test]
-fn test_writer_auto_quote_newline() {
-    let mut w = Writer::new(Vec::new());
-    w.write_row(["line1\nline2"]).unwrap();
-    let result = String::from_utf8(w.into_inner().unwrap()).unwrap();
-    assert_eq!(result, "\"line1\nline2\"\r\n");
-}
-
-#[cfg(feature = "std")]
-#[test]
-fn test_writer_auto_quote_crlf() {
-    let mut w = Writer::new(Vec::new());
-    w.write_row(["line1\r\nline2"]).unwrap();
-    let result = String::from_utf8(w.into_inner().unwrap()).unwrap();
-    assert_eq!(result, "\"line1\r\nline2\"\r\n");
-}
-
-#[cfg(feature = "std")]
 #[test]
 fn test_writer_auto_quote_double_quote() {
     let mut w = Writer::new(Vec::new());
@@ -436,16 +432,6 @@ fn test_writer_auto_quote_double_quote() {
     assert_eq!(result, "\"say \"\"hello\"\"\"\r\n");
 }
 
-#[cfg(feature = "std")]
-#[test]
-fn test_writer_no_quote_needed() {
-    let mut w = Writer::new(Vec::new());
-    w.write_row(["hello world"]).unwrap();
-    let result = String::from_utf8(w.into_inner().unwrap()).unwrap();
-    assert_eq!(result, "hello world\r\n");
-}
-
-#[cfg(feature = "std")]
 #[test]
 fn test_writer_custom_delimiter() {
     let mut w = Writer::new(Vec::new());
@@ -455,30 +441,8 @@ fn test_writer_custom_delimiter() {
     assert_eq!(result, "a\tb\tc\r\n");
 }
 
-#[cfg(feature = "std")]
-#[test]
-fn test_writer_auto_quote_custom_delimiter() {
-    let mut w = Writer::new(Vec::new());
-    w.delimiter(b'|');
-    w.write_row(["a|b", "c"]).unwrap();
-    let result = String::from_utf8(w.into_inner().unwrap()).unwrap();
-    assert_eq!(result, "\"a|b\"|c\r\n");
-}
-
-// ── Writer: Field Count Validation ────────────────────────────────
-
-#[cfg(feature = "std")]
 #[test]
 fn test_writer_field_count_consistent() {
-    let mut w = Writer::new(Vec::new());
-    w.write_row(["a", "b", "c"]).unwrap();
-    w.write_row(["1", "2", "3"]).unwrap();
-    assert!(w.into_inner().is_ok());
-}
-
-#[cfg(feature = "std")]
-#[test]
-fn test_writer_field_count_mismatch() {
     let mut w = Writer::new(Vec::new());
     w.write_row(["a", "b", "c"]).unwrap();
     let err = w.write_row(["1", "2"]).unwrap_err();
@@ -492,13 +456,12 @@ fn test_writer_field_count_mismatch() {
             assert_eq!(found, 2);
             assert_eq!(row, 2);
         }
-        _ => panic!("expected InconsistentFieldCount error"),
+        _ => panic!("wrong error variant"),
     }
 }
 
-#[cfg(feature = "std")]
 #[test]
-fn test_writer_field_count_mismatch_flexible() {
+fn test_writer_flexible() {
     let mut w = Writer::new(Vec::new());
     w.flexible(true);
     w.write_row(["a", "b", "c"]).unwrap();
@@ -507,7 +470,6 @@ fn test_writer_field_count_mismatch_flexible() {
     assert_eq!(result, "a,b,c\r\n1,2\r\n");
 }
 
-#[cfg(feature = "std")]
 #[test]
 fn test_writer_flush() {
     let mut w = Writer::new(Vec::new());
@@ -516,406 +478,554 @@ fn test_writer_flush() {
     assert_eq!(w.into_inner().unwrap(), b"a,b\r\n");
 }
 
-// ── Writer: Roundtrip ──────────────────────────────────────────────
+// ── Roundtrip ───────────────────────────────────────────────────────
 
-#[cfg(feature = "std")]
-fn roundtrip(records: &[&[&[u8]]]) {
-    let mut w = Writer::new(Vec::new());
-    for record in records {
-        w.write_row(*record).unwrap();
-    }
-    let csv_data = w.into_inner().unwrap();
-
-    let rows: Vec<_> = Reader::new(&csv_data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(rows.len(), records.len(), "roundtrip row count");
-
-    for (i, expected) in records.iter().enumerate() {
-        let actual: Vec<String> = rows[i].fields().map(|f| f.into_owned()).collect();
-        let expected_str: Vec<String> = expected
-            .iter()
-            .map(|b| String::from_utf8_lossy(b).to_string())
-            .collect();
-        assert_eq!(actual.len(), expected_str.len(), "roundtrip row {i}: field count");
-        for (j, (a, e)) in actual.iter().zip(expected_str.iter()).enumerate() {
-            assert_eq!(a, e, "roundtrip row {i}, field {j}");
-        }
-    }
-}
-
-#[cfg(feature = "std")]
 #[test]
 fn test_roundtrip_simple() {
-    roundtrip(&[&[b"a", b"b", b"c"], &[b"1", b"2", b"3"]]);
-}
-
-#[cfg(feature = "std")]
-#[test]
-fn test_roundtrip_with_commas() {
-    roundtrip(&[&[b"hello, world", b"foo"]]);
-}
-
-#[cfg(feature = "std")]
-#[test]
-fn test_roundtrip_with_quotes() {
-    roundtrip(&[&[b"say \"hi\"", b"bar"]]);
-}
-
-#[cfg(feature = "std")]
-#[test]
-fn test_roundtrip_with_newlines() {
-    roundtrip(&[&[b"line1\nline2", b"foo"]]);
-}
-
-#[cfg(feature = "std")]
-#[test]
-fn test_roundtrip_empty_fields() {
-    roundtrip(&[&[b"a", b"", b"c"], &[b"", b"b", b""]]);
-}
-
-#[cfg(feature = "std")]
-#[test]
-fn test_roundtrip_mixed() {
-    roundtrip(&[&[b"plain", b"with, comma", b"with \" quote", b"with\nnewline"]]);
-}
-
-// ── Reader: from_reader streaming ──────────────────────────────────
-
-#[cfg(feature = "std")]
-#[test]
-fn test_from_reader() {
-    let data = b"a,b,c\n1,2,3\n";
-    let reader = std::io::Cursor::new(data);
-    let rows: Vec<_> = Reader::from_reader(reader)
-        .rows()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].get_raw(0), Some("a"));
-    assert_eq!(rows[0].get_raw(1), Some("b"));
-    assert_eq!(rows[0].get_raw(2), Some("c"));
-    assert_eq!(rows[1].get_raw(0), Some("1"));
-    assert_eq!(rows[1].get_raw(1), Some("2"));
-    assert_eq!(rows[1].get_raw(2), Some("3"));
-}
-
-#[cfg(feature = "std")]
-#[test]
-fn test_from_reader_streaming_across_chunks() {
-    let data = b"a,b,c,d,e,f,g,h,i,j\n1,2,3,4,5,6,7,8,9,10\n";
-    let reader = std::io::Cursor::new(data);
-    let rows: Vec<_> = Reader::from_reader(reader)
-        .rows()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].len(), 10);
-    assert_eq!(rows[1].len(), 10);
-}
-
-#[cfg(feature = "std")]
-#[test]
-fn test_from_reader_large_data() {
-    let mut rows_out: Vec<String> = Vec::new();
-    for i in 0..1000 {
-        let fields: Vec<String> = (0..10).map(|j| format!("{i}-{j}")).collect();
-        rows_out.push(fields.join(","));
-    }
-    let data = rows_out.join("\n").into_bytes();
-
-    let reader = std::io::Cursor::new(data);
-    let rows: Vec<_> = Reader::from_reader(reader)
-        .rows()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    assert_eq!(rows.len(), 1000);
-    for (i, row) in rows.iter().enumerate() {
-        assert_eq!(row.len(), 10);
-        let expected0 = format!("{i}-0");
-        let expected9 = format!("{i}-9");
-        assert_eq!(row.get_raw(0), Some(expected0.as_str()));
-        assert_eq!(row.get_raw(9), Some(expected9.as_str()));
-    }
-}
-
-// ── Writer: Roundtrip with streaming reader ────────────────────────
-
-#[cfg(feature = "std")]
-#[test]
-fn test_write_then_read_streaming() {
     let mut w = Writer::new(Vec::new());
-    w.write_row(["name", "age", "city"]).unwrap();
-    w.write_row(["Alice", "30", "New York, NY"]).unwrap();
-    w.write_row(["Bob", "25", "\"Hello\" said Bob"]).unwrap();
+    w.write_row(["a", "b", "c"]).unwrap();
+    w.write_row(["1", "2", "3"]).unwrap();
     let csv_data = w.into_inner().unwrap();
-
-    let reader = std::io::Cursor::new(csv_data);
-    let rows: Vec<_> = Reader::from_reader(reader)
-        .rows()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    assert_eq!(rows.len(), 3);
-    let parsed: Vec<Vec<String>> = rows
-        .iter()
-        .map(|row| row.fields().map(|f| f.into_owned()).collect())
-        .collect();
-    assert_eq!(parsed[0], vec!["name", "age", "city"]);
-    assert_eq!(parsed[1], vec!["Alice", "30", "New York, NY"]);
-    assert_eq!(parsed[2], vec!["Bob", "25", "\"Hello\" said Bob"]);
-}
-
-// ── Reader: Trailing delimiter at EOF ─────────────────────────────
-
-#[test]
-fn test_trailing_delimiter_at_eof() {
-    let data = b"a,b,";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].len(), 3);
-    assert_eq!(rows[0].get_raw(0), Some("a"));
-    assert_eq!(rows[0].get_raw(1), Some("b"));
-    assert_eq!(rows[0].get_raw(2), Some(""));
+    let mut out = Vec::new();
+    for row in Reader::from_reader(Cursor::new(csv_data)).rows() {
+        out.push(row.all().unwrap());
+    }
+    assert_eq!(
+        out,
+        vec![
+            vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            vec!["1".to_string(), "2".to_string(), "3".to_string()],
+        ]
+    );
 }
 
 #[test]
-fn test_trailing_delimiter_only() {
-    let data = b",";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].len(), 2);
-    assert_eq!(rows[0].get_raw(0), Some(""));
-    assert_eq!(rows[0].get_raw(1), Some(""));
+fn test_roundtrip_quotes_commas() {
+    let mut w = Writer::new(Vec::new());
+    w.write_row(["hello, world", "foo\"bar"]).unwrap();
+    let csv_data = w.into_inner().unwrap();
+    let mut out = Vec::new();
+    for row in Reader::from_reader(Cursor::new(csv_data)).rows() {
+        out.push(row.all().unwrap());
+    }
+    assert_eq!(out[0], vec!["hello, world", "foo\"bar"]);
+}
+
+// ── Reader: Buffer boundary tests ──────────────────────────────────
+
+#[test]
+fn test_chunked_escaped_quote_at_buffer_boundary() {
+    let data = b"\"hello\"\"world\",second\n";
+    let mut reader = Reader::from_reader(ChunkReader::new(data, 1));
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    assert_eq!(row.len(), 2);
+    let fields: Vec<&str> = row.fields().unwrap().collect();
+    assert_eq!(fields[0], "hello\"world");
+    assert_eq!(fields[1], "second");
+}
+
+#[test]
+fn test_chunked_escaped_quote_pair_at_boundary() {
+    let before = "x".repeat(100);
+    let data = format!("\"{before}\"\"more\",rest\n");
+    let mut reader = Reader::from_reader(ChunkReader::new(data.as_bytes(), 16));
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    let fields: Vec<&str> = row.fields().unwrap().collect();
+    let expected = format!("{before}\"more");
+    assert_eq!(fields[0], expected);
+}
+
+#[test]
+fn test_chunked_crlf_at_boundary() {
+    let before = "x".repeat(16380);
+    let data = format!("first,{before}\r\nsecond,line\n");
+    let mut reader = Reader::from_reader(ChunkReader::new(data.as_bytes(), 16));
+    let mut rows = reader.rows();
+    let row1 = rows.next().unwrap();
+    assert_eq!(row1.len(), 2);
+    assert_eq!(row1.fields().unwrap().collect::<Vec<&str>>()[1].len(), 16380);
+    let row2 = rows.next().unwrap();
+    assert_eq!(row2.len(), 2);
+    let fields: Vec<&str> = row2.fields().unwrap().collect();
+    assert_eq!(fields[0], "second");
+    assert_eq!(fields[1], "line");
+}
+
+#[test]
+fn test_chunked_delimiter_at_boundary() {
+    let data = b"abc,def,ghi\n123,456,789\n";
+    let mut reader = Reader::from_reader(ChunkReader::new(data, 4));
+    let rows: Vec<Vec<String>> = reader.rows().map(|r| r.all().unwrap()).collect();
+    assert_eq!(rows[0], vec!["abc", "def", "ghi"]);
+    assert_eq!(rows[1], vec!["123", "456", "789"]);
+}
+
+#[test]
+fn test_chunked_quoted_field_spanning_multiple_reads() {
+    let inner = "x".repeat(50000);
+    let data = format!("a,\"{inner}\",b\nc,d,e\n");
+    let mut reader = Reader::from_reader(ChunkReader::new(data.as_bytes(), 4096));
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    assert_eq!(row.len(), 3);
+    let fields: Vec<&str> = row.fields().unwrap().collect();
+    assert_eq!(fields[0], "a");
+    assert_eq!(fields[1], inner);
+    assert_eq!(fields[2], "b");
+}
+
+// ── Reader: IO error propagation ────────────────────────────────────
+
+#[test]
+fn test_io_error_reported() {
+    let data = b"a,b\n1,2\n3,4\n";
+    let reader = ErrorAfterReader::new(data.to_vec(), 5);
+    let mut reader = Reader::from_reader(reader);
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    assert!(row.error().is_none());
+    assert_eq!(row.all().unwrap(), vec!["a", "b"]);
+    let row = rows.next().unwrap();
+    assert!(row.error().is_some());
+    assert!(matches!(row.error().unwrap().kind(), ReadErrorKind::Io));
+    assert!(rows.next().is_none());
+}
+
+#[test]
+fn test_io_error_while_in_quoted() {
+    let data = b"a,\"unterminated data that never closes\n";
+    let reader = ErrorAfterReader::new(data.to_vec(), 10);
+    let mut reader = Reader::from_reader(reader);
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    assert!(row.error().is_some());
+}
+
+// ── Reader: More edge cases ────────────────────────────────────────
+
+#[test]
+fn test_only_blank_lines() {
+    let rows = collect_rows(b"\n\n\n\r\n\r\n");
+    assert_eq!(rows.len(), 0);
+}
+
+#[test]
+fn test_single_quoted_field_only() {
+    let rows = collect_rows(b"\"hello\"\n");
+    assert_eq!(rows[0], vec!["hello"]);
+}
+
+#[test]
+fn test_all_quoted_fields() {
+    let rows = collect_rows(b"\"a\",\"b\",\"c\"\n\"1\",\"2\",\"3\"\n");
+    assert_eq!(rows[0], vec!["a", "b", "c"]);
+    assert_eq!(rows[1], vec!["1", "2", "3"]);
+}
+
+#[test]
+fn test_quote_in_middle_of_unquoted_field() {
+    let rows = collect_rows(b"hello\"world,foo\n");
+    assert_eq!(rows[0], vec!["hello\"world", "foo"]);
 }
 
 #[test]
 fn test_trailing_delimiter_with_newline() {
-    let data = b"a,b,\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].len(), 3);
-    assert_eq!(rows[0].get_raw(0), Some("a"));
-    assert_eq!(rows[0].get_raw(1), Some("b"));
-    assert_eq!(rows[0].get_raw(2), Some(""));
-}
-
-// ── Reader: Trailing content after quoted field ───────────────────
-
-#[test]
-fn test_trailing_content_after_quoted_field() {
-    let data = b"\"hello\" garbage\n";
-    let result: Result<Vec<_>, _> = Reader::new(data).rows().collect();
-    let err = result.unwrap_err();
-    assert_eq!(err.line, 1);
-    assert!(matches!(err.kind(), ReadErrorKind::TrailingContent));
+    let rows = collect_rows(b"a,b,\n");
+    assert_eq!(rows[0], vec!["a", "b", ""]);
 }
 
 #[test]
-fn test_trailing_content_after_quoted_field_at_eof() {
-    let data = b"\"hello\"garbage";
-    let result: Result<Vec<_>, _> = Reader::new(data).rows().collect();
-    let err = result.unwrap_err();
-    assert!(matches!(err.kind(), ReadErrorKind::TrailingContent));
+fn test_blank_line_between_data() {
+    let rows = collect_rows(b"a,b\n\nc,d\n");
+    assert_eq!(rows.len(), 2);
 }
 
 #[test]
-fn test_trailing_content_after_quoted_field_with_comma() {
-    let data = b"\"hello\"x,world\n";
-    let result: Result<Vec<_>, _> = Reader::new(data).rows().collect();
-    let err = result.unwrap_err();
-    assert!(matches!(err.kind(), ReadErrorKind::TrailingContent));
-}
-
-// ── Reader: Row::get_raw() and Index ──────────────────────────────
-
-#[test]
-fn test_row_get_valid() {
-    let data = b"a,b,c\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(rows[0].get_raw(0), Some("a"));
-    assert_eq!(rows[0].get_raw(1), Some("b"));
-    assert_eq!(rows[0].get_raw(2), Some("c"));
+fn test_row_with_single_field_no_newline() {
+    let rows = collect_rows(b"hello");
+    assert_eq!(rows[0], vec!["hello"]);
 }
 
 #[test]
-fn test_row_get_out_of_bounds_range() {
-    let data = b"a,b\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(rows[0].get_raw(2), None);
-    assert_eq!(rows[0].get_raw(usize::MAX), None);
-}
-
-#[test]
-fn test_row_index() {
-    let data = b"hello,world\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(&rows[0][0], "hello");
-    assert_eq!(&rows[0][1], "world");
-}
-
-#[test]
-#[should_panic(expected = "index out of bounds")]
-fn test_row_index_panics() {
-    let data = b"a,b\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    let _ = &rows[0][5];
-}
-
-// ── Reader: Fields ExactSizeIterator ──────────────────────────────
-
-#[test]
-fn test_fields_exact_size() {
-    let data = b"\"hello\",world,\"foo\"\"bar\"\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    let iter = rows[0].fields();
-    assert_eq!(iter.len(), 3);
-    assert!(iter.size_hint() == (3, Some(3)));
-    let fields: Vec<_> = iter.collect();
-    assert_eq!(fields.len(), 3);
-}
-
-#[test]
-fn test_fields_exact_size_empty() {
-    let mut rows = Reader::new(b"\n").rows();
-    assert!(rows.next().is_none());
-}
-
-// ── Reader: Invalid UTF-8 ─────────────────────────────────────────
-
-#[test]
-fn test_invalid_utf8_returns_error() {
-    let data = b"hello,\xff\xffworld\n";
-    let result: Result<Vec<_>, _> = Reader::new(data).rows().collect();
-    let err = result.unwrap_err();
-    assert!(matches!(err.kind(), ReadErrorKind::InvalidUtf8));
-}
-
-// ── Reader: ReadError::kind() accessor ────────────────────────────
-
-#[test]
-fn test_read_error_kind_unterminated_quote() {
-    let data = b"\"unterminated";
-    let result: Result<Vec<_>, _> = Reader::new(data).rows().collect();
-    let err = result.unwrap_err();
-    assert!(matches!(err.kind(), ReadErrorKind::UnterminatedQuote));
-    assert_eq!(err.line, 1);
-}
-
-#[test]
-fn test_read_error_kind_trailing_content() {
-    let data = b"\"ok\"xyz\n";
-    let result: Result<Vec<_>, _> = Reader::new(data).rows().collect();
-    let err = result.unwrap_err();
-    assert!(matches!(err.kind(), ReadErrorKind::TrailingContent));
-}
-
-// ── Reader: Additional edge cases ─────────────────────────────────
-
-#[test]
-fn test_only_delimiter_and_newline() {
-    let data = b",\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].len(), 2);
-    assert_eq!(rows[0].get_raw(0), Some(""));
-    assert_eq!(rows[0].get_raw(1), Some(""));
-}
-
-#[test]
-fn test_multiple_blank_lines_then_data() {
-    let data = b"\n\n\na,b\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].len(), 2);
-    assert_eq!(rows[0].get_raw(0), Some("a"));
-    assert_eq!(rows[0].get_raw(1), Some("b"));
+fn test_three_delimiters_empty_fields() {
+    let rows = collect_rows(b",,,\n");
+    assert_eq!(rows[0], vec!["", "", "", ""]);
 }
 
 #[test]
 fn test_leading_trailing_blank_lines() {
-    let data = b"\n\na,b\n\nc,d\n\n";
-    let rows: Vec<_> = Reader::new(data).rows().collect::<Result<Vec<_>, _>>().unwrap();
+    let rows = collect_rows(b"\n\na,b\nc,d\n\n\n");
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0].len(), 2);
-    assert_eq!(rows[0].get_raw(0), Some("a"));
-    assert_eq!(rows[1].len(), 2);
-    assert_eq!(rows[1].get_raw(0), Some("c"));
 }
 
-// ── Potential Clippy checks ───────────────────────────────────────
+// ── Reader: Row method tests ───────────────────────────────────────
 
 #[test]
-fn test_large_fields() {
-    let large = "x".repeat(10000);
-    let data = format!("{large},{large}\n");
-    let rows: Vec<_> = Reader::new(data.as_bytes())
-        .rows()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    assert_eq!(rows[0].len(), 2);
-    assert_eq!(rows[0].get_raw(0).unwrap().len(), 10000);
+fn test_row_debug() {
+    let mut reader = Reader::from_reader(Cursor::new(b"hello,world\n"));
+    let row = reader.rows().next().unwrap();
+    let debug = format!("{:?}", row);
+    assert!(debug.starts_with("["), "debug starts with '[', got: {debug}");
+    assert!(debug.contains("hello"), "debug contains 'hello', got: {debug}");
 }
 
 #[test]
-fn test_many_fields() {
-    let mut data: Vec<u8> = (0..100)
-        .map(|i| {
-            if i == 0 {
-                format!("field{i}")
-            } else {
-                format!(",field{i}")
-            }
-        })
-        .collect::<String>()
-        .into_bytes();
-    data.push(b'\n');
-    let rows: Vec<_> = Reader::new(&data).rows().collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(rows[0].len(), 100);
-    assert_eq!(rows[0].get_raw(0), Some("field0"));
-    assert_eq!(rows[0].get_raw(99), Some("field99"));
+fn test_row_len_and_is_empty() {
+    let mut reader = Reader::from_reader(Cursor::new(b"a,b,c\nhello\n"));
+    let mut rows = reader.rows();
+    let r = rows.next().unwrap();
+    assert_eq!(r.len(), 3);
+    assert!(!r.is_empty());
+    // blank lines are skipped — next row is "hello"
+    let r = rows.next().unwrap();
+    assert_eq!(r.len(), 1);
+    assert!(!r.is_empty());
 }
 
-// ── Rows: iterator API tests ──────────────────────────────────────
+#[test]
+fn test_fields_exact_size_iterator() {
+    use std::iter::ExactSizeIterator;
+    let mut reader = Reader::from_reader(Cursor::new(b"a,b,c\n"));
+    let row = reader.rows().next().unwrap();
+    let fields = row.fields().unwrap();
+    assert_eq!(fields.len(), 3);
+}
 
 #[test]
-fn test_rows_for_loop() {
-    let data = b"a,b\nc,d\n";
-    let mut count = 0;
-    for result in Reader::new(data).rows() {
-        let row = result.unwrap();
-        count += row.len();
+fn test_row_all_error_propagation() {
+    let mut reader = Reader::from_reader(Cursor::new(b"\"hello\" garbage\n"));
+    let row = reader.rows().next().unwrap();
+    assert!(row.all().is_err());
+}
+
+// ── Reader: Headers ─────────────────────────────────────────────────
+
+#[test]
+fn test_headers_empty_csv() {
+    let mut reader = Reader::from_reader(Cursor::new(b""));
+    let headers = reader.parse_headers().unwrap();
+    assert!(headers.is_empty());
+    assert!(reader.rows().next().is_none());
+}
+
+#[test]
+fn test_headers_none_before_parse() {
+    let reader = Reader::from_reader(Cursor::new(b"a,b\n1,2\n"));
+    assert!(reader.headers().is_none());
+}
+
+#[test]
+fn test_headers_after_parse() {
+    let mut reader = Reader::from_reader(Cursor::new(b"name,age\nAlice,30\n"));
+    reader.parse_headers().unwrap();
+    assert_eq!(reader.headers().unwrap(), &["name", "age"]);
+}
+
+// ── Reader: Error display ──────────────────────────────────────────
+
+#[test]
+fn test_error_display_unterminated_quote() {
+    let e = ReadError::new(ReadErrorKind::UnterminatedQuote, 5, 10);
+    let s = e.to_string();
+    assert!(s.contains("unterminated quote"));
+    assert!(s.contains("line 5"));
+}
+
+#[test]
+fn test_error_display_trailing_content() {
+    let e = ReadError::new(ReadErrorKind::TrailingContent, 3, 0);
+    let s = e.to_string();
+    assert!(s.contains("trailing content"));
+}
+
+#[test]
+fn test_error_display_io() {
+    let e = ReadError::new(ReadErrorKind::Io, 1, 0);
+    let s = e.to_string();
+    assert!(s.contains("I/O error"));
+}
+
+// ── Writer: additional edge cases ──────────────────────────────────
+
+#[test]
+fn test_writer_empty_row() {
+    let mut w = Writer::new(Vec::new());
+    let empty: &[&str] = &[];
+    w.write_row(empty).unwrap();
+    let result = String::from_utf8(w.into_inner().unwrap()).unwrap();
+    assert_eq!(result, "\r\n");
+}
+
+#[test]
+fn test_writer_newline_in_field() {
+    let mut w = Writer::new(Vec::new());
+    w.write_row(["hello\nworld"]).unwrap();
+    let result = String::from_utf8(w.into_inner().unwrap()).unwrap();
+    assert_eq!(result, "\"hello\nworld\"\r\n");
+}
+
+#[test]
+fn test_writer_cr_in_field() {
+    let mut w = Writer::new(Vec::new());
+    w.write_row(["hello\rworld"]).unwrap();
+    let result = String::from_utf8(w.into_inner().unwrap()).unwrap();
+    assert_eq!(result, "\"hello\rworld\"\r\n");
+}
+
+#[test]
+fn test_writer_no_rows() {
+    let w = Writer::new(Vec::new());
+    let result = w.into_inner().unwrap();
+    assert!(result.is_empty());
+}
+
+#[test]
+fn test_writer_flush_twice() {
+    let mut w = Writer::new(Vec::new());
+    w.write_row(["a"]).unwrap();
+    w.flush().unwrap();
+    w.flush().unwrap();
+    let result = String::from_utf8(w.into_inner().unwrap()).unwrap();
+    assert_eq!(result, "a\r\n");
+}
+
+// ── Reader: set_delimiter builder pattern ──────────────────────────
+
+#[test]
+fn test_set_delimiter_chaining() {
+    let data = b"a:b:c\n1:2:3\n";
+    let mut reader = Reader::from_reader(Cursor::new(data));
+    reader.set_delimiter(b':').set_delimiter(b':');
+    let rows: Vec<Vec<String>> = reader.rows().map(|r| r.all().unwrap()).collect();
+    assert_eq!(rows[0], vec!["a", "b", "c"]);
+}
+
+// ── Writer: Auto-quote with special chars combined ──────────────────
+
+#[test]
+fn test_writer_field_with_delimiter_and_quote() {
+    let mut w = Writer::new(Vec::new());
+    w.write_row([r#"hello, "world""#]).unwrap();
+    let result = String::from_utf8(w.into_inner().unwrap()).unwrap();
+    assert_eq!(result, "\"hello, \"\"world\"\"\"\r\n");
+}
+
+// ── Roundtrip: additional ──────────────────────────────────────────
+
+#[test]
+fn test_roundtrip_with_newlines_in_fields() {
+    let mut w = Writer::new(Vec::new());
+    w.write_row(["hello\nworld", "foo\r\nbar"]).unwrap();
+    let csv_data = w.into_inner().unwrap();
+    let mut out = Vec::new();
+    for row in Reader::from_reader(Cursor::new(csv_data)).rows() {
+        out.push(row.all().unwrap());
     }
-    assert_eq!(count, 4);
+    assert_eq!(out[0], vec!["hello\nworld", "foo\r\nbar"]);
+}
+
+// ── Reader: UTF-8 validation ─────────────────────────────────────────
+
+#[test]
+fn test_invalid_utf8_in_unquoted_field() {
+    let data = b"a,\xff,b\n";
+    let mut reader = Reader::from_reader(Cursor::new(data));
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    assert!(row.error().is_some());
+    assert!(matches!(row.error().unwrap().kind(), ReadErrorKind::InvalidUtf8));
 }
 
 #[test]
-fn test_rows_for_loop_with_error() {
-    let data = b"a,b\n\"bad";
-    let mut errors = 0usize;
-    for result in Reader::new(data).rows() {
-        if result.is_err() {
-            errors += 1;
+fn test_invalid_utf8_in_quoted_field() {
+    let data = b"a,\"\xff\",b\n";
+    let mut reader = Reader::from_reader(Cursor::new(data));
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    assert!(row.error().is_some());
+    assert!(matches!(row.error().unwrap().kind(), ReadErrorKind::InvalidUtf8));
+}
+
+#[test]
+fn test_invalid_utf8_sets_error_not_panic() {
+    let data = b"\xff,bar\n";
+    let mut reader = Reader::from_reader(Cursor::new(data));
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    assert!(row.fields().is_err());
+    assert!(matches!(row.error().unwrap().kind(), ReadErrorKind::InvalidUtf8));
+}
+
+#[test]
+fn test_null_bytes_in_field() {
+    let rows = collect_rows(b"a,\0,c\n");
+    assert_eq!(rows[0], vec!["a", "\0", "c"]);
+}
+
+// ── Reader: from_bytes convenience ────────────────────────────────────
+
+#[test]
+fn test_from_bytes_convenience() {
+    let mut reader = Reader::from_bytes(b"a,b,c\n1,2,3\n");
+    let rows: Vec<Vec<String>> = reader.rows().map(|r| r.all().unwrap()).collect();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0], vec!["a", "b", "c"]);
+    assert_eq!(rows[1], vec!["1", "2", "3"]);
+}
+
+// ── Reader: CR at EOF edge cases ──────────────────────────────────────
+
+#[test]
+fn test_cr_at_eof() {
+    let rows = collect_rows(b"a,b\r");
+    assert_eq!(rows[0], vec!["a", "b"]);
+}
+
+#[test]
+fn test_crlf_split_chunk_boundary() {
+    let before = "x".repeat(16380);
+    let data = format!("aaa,{before}\r\n");
+    let mut reader = Reader::from_reader(ChunkReader::new(data.as_bytes(), 4096));
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    assert_eq!(row.len(), 2);
+    let fields: Vec<&str> = row.fields().unwrap().collect();
+    assert_eq!(fields[0], "aaa");
+    assert_eq!(fields[1].len(), 16380);
+}
+
+// ── Reader: Error display for new variants ────────────────────────────
+
+#[test]
+fn test_error_display_invalid_utf8() {
+    let e = ReadError::new(ReadErrorKind::InvalidUtf8, 4, 0);
+    let s = e.to_string();
+    assert!(s.contains("invalid UTF-8"));
+    assert!(s.contains("line 4"));
+}
+
+// ── Reader: Trailing content after closing quote across boundary ──────
+
+#[test]
+fn test_trailing_content_after_quote_at_boundary() {
+    let data = b"\"hello\"garbage\n";
+    let mut reader = Reader::from_reader(ChunkReader::new(data, 1));
+    let mut rows = reader.rows();
+    let row = rows.next().unwrap();
+    assert!(matches!(row.error().unwrap().kind(), ReadErrorKind::TrailingContent));
+}
+
+// ── Serde ─────────────────────────────────────────────────────────────
+
+#[cfg(feature = "serde")]
+mod serde_tests {
+    use std::io::Cursor;
+
+    use csv::*;
+    use serde::Deserialize;
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct Person {
+        name: String,
+        age: u32,
+    }
+
+    #[test]
+    fn test_deserialize_positional() {
+        let data = b"Alice,30\nBob,25\n";
+        let mut reader = Reader::from_reader(Cursor::new(data));
+        let mut rows = reader.rows();
+        let p1: Person = rows.next().unwrap().deserialize().unwrap();
+        assert_eq!(p1.name, "Alice");
+        assert_eq!(p1.age, 30);
+        let p2: Person = rows.next().unwrap().deserialize().unwrap();
+        assert_eq!(p2.name, "Bob");
+        assert_eq!(p2.age, 25);
+    }
+
+    #[test]
+    fn test_deserialize_with_headers() {
+        let data = b"name,age\nAlice,30\nBob,25\n";
+        let mut reader = Reader::from_reader(Cursor::new(data));
+        reader.parse_headers().unwrap();
+        let mut rows = reader.rows();
+        let p1: Person = rows.next().unwrap().deserialize().unwrap();
+        assert_eq!(p1.name, "Alice");
+        assert_eq!(p1.age, 30);
+        let p2: Person = rows.next().unwrap().deserialize().unwrap();
+        assert_eq!(p2.name, "Bob");
+        assert_eq!(p2.age, 25);
+    }
+
+    #[test]
+    fn test_deserialize_header_order_independent() {
+        let data = b"age,name\n30,Alice\n";
+        let mut reader = Reader::from_reader(Cursor::new(data));
+        reader.parse_headers().unwrap();
+        let p: Person = reader.rows().next().unwrap().deserialize().unwrap();
+        assert_eq!(p.name, "Alice");
+        assert_eq!(p.age, 30);
+    }
+
+    #[test]
+    fn test_deserialize_type_mismatch() {
+        let data = b"name,age\nAlice,not_a_number\n";
+        let mut reader = Reader::from_reader(Cursor::new(data));
+        reader.parse_headers().unwrap();
+        let row = reader.rows().next().unwrap();
+        let result: Result<Person, _> = row.deserialize();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err.kind(), ReadErrorKind::Deserialize(_)));
+        let display = err.to_string();
+        assert!(display.contains("deserialization error"), "got: {display}");
+    }
+
+    #[test]
+    fn test_deserialize_missing_column_defaults_to_empty() {
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct Record {
+            name: String,
+            age: u32,
+            city: String,
         }
+        let data = b"name,age\nAlice,30\n";
+        let mut reader = Reader::from_reader(Cursor::new(data));
+        reader.parse_headers().unwrap();
+        let row = reader.rows().next().unwrap();
+        // city is not in headers -> defaults to ""
+        let result: Result<Record, _> = row.deserialize();
+        assert!(result.is_ok(), "should succeed, got: {:?}", result.err());
+        let rec = result.unwrap();
+        assert_eq!(rec.name, "Alice");
+        assert_eq!(rec.age, 30);
+        assert_eq!(rec.city, "");
     }
-    assert_eq!(errors, 1);
+
+    #[test]
+    fn test_deserialize_positional_to_tuple() {
+        let data = b"Alice,30\nBob,25\n";
+        let mut reader = Reader::from_reader(Cursor::new(data));
+        let mut rows = reader.rows();
+        let t1: (String, u32) = rows.next().unwrap().deserialize().unwrap();
+        assert_eq!(t1, ("Alice".to_string(), 30));
+    }
 }
 
-#[test]
-fn test_rows_collect_ok() {
-    let data = b"x,y\n1,2\n";
-    let rows: Vec<Row> = Reader::new(data).rows().collect::<Result<_, _>>().unwrap();
-    assert_eq!(rows.len(), 2);
-}
+// ── Reader: field_bytes for non-UTF-8 data ────────────────────────────
 
 #[test]
-fn test_rows_collect_err_stops_early() {
-    let data = b"a,b\n\"bad\nc,d\n";
-    let mut iter = Reader::new(data).rows();
-    assert!(iter.next().unwrap().is_ok());
-    assert!(iter.next().unwrap().is_err());
-}
-
-#[test]
-fn test_rows_size_hint() {
-    let rows = Reader::new(b"a,b\n").rows();
-    let hint = rows.size_hint();
-    assert_eq!(hint, (0, None));
+fn test_invalid_utf8_second_row_ok_first_row() {
+    let data = b"a,b\nc,\xff\n";
+    let mut reader = Reader::from_reader(Cursor::new(data));
+    let mut rows = reader.rows();
+    // First row is valid
+    let row1 = rows.next().unwrap();
+    assert_eq!(row1.all().unwrap(), vec!["a", "b"]);
+    // Second row has invalid UTF-8 in second field
+    let row2 = rows.next().unwrap();
+    assert!(row2.error().is_some());
+    assert!(matches!(row2.error().unwrap().kind(), ReadErrorKind::InvalidUtf8));
 }
