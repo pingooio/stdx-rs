@@ -140,6 +140,9 @@ pub enum WriteError {
     /// An I/O error occurred while writing.
     #[cfg(feature = "std")]
     Io(std::io::Error),
+    /// An I/O error occurred while writing (no_std).
+    #[cfg(not(feature = "std"))]
+    Io,
 }
 
 impl fmt::Display for WriteError {
@@ -154,6 +157,8 @@ impl fmt::Display for WriteError {
             }
             #[cfg(feature = "std")]
             WriteError::Io(e) => write!(f, "I/O error: {e}"),
+            #[cfg(not(feature = "std"))]
+            WriteError::Io => write!(f, "I/O error"),
         }
     }
 }
@@ -167,6 +172,9 @@ impl std::error::Error for WriteError {
         }
     }
 }
+
+#[cfg(not(feature = "std"))]
+impl core::error::Error for WriteError {}
 
 #[cfg(feature = "std")]
 impl From<std::io::Error> for WriteError {

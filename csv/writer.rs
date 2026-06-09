@@ -1,8 +1,44 @@
-use std::io::Write;
+use alloc::vec::Vec;
 
 use crate::error::WriteError;
 
-/// Writes CSV data to a `std::io::Write` sink.
+/// Custom write abstraction that allows `Writer` to work without `std::io::Write`.
+///
+/// This trait is automatically implemented for `Vec<u8>` and, when the `std`
+/// feature is enabled, for any `std::io::Write` type.
+pub trait Write {
+    /// Write all bytes in `buf` to the sink.
+    ///
+    /// Returns `Err` if the write could not be completed.
+    fn write(&mut self, buf: &[u8]) -> Result<(), WriteError>;
+    /// Flush any buffered data to the underlying sink.
+    fn flush(&mut self) -> Result<(), WriteError>;
+}
+
+#[cfg(not(feature = "std"))]
+impl Write for Vec<u8> {
+    fn write(&mut self, buf: &[u8]) -> Result<(), WriteError> {
+        self.extend_from_slice(buf);
+        Ok(())
+    }
+    fn flush(&mut self) -> Result<(), WriteError> {
+        Ok(())
+    }
+}
+
+#[cfg(feature = "std")]
+impl<W: std::io::Write> Write for W {
+    fn write(&mut self, buf: &[u8]) -> Result<(), WriteError> {
+        self.write_all(buf)?;
+        Ok(())
+    }
+    fn flush(&mut self) -> Result<(), WriteError> {
+        self.flush()?;
+        Ok(())
+    }
+}
+
+/// Writes CSV data to a [`Write`] sink.
 ///
 /// Fields containing the delimiter, a newline, or a double-quote are
 /// automatically quoted. `""` escape sequences are used for quotes
@@ -14,14 +50,14 @@ use crate::error::WriteError;
 /// # Example
 ///
 /// ```no_run
-/// use csv3::Writer;
+/// use csv::Writer;
 ///
 /// let mut w = Writer::new(Vec::new());
 /// w.write_row(["name", "age", "city"])?;
 /// w.write_row(["Alice", "30", "New York, NY"])?;
 /// let result = String::from_utf8(w.into_inner()?).unwrap();
 /// assert_eq!(result, "name,age,city\r\nAlice,30,\"New York, NY\"\r\n");
-/// # Ok::<_, csv3::WriteError>(())
+/// # Ok::<_, csv::WriteError>(())
 /// ```
 pub struct Writer<W: Write> {
     writer: Option<W>,
@@ -53,11 +89,11 @@ impl<W: Write> Writer<W> {
     /// Set the field delimiter byte (default is `,`).
     ///
     /// ```no_run
-    /// use csv3::Writer;
+    /// use csv::Writer;
     /// let mut w = Writer::new(Vec::new());
     /// w.delimiter(b'\t');
     /// w.write_row(["a", "b", "c"])?;
-    /// # Ok::<_, csv3::WriteError>(())
+    /// # Ok::<_, csv::WriteError>(())
     /// ```
     pub fn delimiter(&mut self, byte: u8) -> &mut Self {
         self.delimiter = byte;
@@ -89,25 +125,15 @@ impl<W: Write> Writer<W> {
         I: IntoIterator<Item = T>,
         T: AsRef<[u8]>,
     {
-        let mut field_count = 0;
-
-        for field_bytes in row {
-            if field_count > 0 {
-                self.buf.push(self.delimiter);
-            }
-            self.write_field(field_bytes.as_ref())?;
-            field_count += 1;
-        }
-
-        self.buf.extend_from_slice(b"\r\n");
-        self.row_count += 1;
+        let fields: Vec<T> = row.into_iter().collect();
+        let field_count = fields.len();
 
         match self.num_fields {
             Some(expected) if !self.flexible && field_count != expected => {
                 return Err(WriteError::InconsistentFieldCount {
                     expected,
                     found: field_count,
-                    row: self.row_count,
+                    row: self.row_count + 1,
                 });
             }
             None => {
@@ -115,6 +141,16 @@ impl<W: Write> Writer<W> {
             }
             _ => {}
         }
+
+        for (i, field) in fields.iter().enumerate() {
+            if i > 0 {
+                self.buf.push(self.delimiter);
+            }
+            self.write_field(field.as_ref())?;
+        }
+
+        self.buf.extend_from_slice(b"\r\n");
+        self.row_count += 1;
 
         if self.buf.len() >= 8192 {
             self.flush()?;
@@ -125,10 +161,8 @@ impl<W: Write> Writer<W> {
 
     fn write_field(&mut self, field: &[u8]) -> Result<(), WriteError> {
         let needs_quoting = field.is_empty()
-            || field.contains(&self.delimiter)
-            || field.contains(&b'\n')
-            || field.contains(&b'\r')
-            || field.contains(&b'"');
+            || memchr::memchr3(self.delimiter, b'\r', b'\n', field).is_some()
+            || memchr::memchr(b'"', field).is_some();
 
         if !needs_quoting {
             self.buf.extend_from_slice(field);
@@ -138,14 +172,14 @@ impl<W: Write> Writer<W> {
         self.buf.push(b'"');
         self.field_buf.clear();
 
-        for &byte in field {
-            if byte == b'"' {
-                self.field_buf.push(b'"');
-                self.field_buf.push(b'"');
-            } else {
-                self.field_buf.push(byte);
-            }
+        let mut pos = 0;
+        while let Some(quote_offset) = memchr::memchr(b'"', &field[pos..]) {
+            let abs_pos = pos + quote_offset;
+            self.field_buf.extend_from_slice(&field[pos..abs_pos]);
+            self.field_buf.extend_from_slice(b"\"\"");
+            pos = abs_pos + 1;
         }
+        self.field_buf.extend_from_slice(&field[pos..]);
 
         self.buf.extend_from_slice(&self.field_buf);
         self.buf.push(b'"');
@@ -156,7 +190,8 @@ impl<W: Write> Writer<W> {
     /// Flush the internal buffer to the underlying writer.
     pub fn flush(&mut self) -> Result<(), WriteError> {
         if let Some(writer) = self.writer.as_mut() {
-            writer.write_all(&self.buf)?;
+            Write::write(writer, &self.buf)?;
+            Write::flush(writer)?;
         }
         self.buf.clear();
         Ok(())

@@ -1,11 +1,12 @@
 #![cfg_attr(not(feature = "std"), no_std)]
+
 //! A fast, low-allocation CSV parser with optional serde support.
 //!
 //! # Quick start
 //!
 //! ```rust
 //! let data: &[u8] = b"name,age,city\nAlice,30,NYC\nBob,25,LA\n";
-//! let mut reader = csv3::Reader::new(data);
+//! let mut reader = csv::Reader::new(data);
 //!
 //! for row in reader.rows() {
 //!     for field in row.iter() {
@@ -26,7 +27,7 @@
 //!
 //! ```no_run
 //! use std::fs::File;
-//! use csv3::Reader;
+//! use csv::Reader;
 //!
 //! let file = File::open("data.csv")?;
 //! let mut reader = Reader::new(file);
@@ -35,26 +36,26 @@
 //!     let name = row.get(0).unwrap().unwrap();
 //!     println!("{name}");
 //! }
-//! # Ok::<_, csv3::ReadError>(())
+//! # Ok::<_, csv::ReadError>(())
 //! ```
 //!
 //! # Headers
 //!
 //! ```no_run
-//! use csv3::Reader;
+//! use csv::Reader;
 //! let data = b"name,age\nAlice,30\n";
 //! let mut reader = Reader::new(std::io::Cursor::new(data));
 //! let headers = reader.parse_headers()?;
 //! for row in reader.rows() {
 //! }
-//! # Ok::<_, csv3::ReadError>(())
+//! # Ok::<_, csv::ReadError>(())
 //! ```
 //!
 //! # Serde (requires `serde` feature)
 //!
 //! ```no_run
 //! # #[cfg(feature = "serde")] {
-//! use csv3::Reader;
+//! use csv::Reader;
 //! use serde::Deserialize;
 //!
 //! #[derive(Deserialize)]
@@ -71,19 +72,19 @@
 //!     println!("{} is {}", rec.name, rec.age);
 //! }
 //! # }
-//! # Ok::<_, csv3::ReadError>(())
+//! # Ok::<_, csv::ReadError>(())
 //! ```
 //!
 //! # Writer
 //!
 //! ```no_run
-//! use csv3::Writer;
+//! use csv::Writer;
 //!
 //! let mut w = Writer::new(Vec::new());
 //! w.write_row(["name", "age"])?;
 //! w.write_row(["Alice", "30"])?;
 //! let bytes = w.into_inner()?;
-//! # Ok::<_, csv3::WriteError>(())
+//! # Ok::<_, csv::WriteError>(())
 //! ```
 //!
 //! # Design
@@ -103,7 +104,6 @@ extern crate std;
 mod error;
 mod reader;
 
-#[cfg(feature = "std")]
 mod writer;
 
 #[cfg(feature = "serde")]
@@ -111,5 +111,4 @@ mod serde;
 
 pub use error::{ReadError, ReadErrorKind, WriteError};
 pub use reader::{BytesFields, BytesRow, BytesRows, FieldRange, Fields, Read, Reader, Row, Rows};
-#[cfg(feature = "std")]
-pub use writer::Writer;
+pub use writer::{Write, Writer};

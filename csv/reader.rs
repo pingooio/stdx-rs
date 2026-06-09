@@ -77,41 +77,65 @@ pub struct FieldRange {
 }
 
 pub struct Reader<R> {
+    /// Raw input data read from source.
     buf: Vec<u8>,
+    /// Temporary storage for quoted field content (unescaped).
     scratch: Vec<u8>,
+    /// Field ranges into `buf` or `scratch` for the current row.
     ranges: Vec<RawField>,
+    /// Start of unconsumed data in `buf`.
     start: usize,
+    /// End of valid data in `buf`.
     end: usize,
+    /// Current line number (1-based).
     line: usize,
+    /// Start of current unquoted field within `buf`.
     field_start: usize,
+    /// Start of current quoted field within `scratch`.
     scratch_field_start: usize,
+    /// Current parser state machine position.
     state: State,
+    /// Field delimiter byte (default `,`).
     delimiter: u8,
+    /// If true, rows may have varying field counts.
     flexible: bool,
+    /// Expected field count per row, inferred from the first data row.
     num_fields: Option<usize>,
+    /// Running max row-byte-length, used to pre-size the next row buffer.
     row_size_hint: usize,
+    /// True once `parse_headers` or `set_headers` has been called.
     headers_parsed: bool,
+    /// A bare `\r` was the last byte of the previous buffer; next `\n` should be skipped.
     pending_cr: bool,
+    /// Column names, populated by `parse_headers` or `set_headers`.
     headers: Vec<String>,
     #[cfg(feature = "serde")]
+    /// Map from header name → column index for serde field lookup.
     header_map: Option<Rc<BTreeMap<String, usize>>>,
+    /// The underlying data source.
     source: R,
+    /// True when the source has signalled end-of-input.
     eof: bool,
 }
 
 // ── Common methods (always available) ─────────────────────────────────
 
 impl<R> Reader<R> {
+    /// Sets the field delimiter byte (default is `,`).
     pub fn set_delimiter(&mut self, byte: u8) -> &mut Self {
         self.delimiter = byte;
         self
     }
 
+    /// Sets whether variable field counts are allowed (default is `false`).
     pub fn set_flexible(&mut self, yes: bool) -> &mut Self {
         self.flexible = yes;
         self
     }
 
+    /// Sets the column names for header-based serde deserialization.
+    ///
+    /// Calling this marks headers as parsed so `reader.headers()` returns `Some`.
     pub fn set_headers(&mut self, headers: Vec<String>) -> &mut Self {
         self.headers_parsed = true;
         self.headers = headers;
@@ -128,10 +152,12 @@ impl<R> Reader<R> {
         self
     }
 
+    /// Returns `Some(&[String])` if headers were parsed or set, `None` otherwise.
     pub fn headers(&self) -> Option<&[String]> {
         if self.headers_parsed { Some(&self.headers) } else { None }
     }
 
+    /// Moves unconsumed data to the front of `buf` and truncates.
     fn compact(&mut self) {
         if self.start > 0 {
             let remaining = self.end - self.start;
@@ -144,6 +170,10 @@ impl<R> Reader<R> {
         }
     }
 
+    /// Consumes a `\r\n`, `\n`, or `\r` line ending, incrementing the line counter.
+    ///
+    /// If a bare `\r` is at the end of the buffer, sets `pending_cr` so the
+    /// following `\n` is skipped on the next read.
     fn consume_newline(&mut self) {
         if self.start < self.end && self.buf[self.start] == b'\r' {
             self.start += 1;
@@ -156,6 +186,10 @@ impl<R> Reader<R> {
         self.line += 1;
     }
 
+    /// Pushes a `RawField` entry for the current unquoted or empty field.
+    ///
+    /// Does nothing in the `AfterQuote` state (field already recorded).
+    /// Panics (unreachable) if called in the `InQuoted` state.
     fn finalize_current_field(&mut self) {
         match self.state {
             State::InUnquoted => {
@@ -179,6 +213,7 @@ impl<R> Reader<R> {
         }
     }
 
+    /// Assembles the parsed fields into an owned `BytesRow`, checking field-count consistency.
     fn build_bytes_row(&mut self, error: Option<ReadError>) -> BytesRow {
         let mut total: usize = 0;
         for r in &self.ranges {
@@ -236,6 +271,7 @@ impl<R> Reader<R> {
         }
     }
 
+    /// Wraps the bytes row into a `Row`, attaching the header map if available.
     fn build_row(&mut self, error: Option<ReadError>) -> Row {
         let bytes_row = self.build_bytes_row(error);
         Row {
@@ -281,6 +317,10 @@ impl<R: Read> Reader<R> {
         }
     }
 
+    /// Reads more data from the source into `buf`, updating `self.end`.
+    ///
+    /// Returns `Ok(true)` if new data was loaded, `Ok(false)` at EOF, or `Err` on I/O error.
+    /// Once EOF is reached, subsequent calls return `Ok(false)` without re-reading.
     fn fill_buf(&mut self) -> Result<bool, ReadError> {
         if self.eof {
             return Ok(false);
@@ -294,6 +334,11 @@ impl<R: Read> Reader<R> {
         }
     }
 
+    /// Parses one CSV row from the input, or returns `None` at EOF.
+    ///
+    /// The row's fields are assembled into an owned `Row`. Errors (I/O,
+    /// unterminated quotes, trailing content, inconsistent field counts)
+    /// are stored on the `Row` and deferred until access.
     fn read_row(&mut self) -> Option<Row> {
         self.compact();
         self.ranges.clear();
@@ -460,6 +505,11 @@ impl<R: Read> Reader<R> {
         }
     }
 
+    /// Parses the first row as column headers and stores them internally.
+    ///
+    /// Returns the header strings. Returns an empty `Vec` if the CSV is empty.
+    /// After calling this, `reader.headers()` returns `Some(...)` and serde
+    /// deserialization matches struct fields by name.
     pub fn parse_headers(&mut self) -> Result<Vec<String>, ReadError> {
         self.headers_parsed = true;
         let row = match self.read_row() {
@@ -476,11 +526,14 @@ impl<R: Read> Reader<R> {
         Ok(h)
     }
 
+    /// Returns an iterator over `Row` values (validated as UTF-8).
     pub fn rows(&mut self) -> Rows<'_, R> {
         Rows {
             reader: self,
         }
     }
+
+    /// Returns an iterator over `BytesRow` values (no UTF-8 validation).
     pub fn rows_bytes(&mut self) -> BytesRows<'_, R> {
         BytesRows {
             reader: self,
@@ -601,7 +654,7 @@ impl Row {
         Fields {
             buf: &self.inner.buf,
             iter: self.inner.ranges.iter(),
-            error: self.inner.error.is_some(),
+            error: self.inner.error.as_ref().map(|e| e.kind.clone()),
         }
     }
 }
@@ -610,15 +663,15 @@ impl fmt::Debug for Row {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.inner.error {
             Some(e) => write!(f, "Row(Err({e}))"),
-            None => f
-                .debug_list()
-                .entries(
-                    self.inner
-                        .ranges
-                        .iter()
-                        .map(|r| unsafe { core::str::from_utf8_unchecked(&self.inner.buf[r.start..r.end]) }),
-                )
-                .finish(),
+            None => {
+                f.debug_list()
+                    .entries(
+                        self.inner.ranges.iter().map(|r| {
+                            core::str::from_utf8(&self.inner.buf[r.start..r.end]).unwrap_or("<invalid utf-8>")
+                        }),
+                    )
+                    .finish()
+            }
         }
     }
 }
@@ -626,15 +679,15 @@ impl fmt::Debug for Row {
 pub struct Fields<'a> {
     buf: &'a [u8],
     iter: core::slice::Iter<'a, FieldRange>,
-    error: bool,
+    error: Option<ReadErrorKind>,
 }
 
 impl<'a> Iterator for Fields<'a> {
     type Item = Result<&'a str, ReadError>;
     fn next(&mut self) -> Option<Self::Item> {
         let r = self.iter.next()?;
-        if self.error {
-            return Some(Err(ReadError::new(ReadErrorKind::Io, 0, 0)));
+        if let Some(ref kind) = self.error {
+            return Some(Err(ReadError::new(kind.clone(), 0, 0)));
         }
         Some(
             core::str::from_utf8(&self.buf[r.start..r.end])

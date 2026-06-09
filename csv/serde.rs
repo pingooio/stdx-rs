@@ -24,7 +24,7 @@ impl Row {
     /// # Example
     ///
     /// ```no_run
-    /// use csv3::Reader;
+    /// use csv::Reader;
     /// use serde::Deserialize;
     ///
     /// #[derive(Deserialize)]
