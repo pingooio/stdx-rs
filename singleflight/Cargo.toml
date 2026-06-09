@@ -1,0 +1,12 @@
+[package]
+name = "singleflight"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Deduplicate concurrent async function calls by key"
+
+[lib]
+path = "./singleflight.rs"
+
+[dependencies]
+tokio = { workspace = true }

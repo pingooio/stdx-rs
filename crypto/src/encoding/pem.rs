@@ -45,7 +45,9 @@ impl core::fmt::Display for PemError<'_> {
             PemError::LabelMismatch {
                 expected,
                 actual,
-            } => write!(f, "label mismatch: expected '{expected}', got '{actual}'"),
+            } => {
+                write!(f, "label mismatch: expected '{expected}', got '{actual}'")
+            }
         }
     }
 }
