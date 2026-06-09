@@ -1,0 +1,17 @@
+[package]
+name = "csv2"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[lib]
+path = "./csv2.rs"
+
+[features]
+default = ["std"]
+std = []
+serde = ["dep:serde"]
+
+[dependencies]
+memchr = { workspace = true }
+serde = { workspace = true, optional = true }
