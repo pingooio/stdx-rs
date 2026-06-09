@@ -8,4 +8,4 @@ description = "Load environment variables from .env files"
 path = "./dotenv.rs"
 
 [dependencies]
-dotenv-derive = { path = "./dotenv-derive" }
+dotenv_derive = { path = "./dotenv_derive" }
