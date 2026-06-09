@@ -14,14 +14,14 @@ use crate::error::WriteError;
 /// # Example
 ///
 /// ```no_run
-/// use csv3::Writer;
+/// use csv::Writer;
 ///
 /// let mut w = Writer::new(Vec::new());
 /// w.write_row(["name", "age", "city"])?;
 /// w.write_row(["Alice", "30", "New York, NY"])?;
 /// let result = String::from_utf8(w.into_inner()?).unwrap();
 /// assert_eq!(result, "name,age,city\r\nAlice,30,\"New York, NY\"\r\n");
-/// # Ok::<_, csv3::WriteError>(())
+/// # Ok::<_, csv::WriteError>(())
 /// ```
 pub struct Writer<W: Write> {
     writer: Option<W>,
@@ -53,22 +53,22 @@ impl<W: Write> Writer<W> {
     /// Set the field delimiter byte (default is `,`).
     ///
     /// ```no_run
-    /// use csv3::Writer;
+    /// use csv::Writer;
     /// let mut w = Writer::new(Vec::new());
     /// w.delimiter(b'\t');
     /// w.write_row(["a", "b", "c"])?;
-    /// # Ok::<_, csv3::WriteError>(())
+    /// # Ok::<_, csv::WriteError>(())
     /// ```
     pub fn delimiter(&mut self, byte: u8) -> &mut Self {
         self.delimiter = byte;
         self
     }
 
-    /// Set whether variable field counts are allowed (default is `false`).
+    /// Enable or disable the field count consistency check.
     ///
-    /// When `false` (strict), all rows must have the same number of fields.
-    /// When `true`, rows may vary in field count.
-    pub fn set_flexible(&mut self, yes: bool) -> &mut Self {
+    /// When `false` (default), all rows must have the same number of fields.
+    /// When `true`, rows are allowed to vary in width.
+    pub fn flexible(&mut self, yes: bool) -> &mut Self {
         self.flexible = yes;
         self
     }

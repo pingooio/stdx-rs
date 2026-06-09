@@ -1,14 +1,53 @@
 #[cfg(feature = "serde")]
 use alloc::collections::BTreeMap;
+#[cfg(feature = "serde")]
+use alloc::rc::Rc;
 use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use core::{fmt, marker::PhantomData, str};
+use core::fmt;
 
-use crate::error::ReadError;
+use crate::error::{ReadError, ReadErrorKind};
+
+/// Custom read abstraction that allows `Reader` to work without `std::io::Read`.
+///
+/// This trait is automatically implemented for `&[u8]` and, when the `std`
+/// feature is enabled, for any `std::io::Read` type.
+pub trait Read {
+    /// Read data into `buf`, appending to its contents.
+    ///
+    /// Returns `Ok(true)` if more data *may* be available (caller should try
+    /// again), or `Ok(false)` to signal end-of-input.
+    fn read(&mut self, buf: &mut Vec<u8>) -> Result<bool, ReadError>;
+}
+
+#[cfg(not(feature = "std"))]
+impl Read for &[u8] {
+    fn read(&mut self, buf: &mut Vec<u8>) -> Result<bool, ReadError> {
+        let chunk = 16384;
+        let to_copy = chunk.min(self.len());
+        if to_copy == 0 {
+            return Ok(false);
+        }
+        buf.extend_from_slice(&self[..to_copy]);
+        *self = &self[to_copy..];
+        Ok(true)
+    }
+}
+
 #[cfg(feature = "std")]
-use crate::error::ReadErrorKind;
+impl<R: std::io::Read> Read for R {
+    fn read(&mut self, buf: &mut Vec<u8>) -> Result<bool, ReadError> {
+        let mut tmp = [0u8; 16384];
+        let n = std::io::Read::read(self, &mut tmp)?;
+        if n == 0 {
+            return Ok(false);
+        }
+        buf.extend_from_slice(&tmp[..n]);
+        Ok(true)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum State {
@@ -19,47 +58,28 @@ enum State {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum Src {
+enum Src {
     Buf,
     Scratch,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct FieldRange {
-    pub(crate) start: usize,
-    pub(crate) end: usize,
-    pub(crate) src: Src,
+struct RawField {
+    start: usize,
+    end: usize,
+    src: Src,
 }
 
-/// Reads CSV data from a `std::io::Read` source.
-///
-/// Rows are yielded by calling [`rows`], which returns an iterator
-/// of `Row<'_>`. Errors are deferred to the [`Row`] methods.
-///
-/// # Example
-///
-/// ```no_run
-/// use csv::Reader;
-/// use std::fs::File;
-///
-/// let mut reader = Reader::from_reader(File::open("data.csv")?);
-/// for row in reader.rows() {
-///     for field in row.fields()? {
-///     }
-/// }
-/// # Ok::<_, csv::ReadError>(())
-/// ```
-///
-/// # Headers
-///
-/// Use [`parse_headers`] to read the first row as column headers.
-///
-/// [`rows`]: Reader::rows
-/// [`parse_headers`]: Reader::parse_headers
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FieldRange {
+    pub start: usize,
+    pub end: usize,
+}
+
 pub struct Reader<R> {
-    pub(crate) buf: Vec<u8>,
-    pub(crate) scratch: Vec<u8>,
-    pub(crate) ranges: Vec<FieldRange>,
+    buf: Vec<u8>,
+    scratch: Vec<u8>,
+    ranges: Vec<RawField>,
     start: usize,
     end: usize,
     line: usize,
@@ -67,101 +87,49 @@ pub struct Reader<R> {
     scratch_field_start: usize,
     state: State,
     delimiter: u8,
+    flexible: bool,
+    num_fields: Option<usize>,
+    row_size_hint: usize,
     headers_parsed: bool,
     pending_cr: bool,
-    pub(crate) headers: Vec<String>,
+    headers: Vec<String>,
     #[cfg(feature = "serde")]
-    pub(crate) header_map: Option<BTreeMap<String, usize>>,
+    header_map: Option<Rc<BTreeMap<String, usize>>>,
     source: R,
     eof: bool,
 }
 
+// ── Common methods (always available) ─────────────────────────────────
+
 impl<R> Reader<R> {
-    /// Set the field delimiter byte (default is `,`).
     pub fn set_delimiter(&mut self, byte: u8) -> &mut Self {
         self.delimiter = byte;
         self
     }
 
-    /// Return the column headers, if [`parse_headers`] was called.
-    ///
-    /// [`parse_headers`]: Reader::parse_headers
-    pub fn headers(&self) -> Option<&[String]> {
-        if self.headers_parsed { Some(&self.headers) } else { None }
-    }
-}
-
-fn is_newline(b: u8) -> bool {
-    b == b'\n' || b == b'\r'
-}
-
-#[cfg(feature = "std")]
-impl<R: std::io::Read> Reader<R> {
-    /// Create a reader from any `std::io::Read` source.
-    ///
-    /// Data is streamed in chunks as rows are parsed, without loading
-    /// the entire input into memory.
-    pub fn from_reader(source: R) -> Self {
-        Reader {
-            buf: Vec::with_capacity(65536),
-            scratch: Vec::new(),
-            ranges: Vec::new(),
-            start: 0,
-            end: 0,
-            line: 1,
-            field_start: 0,
-            scratch_field_start: 0,
-            state: State::StartOfField,
-            delimiter: b',',
-            headers_parsed: false,
-            pending_cr: false,
-            headers: Vec::new(),
-            #[cfg(feature = "serde")]
-            header_map: None,
-            source,
-            eof: false,
-        }
+    pub fn set_flexible(&mut self, yes: bool) -> &mut Self {
+        self.flexible = yes;
+        self
     }
 
-    /// Read and return the first row as column headers.
-    ///
-    /// Must be called before iterating with [`rows`]. The parsed headers
-    /// are stored internally and used by [`Row::deserialize`] for
-    /// header-based field mapping.
-    pub fn parse_headers(&mut self) -> Result<Vec<String>, ReadError> {
+    pub fn set_headers(&mut self, headers: Vec<String>) -> &mut Self {
         self.headers_parsed = true;
-        let row = match self.read_row() {
-            Some(row) => row,
-            None => return Ok(Vec::new()),
-        };
-        let h: Vec<String> = row.fields()?.map(|s| s.to_string()).collect();
-        self.headers = h.clone();
+        self.headers = headers;
         #[cfg(feature = "serde")]
         {
-            self.header_map = Some(h.iter().enumerate().map(|(i, name)| (name.clone(), i)).collect());
+            let map: BTreeMap<String, usize> = self
+                .headers
+                .iter()
+                .enumerate()
+                .map(|(i, name)| (name.clone(), i))
+                .collect();
+            self.header_map = Some(Rc::new(map));
         }
-        Ok(h)
+        self
     }
 
-    /// Return an iterator over the remaining rows.
-    ///
-    /// If [`parse_headers`] was called, iteration starts after the header
-    /// row. Otherwise, it starts from the first row.
-    ///
-    /// ```no_run
-    /// use csv::Reader;
-    /// let mut reader = Reader::from_reader(std::io::Cursor::new(b"a,b\n1,2\n"));
-    /// for row in reader.rows() {
-    ///     for field in row.fields()? {
-    ///     }
-    /// }
-    /// # Ok::<_, csv::ReadError>(())
-    /// ```
-    pub fn rows(&mut self) -> Rows<'_, R> {
-        Rows {
-            reader: self,
-            _marker: PhantomData,
-        }
+    pub fn headers(&self) -> Option<&[String]> {
+        if self.headers_parsed { Some(&self.headers) } else { None }
     }
 
     fn compact(&mut self) {
@@ -176,21 +144,6 @@ impl<R: std::io::Read> Reader<R> {
         }
     }
 
-    fn fill_buf(&mut self) -> Result<bool, ReadError> {
-        if self.eof {
-            return Ok(false);
-        }
-        let mut tmp = [0u8; 16384];
-        let n = self.source.read(&mut tmp)?;
-        if n == 0 {
-            self.eof = true;
-            return Ok(false);
-        }
-        self.buf.extend_from_slice(&tmp[..n]);
-        self.end = self.buf.len();
-        Ok(true)
-    }
-
     fn consume_newline(&mut self) {
         if self.start < self.end && self.buf[self.start] == b'\r' {
             self.start += 1;
@@ -203,20 +156,145 @@ impl<R: std::io::Read> Reader<R> {
         self.line += 1;
     }
 
-    fn validate_utf8(&self) -> Option<ReadError> {
-        for fr in &self.ranges {
-            let ok = match fr.src {
-                Src::Buf => core::str::from_utf8(&self.buf[fr.start..fr.end]).is_ok(),
-                Src::Scratch => core::str::from_utf8(&self.scratch[fr.start..fr.end]).is_ok(),
-            };
-            if !ok {
-                return Some(ReadError::new(ReadErrorKind::InvalidUtf8, self.line, 0));
+    fn finalize_current_field(&mut self) {
+        match self.state {
+            State::InUnquoted => {
+                self.ranges.push(RawField {
+                    start: self.field_start,
+                    end: self.start,
+                    src: Src::Buf,
+                });
             }
+            State::AfterQuote => {}
+            State::StartOfField => {
+                if !self.ranges.is_empty() {
+                    self.ranges.push(RawField {
+                        start: self.start,
+                        end: self.start,
+                        src: Src::Buf,
+                    });
+                }
+            }
+            State::InQuoted => unreachable!(),
         }
-        None
     }
 
-    fn read_row<'s>(&'s mut self) -> Option<Row<'s>> {
+    fn build_bytes_row(&mut self, error: Option<ReadError>) -> BytesRow {
+        let mut total: usize = 0;
+        for r in &self.ranges {
+            total += r.end - r.start;
+        }
+
+        let cap = if total > 0 { total } else { self.row_size_hint.max(64) };
+        let mut row_buf = Vec::with_capacity(cap);
+        let mut row_ranges = Vec::with_capacity(self.ranges.len());
+
+        for r in &self.ranges {
+            let slice = match r.src {
+                Src::Buf => &self.buf[r.start..r.end],
+                Src::Scratch => &self.scratch[r.start..r.end],
+            };
+            let start = row_buf.len();
+            row_buf.extend_from_slice(slice);
+            let end = row_buf.len();
+            row_ranges.push(FieldRange {
+                start,
+                end,
+            });
+        }
+
+        let field_count = row_ranges.len();
+
+        let error = if !self.flexible {
+            error.or_else(|| match self.num_fields {
+                Some(expected) if field_count != expected => Some(ReadError::new(
+                    ReadErrorKind::InconsistentFieldCount {
+                        expected,
+                        found: field_count,
+                    },
+                    self.line,
+                    0,
+                )),
+                _ => None,
+            })
+        } else {
+            error
+        };
+
+        if self.num_fields.is_none() && field_count > 0 {
+            self.num_fields = Some(field_count);
+        }
+
+        if row_buf.len() > self.row_size_hint {
+            self.row_size_hint = row_buf.len();
+        }
+
+        BytesRow {
+            buf: row_buf,
+            ranges: row_ranges,
+            error,
+        }
+    }
+
+    fn build_row(&mut self, error: Option<ReadError>) -> Row {
+        let bytes_row = self.build_bytes_row(error);
+        Row {
+            inner: bytes_row,
+            #[cfg(feature = "serde")]
+            header_map: self.header_map.clone(),
+        }
+    }
+}
+
+fn is_newline(b: u8) -> bool {
+    b == b'\n' || b == b'\r'
+}
+
+// ── Generic Reader (any Read source) ──────────────────────
+
+impl<R: Read> Reader<R> {
+    /// Creates a new `Reader` from any [`Read`] source.
+    ///
+    /// This works with `&[u8]`, `std::io::Cursor`, `std::fs::File`, etc.
+    pub fn new(source: R) -> Self {
+        Reader {
+            buf: Vec::with_capacity(65536),
+            scratch: Vec::new(),
+            ranges: Vec::new(),
+            start: 0,
+            end: 0,
+            line: 1,
+            field_start: 0,
+            scratch_field_start: 0,
+            state: State::StartOfField,
+            delimiter: b',',
+            flexible: false,
+            num_fields: None,
+            row_size_hint: 0,
+            headers_parsed: false,
+            pending_cr: false,
+            headers: Vec::new(),
+            #[cfg(feature = "serde")]
+            header_map: None,
+            source,
+            eof: false,
+        }
+    }
+
+    fn fill_buf(&mut self) -> Result<bool, ReadError> {
+        if self.eof {
+            return Ok(false);
+        }
+        if self.source.read(&mut self.buf)? {
+            self.end = self.buf.len();
+            Ok(true)
+        } else {
+            self.eof = true;
+            Ok(false)
+        }
+    }
+
+    fn read_row(&mut self) -> Option<Row> {
         self.compact();
         self.ranges.clear();
         self.scratch.clear();
@@ -228,10 +306,10 @@ impl<R: std::io::Read> Reader<R> {
                     Err(e) => {
                         self.eof = true;
                         return match self.state {
-                            State::InQuoted => Some(self.build_row_with(Some(e))),
+                            State::InQuoted => Some(self.build_row(Some(e))),
                             _ => {
                                 self.finalize_current_field();
-                                Some(self.build_row_with(Some(e)))
+                                Some(self.build_row(Some(e)))
                             }
                         };
                     }
@@ -240,14 +318,14 @@ impl<R: std::io::Read> Reader<R> {
                             return None;
                         }
                         return match self.state {
-                            State::InQuoted => Some(self.build_row_with(Some(ReadError::new(
+                            State::InQuoted => Some(self.build_row(Some(ReadError::new(
                                 ReadErrorKind::UnterminatedQuote,
                                 self.line,
                                 0,
                             )))),
                             _ => {
                                 self.finalize_current_field();
-                                Some(self.build_row_with(None))
+                                Some(self.build_row(None))
                             }
                         };
                     }
@@ -267,7 +345,7 @@ impl<R: std::io::Read> Reader<R> {
                 State::StartOfField => {
                     if byte == b'\r' || byte == b'\n' {
                         if !self.ranges.is_empty() {
-                            self.ranges.push(FieldRange {
+                            self.ranges.push(RawField {
                                 start: self.start,
                                 end: self.start,
                                 src: Src::Buf,
@@ -277,11 +355,11 @@ impl<R: std::io::Read> Reader<R> {
                         if self.ranges.is_empty() {
                             continue;
                         }
-                        return Some(self.build_row_with(None));
+                        return Some(self.build_row(None));
                     }
                     self.field_start = self.start;
                     if byte == self.delimiter {
-                        self.ranges.push(FieldRange {
+                        self.ranges.push(RawField {
                             start: self.start,
                             end: self.start,
                             src: Src::Buf,
@@ -304,7 +382,7 @@ impl<R: std::io::Read> Reader<R> {
                     match memchr::memchr3(self.delimiter, b'\r', b'\n', haystack) {
                         Some(offset) => {
                             let pos = self.start + offset;
-                            self.ranges.push(FieldRange {
+                            self.ranges.push(RawField {
                                 start: self.field_start,
                                 end: pos,
                                 src: Src::Buf,
@@ -316,7 +394,7 @@ impl<R: std::io::Read> Reader<R> {
                             } else {
                                 self.start = pos;
                                 self.consume_newline();
-                                return Some(self.build_row_with(None));
+                                return Some(self.build_row(None));
                             }
                         }
                         None => {
@@ -336,7 +414,7 @@ impl<R: std::io::Read> Reader<R> {
                                 self.scratch.push(b'"');
                                 self.start = after_quote + 1;
                             } else if after_quote < self.end {
-                                self.ranges.push(FieldRange {
+                                self.ranges.push(RawField {
                                     start: self.scratch_field_start,
                                     end: self.scratch.len(),
                                     src: Src::Scratch,
@@ -347,7 +425,7 @@ impl<R: std::io::Read> Reader<R> {
                                 self.scratch.push(b'"');
                                 self.start = after_quote + 1;
                             } else {
-                                self.ranges.push(FieldRange {
+                                self.ranges.push(RawField {
                                     start: self.scratch_field_start,
                                     end: self.scratch.len(),
                                     src: Src::Scratch,
@@ -369,9 +447,9 @@ impl<R: std::io::Read> Reader<R> {
                         self.state = State::StartOfField;
                     } else if is_newline(byte) {
                         self.consume_newline();
-                        return Some(self.build_row_with(None));
+                        return Some(self.build_row(None));
                     } else {
-                        return Some(self.build_row_with(Some(ReadError::new(
+                        return Some(self.build_row(Some(ReadError::new(
                             ReadErrorKind::TrailingContent,
                             self.line,
                             0,
@@ -382,171 +460,187 @@ impl<R: std::io::Read> Reader<R> {
         }
     }
 
-    fn finalize_current_field(&mut self) {
-        match self.state {
-            State::InUnquoted => {
-                self.ranges.push(FieldRange {
-                    start: self.field_start,
-                    end: self.start,
-                    src: Src::Buf,
-                });
-            }
-            State::AfterQuote => {}
-            State::StartOfField => {
-                if !self.ranges.is_empty() {
-                    self.ranges.push(FieldRange {
-                        start: self.start,
-                        end: self.start,
-                        src: Src::Buf,
-                    });
-                }
-            }
-            State::InQuoted => unreachable!(),
+    pub fn parse_headers(&mut self) -> Result<Vec<String>, ReadError> {
+        self.headers_parsed = true;
+        let row = match self.read_row() {
+            Some(row) => row,
+            None => return Ok(Vec::new()),
+        };
+        let h: Vec<String> = row.to_vec()?.iter().map(|s| s.to_string()).collect();
+        self.headers = h.clone();
+        #[cfg(feature = "serde")]
+        {
+            let map: BTreeMap<String, usize> = h.iter().enumerate().map(|(i, name)| (name.clone(), i)).collect();
+            self.header_map = Some(Rc::new(map));
         }
+        Ok(h)
     }
 
-    fn build_row_with(&self, error: Option<ReadError>) -> Row<'_> {
-        let error = error.or_else(|| self.validate_utf8());
-        Row {
-            buf: &self.buf[..self.end],
-            scratch: &self.scratch,
-            ranges: &self.ranges,
-            error,
-            #[cfg(feature = "serde")]
-            header_map: self.header_map.as_ref(),
+    pub fn rows(&mut self) -> Rows<'_, R> {
+        Rows {
+            reader: self,
+        }
+    }
+    pub fn rows_bytes(&mut self) -> BytesRows<'_, R> {
+        BytesRows {
+            reader: self,
         }
     }
 }
 
-#[cfg(feature = "std")]
-impl<'a> Reader<&'a [u8]> {
-    /// Create a reader from a byte slice for in-memory parsing.
-    ///
-    /// This is a convenience wrapper around `from_reader`.
-    ///
-    /// ```rust
-    /// use csv::Reader;
-    /// let mut reader = Reader::from_bytes(b"a,b\n1,2\n");
-    /// let fields: Vec<Vec<String>> = reader.rows().map(|r| r.all().unwrap()).collect();
-    /// assert_eq!(fields, vec![vec!["a".to_string(), "b".to_string()], vec!["1".to_string(), "2".to_string()]]);
-    /// ```
-    pub fn from_bytes(bytes: &'a [u8]) -> Self {
-        Reader::from_reader(bytes)
-    }
-}
+// ── BytesRow ──────────────────────────────────────────────────────────
 
-/// A single row of CSV data.
-///
-/// Borrows from the `Reader` that produced it and cannot outlive it.
-/// Fields are already unescaped: surrounding quotes are stripped and
-/// `""` escape sequences are resolved to `"`.
-///
-/// Errors from parsing are stored in the [`Row`] and returned when
-/// accessing fields via [`fields`] or [`all`].
-///
-/// [`fields`]: Row::fields
-/// [`all`]: Row::all
-pub struct Row<'a> {
-    buf: &'a [u8],
-    scratch: &'a [u8],
-    ranges: &'a [FieldRange],
+pub struct BytesRow {
+    buf: Vec<u8>,
+    ranges: Vec<FieldRange>,
     error: Option<ReadError>,
-    #[cfg(feature = "serde")]
-    pub(crate) header_map: Option<&'a BTreeMap<String, usize>>,
 }
 
-impl Row<'_> {
-    /// Return the parse error, if any.
+impl BytesRow {
     pub fn error(&self) -> Option<&ReadError> {
         self.error.as_ref()
     }
 
-    /// Number of fields in this row (0 on error).
     pub fn len(&self) -> usize {
         self.ranges.len()
     }
 
-    /// Returns `true` if the row has no fields.
     pub fn is_empty(&self) -> bool {
         self.ranges.is_empty()
     }
 
-    /// Iterate over all fields as `&str`, zero allocation.
-    ///
-    /// Returns an error if this row was the result of a parse failure.
-    ///
-    /// ```no_run
-    /// use csv::Reader;
-    /// let mut reader = Reader::from_reader(std::io::Cursor::new(b"\"hello\",world\n"));
-    /// for row in reader.rows() {
-    ///     for field in row.fields()? {
-    ///     }
-    /// }
-    /// # Ok::<_, csv::ReadError>(())
-    /// ```
-    pub fn fields(&self) -> Result<Fields<'_>, ReadError> {
-        if let Some(e) = &self.error {
-            return Err(e.clone());
-        }
-        Ok(Fields {
-            buf: self.buf,
-            scratch: self.scratch,
-            iter: self.ranges.iter(),
-        })
+    pub fn get(&self, index: usize) -> Option<&[u8]> {
+        self.ranges.get(index).map(|r| &self.buf[r.start..r.end])
     }
 
-    /// Collect all fields into owned `String`s.
-    ///
-    /// Returns an error if this row was the result of a parse failure.
-    pub fn all(&self) -> Result<Vec<String>, ReadError> {
-        Ok(self.fields()?.map(|f| f.to_string()).collect())
+    pub fn to_vec(&self) -> Result<Vec<&[u8]>, ReadError> {
+        if let Some(ref e) = self.error {
+            return Err(e.clone());
+        }
+        Ok(self.ranges.iter().map(|r| &self.buf[r.start..r.end]).collect())
+    }
+
+    pub fn iter(&self) -> BytesFields<'_> {
+        BytesFields {
+            buf: &self.buf,
+            iter: self.ranges.iter(),
+        }
     }
 }
 
-impl<'a> fmt::Debug for Row<'a> {
+impl fmt::Debug for BytesRow {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.error {
-            Some(e) => write!(f, "Row(Err({e}))"),
+            Some(e) => write!(f, "BytesRow(Err({e}))"),
             None => f
                 .debug_list()
-                .entries(self.ranges.iter().map(|r| {
-                    let slice = match r.src {
-                        Src::Buf => &self.buf[r.start..r.end],
-                        Src::Scratch => &self.scratch[r.start..r.end],
-                    };
-                    // SAFETY: `build_row_with` validates every field range as
-                    // valid UTF-8 before constructing the `Row`.
-                    unsafe { str::from_utf8_unchecked(slice) }
-                }))
+                .entries(self.ranges.iter().map(|r| &self.buf[r.start..r.end]))
                 .finish(),
         }
     }
 }
 
-/// A zero-allocation iterator over the fields of a [`Row`].
-///
-/// Yields `&str` for each field. Created by [`Row::fields`].
-pub struct Fields<'a> {
+pub struct BytesFields<'a> {
     buf: &'a [u8],
-    scratch: &'a [u8],
     iter: core::slice::Iter<'a, FieldRange>,
 }
 
-impl<'a> Iterator for Fields<'a> {
-    type Item = &'a str;
-
-    fn next(&mut self) -> Option<&'a str> {
+impl<'a> Iterator for BytesFields<'a> {
+    type Item = &'a [u8];
+    fn next(&mut self) -> Option<&'a [u8]> {
         let r = self.iter.next()?;
-        let slice = match r.src {
-            Src::Buf => &self.buf[r.start..r.end],
-            Src::Scratch => &self.scratch[r.start..r.end],
-        };
-        // SAFETY: `build_row_with` validates every field range as valid UTF-8
-        // before constructing the `Row`, so the byte slice is guaranteed to be
-        // valid UTF-8 at this point.
-        Some(unsafe { str::from_utf8_unchecked(slice) })
+        Some(&self.buf[r.start..r.end])
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.iter.size_hint()
+    }
+}
+
+impl<'a> ExactSizeIterator for BytesFields<'a> {}
+
+// ── Row ───────────────────────────────────────────────────────────────
+
+pub struct Row {
+    pub(crate) inner: BytesRow,
+    #[cfg(feature = "serde")]
+    pub(crate) header_map: Option<Rc<BTreeMap<String, usize>>>,
+}
+
+impl Row {
+    pub fn error(&self) -> Option<&ReadError> {
+        self.inner.error()
+    }
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
     }
 
+    pub fn get(&self, index: usize) -> Option<Result<&str, ReadError>> {
+        self.inner
+            .get(index)
+            .map(|bytes| core::str::from_utf8(bytes).map_err(|_| ReadError::new(ReadErrorKind::InvalidUtf8, 0, 0)))
+    }
+
+    pub fn to_vec(&self) -> Result<Vec<&str>, ReadError> {
+        if let Some(ref e) = self.inner.error {
+            return Err(e.clone());
+        }
+        self.inner
+            .ranges
+            .iter()
+            .map(|r| {
+                core::str::from_utf8(&self.inner.buf[r.start..r.end])
+                    .map_err(|_| ReadError::new(ReadErrorKind::InvalidUtf8, 0, 0))
+            })
+            .collect()
+    }
+
+    pub fn iter(&self) -> Fields<'_> {
+        Fields {
+            buf: &self.inner.buf,
+            iter: self.inner.ranges.iter(),
+            error: self.inner.error.is_some(),
+        }
+    }
+}
+
+impl fmt::Debug for Row {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.inner.error {
+            Some(e) => write!(f, "Row(Err({e}))"),
+            None => f
+                .debug_list()
+                .entries(
+                    self.inner
+                        .ranges
+                        .iter()
+                        .map(|r| unsafe { core::str::from_utf8_unchecked(&self.inner.buf[r.start..r.end]) }),
+                )
+                .finish(),
+        }
+    }
+}
+
+pub struct Fields<'a> {
+    buf: &'a [u8],
+    iter: core::slice::Iter<'a, FieldRange>,
+    error: bool,
+}
+
+impl<'a> Iterator for Fields<'a> {
+    type Item = Result<&'a str, ReadError>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let r = self.iter.next()?;
+        if self.error {
+            return Some(Err(ReadError::new(ReadErrorKind::Io, 0, 0)));
+        }
+        Some(
+            core::str::from_utf8(&self.buf[r.start..r.end])
+                .map_err(|_| ReadError::new(ReadErrorKind::InvalidUtf8, 0, 0)),
+        )
+    }
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.iter.size_hint()
     }
@@ -554,40 +648,26 @@ impl<'a> Iterator for Fields<'a> {
 
 impl<'a> ExactSizeIterator for Fields<'a> {}
 
-/// An iterator over the rows of a CSV source.
-///
-/// Created by [`Reader::rows`]. Each item is a [`Row<'_>`](Row) with
-/// errors deferred to its methods.
-///
-/// ```no_run
-/// use csv::Reader;
-/// let mut reader = Reader::from_reader(std::io::Cursor::new(b"a,b\n1,2\n"));
-/// for row in reader.rows() {
-///     let fields = row.all()?;
-/// }
-/// # Ok::<_, csv::ReadError>(())
-/// ```
-pub struct Rows<'r, R> {
-    reader: *mut Reader<R>,
-    _marker: PhantomData<&'r mut Reader<R>>,
+// ── Iterators ─────────────────────────────────────────────────────────
+
+pub struct BytesRows<'r, R> {
+    reader: &'r mut Reader<R>,
 }
 
-#[cfg(feature = "std")]
-impl<'r, R: std::io::Read> Iterator for Rows<'r, R> {
-    type Item = Row<'r>;
-
+impl<'r, R: Read> Iterator for BytesRows<'r, R> {
+    type Item = BytesRow;
     fn next(&mut self) -> Option<Self::Item> {
-        // SAFETY: `Rows` holds a `PhantomData<&'r mut Reader<R>>` that
-        // semantically borrows the reader for `'r`. The raw pointer is
-        // derived from that borrow and remains valid for `'r` since the
-        // `Rows` iterator owns the mutable access.
-        let reader = unsafe { &mut *self.reader };
-        reader
-            .read_row()
-            // SAFETY: The returned `Row<'_>` borrows from `reader`, which is
-            // borrowed as `&'r mut Reader<R>`. The borrow checker prevents
-            // holding a `Row` across the next call to `next()`, so
-            // transmuting to `Row<'r>` is sound.
-            .map(|row| unsafe { core::mem::transmute::<Row<'_>, Row<'r>>(row) })
+        self.reader.read_row().map(|r| r.inner)
+    }
+}
+
+pub struct Rows<'r, R> {
+    reader: &'r mut Reader<R>,
+}
+
+impl<'r, R: Read> Iterator for Rows<'r, R> {
+    type Item = Row;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.reader.read_row()
     }
 }

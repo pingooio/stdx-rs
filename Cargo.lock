@@ -749,6 +749,14 @@ name = "csv_legacy"
 version = "0.1.0"
 
 [[package]]
+name = "csv_legacy2"
+version = "0.1.0"
+dependencies = [
+ "memchr",
+ "serde",
+]
+
+[[package]]
 name = "derive_arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -800,11 +808,11 @@ dependencies = [
 name = "dotenv"
 version = "0.1.0"
 dependencies = [
- "dotenv-derive",
+ "dotenv_derive",
 ]
 
 [[package]]
-name = "dotenv-derive"
+name = "dotenv_derive"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",

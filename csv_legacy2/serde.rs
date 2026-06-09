@@ -14,7 +14,7 @@ use serde::de::{self, DeserializeSeed, Deserializer, Error as _, SeqAccess, Visi
 
 use crate::{error::ReadError, reader::Row};
 
-impl Row {
+impl Row<'_> {
     /// Deserialize this row into a `T`.
     ///
     /// If [`parse_headers`](crate::Reader::parse_headers) was called
@@ -24,13 +24,13 @@ impl Row {
     /// # Example
     ///
     /// ```no_run
-    /// use csv3::Reader;
+    /// use csv::Reader;
     /// use serde::Deserialize;
     ///
     /// #[derive(Deserialize)]
     /// struct Record { name: String, age: u32 }
     ///
-    /// let mut reader = Reader::new(std::io::Cursor::new(b"name,age\nAlice,30\n"));
+    /// let mut reader = Reader::from_reader(std::io::Cursor::new(b"name,age\nAlice,30\n"));
     /// reader.parse_headers()?;
     /// for row in reader.rows() {
     ///     let rec: Record = row.deserialize()?;
@@ -42,12 +42,11 @@ impl Row {
     where
         T: serde::de::DeserializeOwned,
     {
-        let fields: Vec<&str> = self.to_vec()?;
+        let owned: Vec<String> = self.fields()?.map(|s| s.to_string()).collect();
 
-        if let Some(ref header_map_rc) = self.header_map {
-            let header_map: &BTreeMap<String, usize> = &**header_map_rc;
+        if let Some(header_map) = self.header_map {
             let mut deser = HeaderRow {
-                fields: &fields,
+                fields: &owned,
                 header_map,
                 struct_fields: &[],
                 index: 0,
@@ -56,7 +55,7 @@ impl Row {
                 .map_err(|e| ReadError::new(crate::error::ReadErrorKind::Deserialize(e.msg), 0, 0))
         } else {
             let mut deser = PositionalRow {
-                fields: &fields,
+                fields: &owned,
                 index: 0,
             };
             T::deserialize(&mut deser)
@@ -66,7 +65,7 @@ impl Row {
 }
 
 struct HeaderRow<'de> {
-    fields: &'de [&'de str],
+    fields: &'de [String],
     header_map: &'de BTreeMap<String, usize>,
     struct_fields: &'static [&'static str],
     index: usize,
@@ -118,14 +117,14 @@ impl<'de> SeqAccess<'de> for HeaderRow<'de> {
         let val = self
             .header_map
             .get(field_name)
-            .and_then(|&idx| self.fields.get(idx).copied())
+            .and_then(|&idx| self.fields.get(idx).map(|s| s.as_str()))
             .unwrap_or("");
         seed.deserialize(FieldDeserializer(val)).map(Some)
     }
 }
 
 struct PositionalRow<'de> {
-    fields: &'de [&'de str],
+    fields: &'de [String],
     index: usize,
 }
 
@@ -169,13 +168,16 @@ impl<'de> SeqAccess<'de> for PositionalRow<'de> {
         if self.index >= self.fields.len() {
             return Ok(None);
         }
-        let val = self.fields[self.index];
+        let val = self.fields[self.index].as_str();
         self.index += 1;
         seed.deserialize(FieldDeserializer(val)).map(Some)
     }
 }
 
 /// Deserializes a single CSV field value with proper type coercion.
+///
+/// Strings are parsed into the requested type so that fields like
+/// `"30"` can be deserialized into `u32`.
 struct FieldDeserializer<'a>(&'a str);
 
 macro_rules! forward_parse {

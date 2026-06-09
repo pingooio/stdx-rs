@@ -4,14 +4,14 @@
 //! # Quick start
 //!
 //! ```rust
-//! let data: &[u8] = b"name,age,city\nAlice,30,NYC\nBob,25,LA\n";
-//! let mut reader = csv3::Reader::new(data);
+//! let data = b"name,age,city\nAlice,30,NYC\nBob,25,LA\n";
+//! let mut reader = csv::Reader::from_bytes(data);
 //!
 //! for row in reader.rows() {
-//!     for field in row.iter() {
-//!         let field: &str = field.unwrap();
+//!     for field in row.fields().unwrap() {
+//!         // field: &str — already unescaped, no surrounding quotes, `""` resolved
 //!     }
-//!     let fields: Vec<&str> = row.to_vec().unwrap();
+//!     let fields: Vec<String> = row.all().unwrap();
 //! }
 //! ```
 //!
@@ -19,51 +19,48 @@
 //!
 //! | Flag | Default | Description |
 //! |------|---------|-------------|
-//! | `std` | on | Enables `std::io::Read` support for `Reader`, `Writer`, and `std::error::Error` impls. |
+//! | `std` | on | Enables `std::io::Read`, `Writer`, and `std::error::Error` impls. |
 //! | `serde` | off | Enables `Row::deserialize()` for `#[derive(Deserialize)]`. |
 //!
-//! # Streaming from any [`Read`] source
+//! # Streaming from `std::io::Read`
 //!
 //! ```no_run
 //! use std::fs::File;
-//! use csv3::Reader;
+//! use csv::Reader;
 //!
 //! let file = File::open("data.csv")?;
-//! let mut reader = Reader::new(file);
+//! let mut reader = Reader::from_reader(file);
 //!
 //! for row in reader.rows() {
-//!     let name = row.get(0).unwrap().unwrap();
+//!     let name = row.fields()?.next().unwrap();
 //!     println!("{name}");
 //! }
-//! # Ok::<_, csv3::ReadError>(())
+//! # Ok::<_, csv::ReadError>(())
 //! ```
 //!
 //! # Headers
 //!
 //! ```no_run
-//! use csv3::Reader;
+//! use csv::Reader;
 //! let data = b"name,age\nAlice,30\n";
-//! let mut reader = Reader::new(std::io::Cursor::new(data));
+//! let mut reader = Reader::from_reader(std::io::Cursor::new(data));
 //! let headers = reader.parse_headers()?;
 //! for row in reader.rows() {
 //! }
-//! # Ok::<_, csv3::ReadError>(())
+//! # Ok::<_, csv::ReadError>(())
 //! ```
 //!
 //! # Serde (requires `serde` feature)
 //!
 //! ```no_run
 //! # #[cfg(feature = "serde")] {
-//! use csv3::Reader;
+//! use csv::Reader;
 //! use serde::Deserialize;
 //!
 //! #[derive(Deserialize)]
-//! struct Record {
-//!     name: String,
-//!     age: u32,
-//! }
+//! struct Record { name: String, age: u32 }
 //!
-//! let mut reader = Reader::new(std::io::Cursor::new(b"name,age\nAlice,30\n"));
+//! let mut reader = Reader::from_reader(std::io::Cursor::new(b"name,age\nAlice,30\n"));
 //! reader.parse_headers()?;
 //!
 //! for row in reader.rows() {
@@ -71,29 +68,31 @@
 //!     println!("{} is {}", rec.name, rec.age);
 //! }
 //! # }
-//! # Ok::<_, csv3::ReadError>(())
+//! # Ok::<_, csv::ReadError>(())
 //! ```
+//!
+//! When [`parse_headers`] is called before iterating, struct fields are
+//! matched to CSV columns by name. Without it, fields are mapped positionally.
 //!
 //! # Writer
 //!
 //! ```no_run
-//! use csv3::Writer;
+//! use csv::Writer;
 //!
 //! let mut w = Writer::new(Vec::new());
 //! w.write_row(["name", "age"])?;
 //! w.write_row(["Alice", "30"])?;
 //! let bytes = w.into_inner()?;
-//! # Ok::<_, csv3::WriteError>(())
+//! # Ok::<_, csv::WriteError>(())
 //! ```
 //!
 //! # Design
 //!
-//! * **Owned rows**: `Row` and `BytesRow` own their data. Rows can outlive the `Reader`.
-//! * **Single buffer**: Each row stores all fields contiguously in one `Vec<u8>`.
+//! * **Zero per-row allocations**: `rows()` reuses internal buffers.
+//! * **Eager unescaping**: quotes are stripped and `""` resolved during parsing.
 //! * **SIMD scanning**: uses `memchr3` to bulk-scan for delimiters, quotes, and newlines.
-//! * **Deferred errors**: Row parsing errors are stored in the row and surfaced on access.
-//! * **BytesRow / Row split**: `BytesRow` works with raw bytes; `Row` adds UTF-8 validation.
-//! * **Streaming**: rows are parsed on-demand from any [`Read`] source.
+//! * **Borrowed rows**: `Row<'_>` borrows from the `Reader` and cannot outlive it.
+//! * **Streaming**: rows are parsed on-demand from `std::io::Read`.
 
 extern crate alloc;
 
@@ -110,6 +109,6 @@ mod writer;
 mod serde;
 
 pub use error::{ReadError, ReadErrorKind, WriteError};
-pub use reader::{BytesFields, BytesRow, BytesRows, FieldRange, Fields, Read, Reader, Row, Rows};
+pub use reader::{Fields, Reader, Row, Rows};
 #[cfg(feature = "std")]
 pub use writer::Writer;

@@ -3,8 +3,6 @@ use core::fmt;
 extern crate alloc;
 #[cfg(feature = "std")]
 use alloc::boxed::Box;
-#[cfg(all(not(feature = "std"), feature = "serde"))]
-use alloc::string::String;
 
 /// Kinds of errors that can occur while reading CSV data.
 #[derive(Clone, Debug, PartialEq)]
@@ -15,8 +13,6 @@ pub enum ReadErrorKind {
     TrailingContent,
     /// A field contained invalid UTF-8 bytes.
     InvalidUtf8,
-    /// The number of fields differs from previous rows (strict mode).
-    InconsistentFieldCount { expected: usize, found: usize },
     /// A serde deserialization error occurred. Carries the error message.
     #[cfg(feature = "serde")]
     Deserialize(String),
@@ -86,16 +82,6 @@ impl fmt::Display for ReadError {
             }
             ReadErrorKind::InvalidUtf8 => {
                 write!(f, "invalid UTF-8 at line {}, column {}", self.line, self.column)
-            }
-            ReadErrorKind::InconsistentFieldCount {
-                expected,
-                found,
-            } => {
-                write!(
-                    f,
-                    "expected {expected} fields, found {found} at line {}, column {}",
-                    self.line, self.column
-                )
             }
             #[cfg(feature = "serde")]
             ReadErrorKind::Deserialize(msg) => {
