@@ -90,7 +90,7 @@ const indexHtml = `<!DOCTYPE html><html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="generator" content="rustdoc">
-<title>stdx-rs — Workspace documentation</title>
+<title>stdx — Workspace documentation</title>
 <script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","${fonts.join(",")}".split(",").map(f=>\`<link rel="preload" as="font" type="font/woff2"href="./static.files/$\{f}">\`).join(""))</script>
 <link rel="stylesheet" href="./static.files/${normCss}">
 <link rel="stylesheet" href="./static.files/${rdocCss}">
@@ -103,9 +103,9 @@ const indexHtml = `<!DOCTYPE html><html lang="en"><head>
 <link rel="icon" type="image/svg+xml" href="./static.files/${faviconSvg}">
 </head><body class="rustdoc mod crate">
 <a class="skip-main-content" href="#main-content">Skip to main content</a>
-<rustdoc-topbar><h2><a href="#">Workspace stdx-rs</a></h2></rustdoc-topbar>
+<rustdoc-topbar><h2><a href="#">Workspace stdx</a></h2></rustdoc-topbar>
 <nav class="sidebar">
-<div class="sidebar-crate"><h2><a href="./index.html">stdx-rs</a></h2></div>
+<div class="sidebar-crate"><h2><a href="./index.html">stdx</a></h2></div>
 <div class="sidebar-elems">
 <section id="rustdoc-toc"><h3><a href="#">Crates</a></h3><ul class="block">${crates.map(c => `<li><a href="#crate-${c.name}" title="${escapeHtml(c.description)}">${c.name.replace(/_/g, "_<wbr>")}</a></li>`).join("")}</ul></section>
 </div>
@@ -113,7 +113,7 @@ const indexHtml = `<!DOCTYPE html><html lang="en"><head>
 <div class="sidebar-resizer" title="Drag to resize sidebar"></div>
 <main><div class="width-limiter">
 <section id="main-content" class="content" tabindex="-1">
-<div class="main-heading"><h1>stdx-rs <span>workspace</span></h1></div>
+<div class="main-heading"><h1>stdx <span>workspace</span></h1></div>
 <div class="docblock"><p>This workspace contains ${crates.length} crates.</p></div>
 <h2 id="crates" class="section-header">All Crates<a href="#crates" class="anchor">§</a></h2>
 <dl class="item-table" id="crate-list">

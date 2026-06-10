@@ -23,7 +23,7 @@ fn unique_suffix() -> String {
 }
 
 fn unique_bucket_name() -> String {
-    let base = env_or_default("S3_TEST_BUCKET", "stdx-rs-s3-integration");
+    let base = env_or_default("S3_TEST_BUCKET", "rust-stdx-s3-integration");
     let suffix = unique_suffix();
     let mut name = format!("{base}-{suffix}");
     if name.len() > 63 {

@@ -1,6 +1,6 @@
 # s3
 
-Minimal S3 client SDK for `stdx-rs`, focused on common actions.
+Minimal S3 client SDK for `rust-stdx`, focused on common actions.
 
 Based on commonly used S3 request categories and API operations in AWS docs (pricing request classes and S3 API operations list), this crate supports these 20 operations:
 

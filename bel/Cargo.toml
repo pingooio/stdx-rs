@@ -1,7 +1,7 @@
 [package]
 name = "bel"
 description = "A parser and interpreter for the Better Expression Language (BEL)"
-repository = "https://github.com/bloom42/stdx-rs"
+repository = "https://github.com/rust-stdx/stdx"
 version = "0.11.0"
 edition = "2024"
 license = "MIT"

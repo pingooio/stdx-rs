@@ -14,8 +14,8 @@ const KEY: [u8; 32] = [
 ];
 
 fn bench_macs(c: &mut Criterion) {
-    let hmac_key = b"stdx-rs-crypto-bench-key";
-    let customization = b"stdx-rs";
+    let hmac_key = b"rust-stdx-crypto-bench-key";
+    let customization = b"rust-stdx";
 
     for &size in &DATA_SIZES {
         let mut group = c.benchmark_group(size.to_string());
