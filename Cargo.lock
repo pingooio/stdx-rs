@@ -271,6 +271,7 @@ dependencies = [
  "chrono",
  "ipnetwork",
  "nom",
+ "paste",
  "regex",
  "serde",
  "serde_bytes",
@@ -1769,6 +1770,11 @@ dependencies = [
  "rand_core 0.6.4",
  "subtle",
 ]
+
+[[package]]
+name = "paste"
+version = "1.0.15"
+source = "git+https://github.com/dtolnay/paste#6a302522990cbfd9de4e0c61d91854622f7b2999"
 
 [[package]]
 name = "percent-encoding"

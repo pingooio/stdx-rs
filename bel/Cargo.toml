@@ -25,6 +25,7 @@ thiserror = { workspace = true }
 
 antlr4rust = "=0.3.0-rc2"
 nom = { workspace = true }
+paste = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 
 arbitrary = { version = "1", features = ["derive"], optional = true }
