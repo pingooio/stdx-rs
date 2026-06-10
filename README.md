@@ -48,7 +48,7 @@ See `Makefile` for the most common commands used during development.
 
 ## License
 
-MIT, see [LICENCE.txt](./LICENSE.txt)
+MIT, see [LICENSE.txt](./LICENSE.txt)
 
 
 ### Forks
