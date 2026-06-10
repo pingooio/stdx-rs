@@ -1,6 +1,6 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-//! A fast, low-allocation CSV parser with optional serde support.
+//! A fast, low-allocation CSV parser with `no_std` and serde support.
 //!
 //! # Quick start
 //!
@@ -21,7 +21,7 @@
 //! | Flag | Default | Description |
 //! |------|---------|-------------|
 //! | `std` | on | Enables `std::io::Read` support for `Reader`, `Writer`, and `std::error::Error` impls. |
-//! | `serde` | off | Enables `Row::deserialize()` for `#[derive(Deserialize)]`. |
+//! | `serde` | off | Enables `Row::deserialize()` + `Writer::serialize()` for serde support. |
 //!
 //! # Streaming from any [`Read`] source
 //!
@@ -81,9 +81,27 @@
 //! use csv::Writer;
 //!
 //! let mut w = Writer::new(Vec::new());
-//! w.write_row(["name", "age"])?;
+//! w.write_headers(["name", "age"])?;
 //! w.write_row(["Alice", "30"])?;
 //! let bytes = w.into_inner()?;
+//! # Ok::<_, csv::WriteError>(())
+//! ```
+//!
+//! With serde:
+//!
+//! ```no_run
+//! # #[cfg(feature = "serde")] {
+//! use csv::Writer;
+//! use serde::Serialize;
+//!
+//! #[derive(Serialize)]
+//! struct Person { name: String, age: u32 }
+//!
+//! let mut w = Writer::new(Vec::new())
+//!     .set_headers(vec!["name".into(), "age".into()]);
+//! let p = Person { name: "Alice".into(), age: 30 };
+//! w.serialize(&p)?;
+//! # }
 //! # Ok::<_, csv::WriteError>(())
 //! ```
 //!

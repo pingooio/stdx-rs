@@ -3,7 +3,7 @@ use core::fmt;
 extern crate alloc;
 #[cfg(feature = "std")]
 use alloc::boxed::Box;
-#[cfg(all(not(feature = "std"), feature = "serde"))]
+#[cfg(feature = "serde")]
 use alloc::string::String;
 
 /// Kinds of errors that can occur while reading CSV data.
@@ -137,6 +137,11 @@ impl From<std::io::Error> for ReadError {
 pub enum WriteError {
     /// The number of fields in a row differs from previous rows.
     InconsistentFieldCount { expected: usize, found: usize, row: usize },
+    /// A second attempt was made to write headers after they've already been written.
+    HeadersAlreadyWritten,
+    /// A serde serialization error occurred.
+    #[cfg(feature = "serde")]
+    Serialize(String),
     /// An I/O error occurred while writing.
     #[cfg(feature = "std")]
     Io(std::io::Error),
@@ -155,6 +160,9 @@ impl fmt::Display for WriteError {
             } => {
                 write!(f, "expected {expected} fields, found {found} in row {row}")
             }
+            WriteError::HeadersAlreadyWritten => write!(f, "headers have already been written"),
+            #[cfg(feature = "serde")]
+            WriteError::Serialize(msg) => write!(f, "serialization error: {msg}"),
             #[cfg(feature = "std")]
             WriteError::Io(e) => write!(f, "I/O error: {e}"),
             #[cfg(not(feature = "std"))]

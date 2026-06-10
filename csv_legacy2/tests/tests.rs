@@ -1,6 +1,6 @@
 use std::io::{Cursor, Read};
 
-use csv::*;
+use csv_legacy2::*;
 
 fn collect_rows(data: &[u8]) -> Vec<Vec<String>> {
     let mut reader = Reader::from_reader(Cursor::new(data));

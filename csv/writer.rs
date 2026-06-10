@@ -1,4 +1,7 @@
-use alloc::vec::Vec;
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use crate::error::WriteError;
 
@@ -60,13 +63,18 @@ impl<W: std::io::Write> Write for W {
 /// # Ok::<_, csv::WriteError>(())
 /// ```
 pub struct Writer<W: Write> {
-    writer: Option<W>,
-    delimiter: u8,
-    flexible: bool,
-    num_fields: Option<usize>,
-    row_count: usize,
-    buf: Vec<u8>,
-    field_buf: Vec<u8>,
+    pub(crate) writer: Option<W>,
+    pub(crate) delimiter: u8,
+    pub(crate) flexible: bool,
+    pub(crate) num_fields: Option<usize>,
+    pub(crate) row_count: usize,
+    pub(crate) buf: Vec<u8>,
+    pub(crate) headers: Option<Vec<String>>,
+    pub(crate) headers_written: bool,
+    #[cfg(feature = "serde")]
+    pub(crate) ser_values: Vec<Option<Vec<u8>>>,
+    #[cfg(feature = "serde")]
+    pub(crate) ser_capture_buf: Vec<u8>,
 }
 
 impl<W: Write> Writer<W> {
@@ -82,7 +90,12 @@ impl<W: Write> Writer<W> {
             num_fields: None,
             row_count: 0,
             buf: Vec::with_capacity(8192),
-            field_buf: Vec::new(),
+            headers: None,
+            headers_written: false,
+            #[cfg(feature = "serde")]
+            ser_values: Vec::new(),
+            #[cfg(feature = "serde")]
+            ser_capture_buf: Vec::new(),
         }
     }
 
@@ -90,12 +103,11 @@ impl<W: Write> Writer<W> {
     ///
     /// ```no_run
     /// use csv::Writer;
-    /// let mut w = Writer::new(Vec::new());
-    /// w.delimiter(b'\t');
+    /// let mut w = Writer::new(Vec::new()).set_delimiter(b'\t');
     /// w.write_row(["a", "b", "c"])?;
     /// # Ok::<_, csv::WriteError>(())
     /// ```
-    pub fn delimiter(&mut self, byte: u8) -> &mut Self {
+    pub fn set_delimiter(mut self, byte: u8) -> Self {
         self.delimiter = byte;
         self
     }
@@ -104,9 +116,72 @@ impl<W: Write> Writer<W> {
     ///
     /// When `false` (strict), all rows must have the same number of fields.
     /// When `true`, rows may vary in field count.
-    pub fn set_flexible(&mut self, yes: bool) -> &mut Self {
+    pub fn set_flexible(mut self, yes: bool) -> Self {
         self.flexible = yes;
         self
+    }
+
+    /// Store column names for schema awareness.
+    ///
+    /// This sets the expected header names for future serde support and strict
+    /// field-count validation. It does **not** write anything to the output.
+    /// Use [`write_headers`](Self::write_headers) to emit the header row.
+    pub fn set_headers(mut self, headers: Vec<String>) -> Self {
+        self.headers = Some(headers);
+        self
+    }
+
+    /// Returns the stored header names, if any.
+    pub fn headers(&self) -> Option<&[String]> {
+        self.headers.as_deref()
+    }
+
+    /// Write a header row to the output and store the column names internally.
+    ///
+    /// The header row is written as a single CSV line. The field count from
+    /// this row becomes the expected count for all subsequent rows (unless
+    /// flexible mode is enabled).
+    ///
+    /// If this method has already been called, subsequent calls return
+    /// [`WriteError::HeadersAlreadyWritten`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WriteError::HeadersAlreadyWritten`] if headers have already
+    /// been written. Returns [`WriteError::InconsistentFieldCount`] if the
+    /// number of headers differs from a prior [`write_row`](Self::write_row)
+    /// or from headers stored via [`set_headers`](Self::set_headers).
+    /// Returns [`WriteError::Io`] if the underlying writer fails.
+    pub fn write_headers<I, T>(&mut self, headers: I) -> Result<(), WriteError>
+    where
+        I: IntoIterator<Item = T>,
+        T: AsRef<str>,
+    {
+        if self.headers_written {
+            return Err(WriteError::HeadersAlreadyWritten);
+        }
+
+        let strings: Vec<String> = headers.into_iter().map(|s| s.as_ref().to_string()).collect();
+        let count = strings.len();
+
+        for (i, s) in strings.iter().enumerate() {
+            if i > 0 {
+                self.buf.push(self.delimiter);
+            }
+            self.write_field(s.as_bytes())?;
+        }
+
+        self.buf.extend_from_slice(b"\r\n");
+        self.row_count += 1;
+        self.headers = Some(strings);
+        self.headers_written = true;
+        self.num_fields = Some(count);
+
+        if self.buf.len() >= 8192 {
+            self.flush()?;
+        }
+
+        Ok(())
     }
 
     /// Write a single row.
@@ -125,32 +200,51 @@ impl<W: Write> Writer<W> {
         I: IntoIterator<Item = T>,
         T: AsRef<[u8]>,
     {
-        let fields: Vec<T> = row.into_iter().collect();
-        let field_count = fields.len();
-
-        match self.num_fields {
-            Some(expected) if !self.flexible && field_count != expected => {
-                return Err(WriteError::InconsistentFieldCount {
-                    expected,
-                    found: field_count,
-                    row: self.row_count + 1,
-                });
+        if self.flexible {
+            let mut first = true;
+            let mut field_count = 0;
+            for field in row {
+                if !first {
+                    self.buf.push(self.delimiter);
+                }
+                first = false;
+                self.write_field(field.as_ref())?;
+                field_count += 1;
             }
-            None => {
+            if self.num_fields.is_none() && field_count > 0 {
                 self.num_fields = Some(field_count);
             }
-            _ => {}
-        }
-
-        for (i, field) in fields.iter().enumerate() {
-            if i > 0 {
-                self.buf.push(self.delimiter);
+            self.buf.extend_from_slice(b"\r\n");
+            self.row_count += 1;
+        } else {
+            let buf_start = self.buf.len();
+            let mut field_count = 0;
+            for (i, field) in row.into_iter().enumerate() {
+                if i > 0 {
+                    self.buf.push(self.delimiter);
+                }
+                self.write_field(field.as_ref())?;
+                field_count += 1;
             }
-            self.write_field(field.as_ref())?;
-        }
 
-        self.buf.extend_from_slice(b"\r\n");
-        self.row_count += 1;
+            match self.num_fields {
+                Some(expected) if field_count != expected => {
+                    self.buf.truncate(buf_start);
+                    return Err(WriteError::InconsistentFieldCount {
+                        expected,
+                        found: field_count,
+                        row: self.row_count + 1,
+                    });
+                }
+                None => {
+                    self.num_fields = Some(field_count);
+                }
+                _ => {}
+            }
+
+            self.buf.extend_from_slice(b"\r\n");
+            self.row_count += 1;
+        }
 
         if self.buf.len() >= 8192 {
             self.flush()?;
@@ -160,30 +254,7 @@ impl<W: Write> Writer<W> {
     }
 
     fn write_field(&mut self, field: &[u8]) -> Result<(), WriteError> {
-        let needs_quoting = field.is_empty()
-            || memchr::memchr3(self.delimiter, b'\r', b'\n', field).is_some()
-            || memchr::memchr(b'"', field).is_some();
-
-        if !needs_quoting {
-            self.buf.extend_from_slice(field);
-            return Ok(());
-        }
-
-        self.buf.push(b'"');
-        self.field_buf.clear();
-
-        let mut pos = 0;
-        while let Some(quote_offset) = memchr::memchr(b'"', &field[pos..]) {
-            let abs_pos = pos + quote_offset;
-            self.field_buf.extend_from_slice(&field[pos..abs_pos]);
-            self.field_buf.extend_from_slice(b"\"\"");
-            pos = abs_pos + 1;
-        }
-        self.field_buf.extend_from_slice(&field[pos..]);
-
-        self.buf.extend_from_slice(&self.field_buf);
-        self.buf.push(b'"');
-
+        write_csv_field(&mut self.buf, self.delimiter, field);
         Ok(())
     }
 
@@ -197,7 +268,7 @@ impl<W: Write> Writer<W> {
         Ok(())
     }
 
-    /// Unwrap the writer, flushing any remaining data and returning
+    /// Flush any remaining data and return
     /// the underlying writer.
     pub fn into_inner(mut self) -> Result<W, WriteError> {
         self.flush()?;
@@ -211,4 +282,30 @@ impl<W: Write> Drop for Writer<W> {
             let _ = self.flush();
         }
     }
+}
+
+/// Write a single CSV field to `buf`, applying quoting as needed.
+///
+/// Writes directly into `buf` to avoid intermediate buffering.
+pub(crate) fn write_csv_field(buf: &mut Vec<u8>, delimiter: u8, field: &[u8]) {
+    let needs_quoting = field.is_empty()
+        || memchr::memchr3(delimiter, b'\r', b'\n', field).is_some()
+        || memchr::memchr(b'"', field).is_some();
+
+    if !needs_quoting {
+        buf.extend_from_slice(field);
+        return;
+    }
+
+    buf.push(b'"');
+
+    let mut pos = 0;
+    while let Some(quote_offset) = memchr::memchr(b'"', &field[pos..]) {
+        let abs_pos = pos + quote_offset;
+        buf.extend_from_slice(&field[pos..abs_pos]);
+        buf.extend_from_slice(b"\"\"");
+        pos = abs_pos + 1;
+    }
+    buf.extend_from_slice(&field[pos..]);
+    buf.push(b'"');
 }
