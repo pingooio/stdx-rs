@@ -25,6 +25,20 @@ base64 = { git = "https://github.com/rust-stdx/stdx", branch = "main" }
 [Docs](https://rust-stdx.github.io/stdx)
 
 
+## Partners
+
+<table align="center">
+  <tr>
+    <td>
+      <a href="https://pingoo.io" >
+        <img src="https://avatars.githubusercontent.com/u/211801982" height="80" alt="Pingoo" />
+        Pingoo
+      </a>
+    </td>
+  </tr>
+</table>
+
+
 ## Contributing
 
 Contributions are welcome, especially bug reports, improvement ideas and new package suggestions.
