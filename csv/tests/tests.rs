@@ -164,8 +164,7 @@ fn test_quoted_field_contains_newline() {
 #[test]
 fn test_custom_delimiter() {
     let data = b"a|b|c\n1|2|3\n";
-    let mut reader = Reader::new(Cursor::new(data));
-    reader.set_delimiter(b'|');
+    let mut reader = Reader::new(Cursor::new(data)).set_delimiter(b'|');
     let rows: Vec<Vec<String>> = reader
         .rows()
         .map(|r| r.to_vec().unwrap().iter().map(|s| s.to_string()).collect())
@@ -177,8 +176,7 @@ fn test_custom_delimiter() {
 #[test]
 fn test_tab_delimiter() {
     let data = b"a\tb\tc\n1\t2\t3\n";
-    let mut reader = Reader::new(Cursor::new(data));
-    reader.set_delimiter(b'\t');
+    let mut reader = Reader::new(Cursor::new(data)).set_delimiter(b'\t');
     let rows: Vec<Vec<String>> = reader
         .rows()
         .map(|r| r.to_vec().unwrap().iter().map(|s| s.to_string()).collect())
@@ -241,8 +239,11 @@ fn test_parse_headers() {
 
 #[test]
 fn test_set_headers() {
-    let mut reader = Reader::new(Cursor::new(b"Alice,30,NYC\nBob,25,LA\n"));
-    reader.set_headers(vec!["name".into(), "age".into(), "city".into()]);
+    let reader = Reader::new(Cursor::new(b"Alice,30,NYC\nBob,25,LA\n")).set_headers(vec![
+        "name".into(),
+        "age".into(),
+        "city".into(),
+    ]);
     assert_eq!(reader.headers().unwrap(), &["name", "age", "city"]);
 }
 
@@ -669,8 +670,7 @@ fn test_fields_iterator_preserves_error_kind() {
 
 #[test]
 fn test_strict_mode_consistent_fields_ok() {
-    let mut reader = Reader::new(Cursor::new(b"a,b\n1,2\n3,4\n"));
-    reader.set_flexible(false);
+    let mut reader = Reader::new(Cursor::new(b"a,b\n1,2\n3,4\n")).set_flexible(false);
     let rows: Vec<Vec<String>> = reader
         .rows()
         .map(|r| r.to_vec().unwrap().iter().map(|s| s.to_string()).collect())
@@ -680,8 +680,7 @@ fn test_strict_mode_consistent_fields_ok() {
 
 #[test]
 fn test_flexible_mode_variable_fields_ok() {
-    let mut reader = Reader::new(Cursor::new(b"a,b\n1,2,3\n4\n"));
-    reader.set_flexible(true);
+    let mut reader = Reader::new(Cursor::new(b"a,b\n1,2,3\n4\n")).set_flexible(true);
     let rows: Vec<Vec<String>> = reader
         .rows()
         .map(|r| r.to_vec().unwrap().iter().map(|s| s.to_string()).collect())
@@ -973,8 +972,7 @@ mod serde_tests {
     #[test]
     fn test_deserialize_positional() {
         let data = b"Alice,30\nBob,25\n";
-        let mut reader = Reader::new(Cursor::new(data));
-        reader.set_headers(vec!["name".into(), "age".into()]);
+        let mut reader = Reader::new(Cursor::new(data)).set_headers(vec!["name".into(), "age".into()]);
         let mut rows = reader.rows();
         let p1: Person = rows.next().unwrap().deserialize().unwrap();
         assert_eq!(p1.name, "Alice");
@@ -1056,8 +1054,7 @@ mod serde_tests {
         // Tuples have no named fields, so header-based deserialization
         // cannot map them — they always fail.
         let data = b"Alice,30\n";
-        let mut reader = Reader::new(Cursor::new(data));
-        reader.set_headers(vec!["name".into(), "age".into()]);
+        let mut reader = Reader::new(Cursor::new(data)).set_headers(vec!["name".into(), "age".into()]);
         let result: Result<(String, u32), _> = reader.rows().next().unwrap().deserialize();
         assert!(result.is_err());
     }
@@ -1065,8 +1062,7 @@ mod serde_tests {
     #[test]
     fn test_deserialize_set_headers() {
         let data = b"Alice,30\nBob,25\n";
-        let mut reader = Reader::new(Cursor::new(data));
-        reader.set_headers(vec!["name".into(), "age".into()]);
+        let mut reader = Reader::new(Cursor::new(data)).set_headers(vec!["name".into(), "age".into()]);
         let mut rows = reader.rows();
         let p1: Person = rows.next().unwrap().deserialize().unwrap();
         assert_eq!(p1.name, "Alice");
@@ -1077,8 +1073,7 @@ mod serde_tests {
     fn test_deserialize_row_can_outlive_reader() {
         // Owned rows prove they can outlive the reader
         let row = {
-            let mut reader = Reader::new(b"Alice,30\n".as_slice());
-            reader.set_headers(vec!["name".into(), "age".into()]);
+            let mut reader = Reader::new(b"Alice,30\n".as_slice()).set_headers(vec!["name".into(), "age".into()]);
             reader.rows().next().unwrap()
         };
         // row is used after reader is dropped
@@ -1090,8 +1085,7 @@ mod serde_tests {
     fn test_deserialize_with_bytes_row_also_works() {
         // BytesRow doesn't have deserialize, but Row wrapping it does
         let data = b"Alice,30\n";
-        let mut reader = Reader::new(Cursor::new(data));
-        reader.set_headers(vec!["name".into(), "age".into()]);
+        let mut reader = Reader::new(Cursor::new(data)).set_headers(vec!["name".into(), "age".into()]);
         let row = reader.rows().next().unwrap();
         let p: Person = row.deserialize().unwrap();
         assert_eq!(p.name, "Alice");
@@ -1154,8 +1148,7 @@ mod serde_tests {
             b: String,
         }
         let data = b"a,b\n1,2,3\n";
-        let mut reader = Reader::new(Cursor::new(data));
-        reader.set_flexible(true);
+        let mut reader = Reader::new(Cursor::new(data)).set_flexible(true);
         reader.parse_headers().unwrap();
         let result: Result<Record, _> = reader.rows().next().unwrap().deserialize();
         assert!(result.is_ok());
@@ -1307,8 +1300,7 @@ mod serde_tests {
         w.serialize(&alice).unwrap();
         let csv_data = w.into_inner().unwrap();
 
-        let mut reader = Reader::new(Cursor::new(csv_data));
-        reader.set_headers(vec!["name".into(), "age".into()]);
+        let mut reader = Reader::new(Cursor::new(csv_data)).set_headers(vec!["name".into(), "age".into()]);
         let row = reader.rows().next().unwrap();
         let parsed: Person = row.deserialize().unwrap();
         assert_eq!(parsed, alice);
@@ -1521,8 +1513,7 @@ fn test_cr_at_eof_with_following_read() {
 #[test]
 fn test_strict_mode_blank_lines_between_rows() {
     let data = b"a,b\n\n\n1,2\n";
-    let mut reader = Reader::new(std::io::Cursor::new(data));
-    reader.set_flexible(false);
+    let mut reader = Reader::new(std::io::Cursor::new(data)).set_flexible(false);
     let rows: Vec<Vec<String>> = reader
         .rows()
         .map(|r| r.to_vec().unwrap().iter().map(|s| s.to_string()).collect())
@@ -1795,8 +1786,7 @@ mod serde_edge_tests {
     #[test]
     fn test_deserialize_char_empty_errors() {
         let data = b"ch\n\n";
-        let mut reader = Reader::new(Cursor::new(data));
-        reader.set_headers(vec!["ch".into()]);
+        let mut reader = Reader::new(Cursor::new(data)).set_headers(vec!["ch".into()]);
         let result: Result<WithChar, _> = reader.rows().next().unwrap().deserialize();
         assert!(result.is_err());
     }
@@ -1804,8 +1794,7 @@ mod serde_edge_tests {
     #[test]
     fn test_deserialize_char_multi_char_errors() {
         let data = b"ch\nab\n";
-        let mut reader = Reader::new(Cursor::new(data));
-        reader.set_headers(vec!["ch".into()]);
+        let mut reader = Reader::new(Cursor::new(data)).set_headers(vec!["ch".into()]);
         let result: Result<WithChar, _> = reader.rows().next().unwrap().deserialize();
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -1942,8 +1931,7 @@ mod serde_edge_tests {
         w.serialize(&rec).unwrap();
         let csv_data = w.into_inner().unwrap();
 
-        let mut reader = Reader::new(Cursor::new(csv_data));
-        reader.set_headers(vec!["name".into(), "extra".into()]);
+        let mut reader = Reader::new(Cursor::new(csv_data)).set_headers(vec!["name".into(), "extra".into()]);
         let parsed: Record = reader.rows().next().unwrap().deserialize().unwrap();
         assert_eq!(parsed, rec);
     }
@@ -2021,8 +2009,7 @@ mod serde_edge_tests {
         w.serialize(&rec).unwrap();
         let csv_data = w.into_inner().unwrap();
 
-        let mut reader = Reader::new(Cursor::new(csv_data));
-        reader.set_headers(vec!["name".into(), "age".into()]);
+        let mut reader = Reader::new(Cursor::new(csv_data)).set_headers(vec!["name".into(), "age".into()]);
         let parsed: WithIgnoredField = reader.rows().next().unwrap().deserialize().unwrap();
         assert_eq!(parsed.name, "Bob");
         assert_eq!(parsed.age, 0);
@@ -2202,8 +2189,7 @@ fn test_slice_reader_single_byte() {
 
 #[test]
 fn test_flexible_varying_field_count() {
-    let mut reader = Reader::new(std::io::Cursor::new(b"a\n1,2\n3,4,5\n"));
-    reader.set_flexible(true);
+    let mut reader = Reader::new(std::io::Cursor::new(b"a\n1,2\n3,4,5\n")).set_flexible(true);
     let rows: Vec<Vec<String>> = reader
         .rows()
         .map(|r| r.to_vec().unwrap().iter().map(|s| s.to_string()).collect())
@@ -2411,8 +2397,7 @@ fn test_pending_cr_bare_r_then_data_then_newline() {
     // bare \r at chunk boundary, next chunk has data followed by \n.
     // The \r was a bare CR line ending. The \n should NOT be skipped.
     let data = b"a,b\r1,2,3\r4,5,6\n";
-    let mut reader = Reader::new(ChunkReader::new(data, 4));
-    reader.set_flexible(true);
+    let mut reader = Reader::new(ChunkReader::new(data, 4)).set_flexible(true);
     let rows: Vec<Vec<String>> = reader
         .rows()
         .map(|r| r.to_vec().unwrap().iter().map(|s| s.to_string()).collect())
@@ -2467,8 +2452,7 @@ fn test_parse_headers_fails_then_rows_still_work() {
 #[test]
 fn test_set_delimiter_null_byte() {
     let data = b"a\0b\0c\n1\02\03\n";
-    let mut reader = Reader::new(std::io::Cursor::new(data));
-    reader.set_delimiter(0x00);
+    let mut reader = Reader::new(std::io::Cursor::new(data)).set_delimiter(0x00);
     let rows: Vec<Vec<String>> = reader
         .rows()
         .map(|r| r.to_vec().unwrap().iter().map(|s| s.to_string()).collect())
@@ -2480,8 +2464,7 @@ fn test_set_delimiter_null_byte() {
 #[test]
 fn test_set_delimiter_0xff() {
     let data = b"a\xffb\xffc\n1\xff2\xff3\n";
-    let mut reader = Reader::new(std::io::Cursor::new(data));
-    reader.set_delimiter(0xFF);
+    let mut reader = Reader::new(std::io::Cursor::new(data)).set_delimiter(0xFF);
     let rows: Vec<Vec<String>> = reader
         .rows()
         .map(|r| r.to_vec().unwrap().iter().map(|s| s.to_string()).collect())
@@ -2659,8 +2642,7 @@ mod serde_edge_tests2 {
         }
         let csv_data = w.into_inner().unwrap();
 
-        let mut reader = Reader::new(Cursor::new(csv_data));
-        reader.set_headers(vec!["name".into(), "age".into()]);
+        let mut reader = Reader::new(Cursor::new(csv_data)).set_headers(vec!["name".into(), "age".into()]);
         let parsed: Vec<Record> = reader.rows().map(|r| r.deserialize().unwrap()).collect();
         assert_eq!(parsed, records);
     }
@@ -2687,8 +2669,7 @@ mod serde_edge_tests2 {
         assert_eq!(String::from_utf8_lossy(&csv_data), "30,Alice\r\n");
 
         // Deserialize with same header order
-        let mut reader = Reader::new(Cursor::new(csv_data));
-        reader.set_headers(vec!["age".into(), "name".into()]);
+        let mut reader = Reader::new(Cursor::new(csv_data)).set_headers(vec!["age".into(), "name".into()]);
         let parsed: Person = reader.rows().next().unwrap().deserialize().unwrap();
         assert_eq!(parsed, alice);
     }
@@ -2753,8 +2734,7 @@ mod serde_edge_tests2 {
             val: bool,
         }
         let data = b"val\n\n";
-        let mut reader = Reader::new(Cursor::new(data));
-        reader.set_headers(vec!["val".into()]);
+        let mut reader = Reader::new(Cursor::new(data)).set_headers(vec!["val".into()]);
         let result: Result<WithBool, _> = reader.rows().next().unwrap().deserialize();
         assert!(result.is_err());
     }
@@ -2766,8 +2746,7 @@ mod serde_edge_tests2 {
             val: i32,
         }
         let data = b"val\n\n";
-        let mut reader = Reader::new(Cursor::new(data));
-        reader.set_headers(vec!["val".into()]);
+        let mut reader = Reader::new(Cursor::new(data)).set_headers(vec!["val".into()]);
         let result: Result<WithI32, _> = reader.rows().next().unwrap().deserialize();
         assert!(result.is_err());
     }
@@ -2779,8 +2758,7 @@ mod serde_edge_tests2 {
             val: f64,
         }
         let data = b"val\n\n";
-        let mut reader = Reader::new(Cursor::new(data));
-        reader.set_headers(vec!["val".into()]);
+        let mut reader = Reader::new(Cursor::new(data)).set_headers(vec!["val".into()]);
         let result: Result<WithF64, _> = reader.rows().next().unwrap().deserialize();
         assert!(result.is_err());
     }

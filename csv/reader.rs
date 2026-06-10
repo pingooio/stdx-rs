@@ -76,6 +76,67 @@ pub struct FieldRange {
     pub end: usize,
 }
 
+/// A pull-based CSV reader that parses records from any [`Read`] source.
+///
+/// The reader supports both in-memory slices (`&[u8]`) and streaming I/O sources
+/// (`std::io::Read`) via the custom [`Read`] trait. Rows are parsed on-demand
+/// by calling [`rows`](Self::rows) or [`rows_bytes`](Self::rows_bytes).
+///
+/// # Configuration
+///
+/// Use builder methods for a fluent setup:
+/// - [`set_delimiter`](Self::set_delimiter) — change the field separator (default `,`)
+/// - [`set_flexible`](Self::set_flexible) — allow variable-length rows (default `false`)
+/// - [`set_headers`](Self::set_headers) — supply column names without parsing
+///
+/// # Headers
+///
+/// Call [`parse_headers`](Self::parse_headers) to treat the first row as column
+/// names. After doing so, [`headers`](Self::headers) returns a `Some` slice and
+/// serde deserialization (with the `serde` feature) can match by field name.
+///
+/// # Errors
+///
+/// Parsing errors (unterminated quotes, trailing content after a quoted field,
+/// inconsistent field counts) are stored on the returned row and surfaced when
+/// the row's fields are accessed. I/O errors are also stored on the row. This
+/// allows iteration to continue past malformed rows.
+///
+/// # Iteration
+///
+/// Produces owned [`Row`] or [`BytesRow`] values. A [`Row`] validates UTF-8
+/// on field access; [`BytesRow`] does not. Rows can outlive the reader.
+///
+/// # Examples
+///
+/// ```rust
+/// use csv::Reader;
+///
+/// let data = b"name,age\nAlice,30\nBob,25\n";
+/// let mut reader = Reader::new(&data[..]);
+///
+/// // Parse the first row as headers.
+/// let headers = reader.parse_headers().unwrap();
+/// assert_eq!(headers, &["name", "age"]);
+///
+/// // Iterate over data rows.
+/// for row in reader.rows() {
+///     for field in row.iter() {
+///         let _: &str = field.unwrap();
+///     }
+/// }
+/// ```
+///
+/// ```no_run
+/// # use csv::Reader;
+/// let file = std::fs::File::open("data.csv").unwrap();
+/// let mut reader = Reader::new(file).set_delimiter(b';');
+///
+/// for row in reader.rows() {
+///     let name = row.get(0).unwrap().unwrap();
+///     println!("{name}");
+/// }
+/// ```
 pub struct Reader<R: Read> {
     /// Raw input data read from source.
     buf: Vec<u8>,
@@ -150,13 +211,13 @@ impl<R: Read> Reader<R> {
     }
 
     /// Sets the field delimiter byte (default is `,`).
-    pub fn set_delimiter(&mut self, byte: u8) -> &mut Self {
+    pub fn set_delimiter(mut self, byte: u8) -> Self {
         self.delimiter = byte;
         self
     }
 
     /// Sets whether variable field counts are allowed (default is `false`).
-    pub fn set_flexible(&mut self, yes: bool) -> &mut Self {
+    pub fn set_flexible(mut self, yes: bool) -> Self {
         self.flexible = yes;
         self
     }
@@ -164,7 +225,7 @@ impl<R: Read> Reader<R> {
     /// Sets the column names for header-based serde deserialization.
     ///
     /// Calling this marks headers as parsed so `reader.headers()` returns `Some`.
-    pub fn set_headers(&mut self, headers: Vec<String>) -> &mut Self {
+    pub fn set_headers(mut self, headers: Vec<String>) -> Self {
         self.headers_parsed = true;
         self.headers = headers;
         #[cfg(feature = "serde")]
