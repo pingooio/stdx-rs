@@ -8,7 +8,7 @@ On linux init will bind abstract unix domain socket with given name . On macos, 
 
 ```toml
 [dependencies]
-single_instance = { git = "https://github.com/pingooio/stdx-rs", branch = "main" }
+single_instance = { git = "https://github.com/rust-stdx/stdx", branch = "main" }
 ```
 
 ### Examples

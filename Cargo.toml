@@ -4,7 +4,6 @@ resolver = "2"
 members = [
     "acme",
     "anyerr",
-    "async-trait",
     "base32",
     "base64",
     "bel",

@@ -11,7 +11,6 @@ default = ["reqwest"]
 reqwest = ["dep:reqwest"]
 
 [dependencies]
-# async-trait = { path = "../async-trait" }
 base64 = { path = "../base64" }
 bytes = { workspace = true }
 crypto = { path = "../crypto" }
