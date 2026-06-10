@@ -58,5 +58,9 @@ RUN npm config set min-release-age 7
 # setup git
 RUN git config --global push.autoSetupRemote true
 RUN git config --global init.defaultBranch main
+RUN git config --global gpg.format ssh
+RUN git config --global commit.gpgsign true
+RUN git config --global tag.gpgsign true
+# git config --global user.signingkey
 
 WORKDIR /
