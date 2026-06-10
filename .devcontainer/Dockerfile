@@ -61,6 +61,6 @@ RUN git config --global init.defaultBranch main
 RUN git config --global gpg.format ssh
 RUN git config --global commit.gpgsign true
 RUN git config --global tag.gpgsign true
-# git config --global user.signingkey
+# git config --global user.signingkey "ed25519ssh-ed25519 ABC..."
 
 WORKDIR /

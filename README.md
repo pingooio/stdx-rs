@@ -9,6 +9,8 @@ The goal is that `stdx` only uses code from `std` and `stdx`. No third-party imp
 Once the idea has proven to be valuable, we plan to donate the entire codebase to the Rust Foundation to build trust and drive adoption.
 
 
+Learn more in the announcement post: https://kerkour.com/stdx
+
 
 ## Usage
 
@@ -17,7 +19,7 @@ Import packages directly from git, for example:
 base64 = { git = "https://github.com/rust-stdx/stdx", branch = "main" }
 ```
 
-> **Warning ⚠️**: The project is moving fast, we can't provide any stability guarantees at this moment. Use at your own risk.
+> **Warning ⚠️**: The project is moving fast, we can't provide any stability guarantees at this moment.
 
 
 ## Documentation
@@ -27,16 +29,22 @@ base64 = { git = "https://github.com/rust-stdx/stdx", branch = "main" }
 
 ## Partners
 
+
+
 <table align="center">
   <tr>
     <td>
-      <a href="https://pingoo.io" >
-        <img src="https://avatars.githubusercontent.com/u/211801982" height="80" alt="Pingoo" />
+      <a href="https://pingoo.io">
+        <img src="https://avatars.githubusercontent.com/u/211801982" height="80" alt="Pingoo" /><br />
         Pingoo
       </a>
     </td>
   </tr>
 </table>
+
+`stdx` is only possible thanks to our awesome partners!
+
+See [FUNDING.md](./FUNDING.md) or reach out at [code@pingoo.io](mailto:code@pingoo.io) to join our partner program to invest in the future of Rust and get unfair advantages such as priority support.
 
 
 ## Contributing
