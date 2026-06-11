@@ -19,9 +19,9 @@ To avoid namespace clashes and supply chain risks, we do not use a centralized p
 
 ```toml
 base64 = { git = "https://github.com/rust-stdx/stdx", branch = "main" }
-# or, to pin to a commit
+# or, to pin a commit
 base64 = { git = "https://github.com/rust-stdx/stdx", ref = "1234" }
-# or, to use codeberg
+# or, to use Codeberg
 base64 = { git = "https://codeberg.org/rust-stdx/stdx", branch = "main" }
 ```
 
@@ -30,7 +30,7 @@ base64 = { git = "https://codeberg.org/rust-stdx/stdx", branch = "main" }
 
 ## Documentation
 
-[Docs](https://rust-stdx.github.io/stdx)
+https://rust-stdx.github.io/stdx
 
 
 ## Partners
