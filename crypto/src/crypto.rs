@@ -32,6 +32,7 @@ mod bytes;
 #[cfg(feature = "alloc")]
 pub mod encoding;
 pub mod p256;
+pub mod pbkdf2;
 pub use bytes::Bytes;
 
 const MAX_HASH_BLOCK_SIZE: usize = 128;
