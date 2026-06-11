@@ -76,6 +76,7 @@ indexmap = { version = "2" }
 libc = "0.2"
 memchr = "2"
 mime = "0.3"
+nix = { version = "0.31", features = ["socket"] }
 nom = "7"
 paste = { git = "https://github.com/dtolnay/paste", ref = "6a302522990cbfd9de4e0c61d91854622f7b2999" }
 rand = "0.9"

@@ -44,18 +44,15 @@ pub use self::inner::*;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod inner {
-    use std::os::unix::prelude::RawFd;
+    use std::os::unix::io::{AsRawFd, OwnedFd};
 
-    use nix::{
-        sys::socket::{self, UnixAddr},
-        unistd,
-    };
+    use nix::sys::socket::{self, UnixAddr};
 
     use super::Error;
 
     /// A struct representing one running instance.
     pub struct SingleInstance {
-        maybe_sock: Option<RawFd>,
+        maybe_sock: Option<OwnedFd>,
     }
 
     impl SingleInstance {
@@ -71,7 +68,7 @@ mod inner {
                 None,
             )?;
 
-            let maybe_sock = match socket::bind(sock, &socket::SockAddr::Unix(addr)) {
+            let maybe_sock = match socket::bind(sock.as_raw_fd(), &addr) {
                 Ok(()) => Some(sock),
                 Err(nix::errno::Errno::EADDRINUSE) => None,
                 Err(e) => return Err(e.into()),
@@ -90,9 +87,9 @@ mod inner {
 
     impl Drop for SingleInstance {
         fn drop(&mut self) {
-            if let Some(sock) = self.maybe_sock {
-                // Intentionally discard any close errors.
-                let _ = unistd::close(sock);
+            // OwnedFd closes the file descriptor automatically on drop.
+            if let Some(sock) = self.maybe_sock.take() {
+                drop(sock);
             }
         }
     }
