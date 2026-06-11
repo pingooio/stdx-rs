@@ -1,10 +1,10 @@
-# stdx: Rust's extended standard library
+# Rust's (unofficial) extended standard library: simplicity, performance and supply chain security for everyone
 
-Rust's biggest problem is its anemic standard library leading not only to a very fragmented ecosystem with multiple competing packages (so you end up with 10 different packages to handle time and 15 crypto libraries) but also to elevated supply chain risks (see [Supply chain nightmare: How Rust will be attacked and what we can do to mitigate the inevitable](https://kerkour.com/rust-supply-chain-nightmare)).
+Rust's biggest problem is its anemic standard library unable to fulfill the needs of most developers. It leads not only to a fragmented ecosystem with multiple competing packages (so you end up with 10 different packages to handle time and 15 crypto libraries) but also to elevated supply chain risks (see [Supply chain nightmare: How Rust will be attacked and what we can do to mitigate the inevitable](https://kerkour.com/rust-supply-chain-nightmare)).
 
-This is why we are creating Rust's extended standard library, inspired by Go's extensive standard library and `golang.org/x/...` packages.
+This is why we are creating Rust's extended standard library, inspired by Go's extensive standard library and `golang.org/x/...` packages, to bring simplicity, performance and supply chain security to every Rust developer.
 
-The goal is that `stdx` only uses code from `std` and `stdx`. No third-party imports, no supply chain risks, no ecosystem fragmentation.
+The goal is that `stdx` only uses code from `std` and `stdx`, also supports `no_std` use cases, and doesn't import any third-party packages. No supply chain risks, no ecosystem fragmentation.
 
 Once the idea has proven to be valuable, we plan to donate the entire codebase to the Rust Foundation to build trust and drive adoption.
 
@@ -14,12 +14,14 @@ Learn more in the announcement post: https://kerkour.com/stdx
 
 ## Usage
 
-Import packages directly from git, for example:
+
+To avoid namespace clashes and supply chain risks, we do not use a centralized package repository. Import packages directly from source, for example:
+
 ```toml
-base64 = { git = "https://github.com/rust-stdx/stdx", branch = "main" }
+base64 = { git = "https://github.com/rust-stdx/stdx", branch = "main" } # or ref = to pin a commit
 ```
 
-> **Warning ⚠️**: The project is moving fast, we can't provide any stability guarantees at this moment.
+> **Warning ⚠️**: The project is moving fast, we can't provide any stability guarantees at this time.
 
 
 ## Documentation
@@ -28,7 +30,6 @@ base64 = { git = "https://github.com/rust-stdx/stdx", branch = "main" }
 
 
 ## Partners
-
 
 
 <table align="center">
@@ -53,6 +54,9 @@ Contributions are welcome, especially bug reports, improvement ideas and new pac
 
 Other than for minor typos, no pull request will be accepted without a preliminary discussion. Please open an issue first.
 
+See [AI_POLICY.md](/AI_POLICY.md) for what is tolerated (or not) regarding AI-assisted programming.
+
+
 ## Development
 
 See `.devcontainer/Dockerfile`.
@@ -70,7 +74,7 @@ See `Makefile` for the most common commands used during development.
 
 ## License
 
-MIT, see [LICENSE.txt](./LICENSE.txt)
+MIT ([LICENSE.txt](./LICENSE.txt))
 
 
 ### Forks
@@ -78,7 +82,7 @@ MIT, see [LICENSE.txt](./LICENSE.txt)
 | Package | Forked from | Commit | Original License |
 | --- | --- | --- | --- |
 | `bel` | https://github.com/cel-rust/cel-rust | 8287d04156a1b31efe0dd53db78e943fef15c59a | MIT |
-| `cron` | https://github.com/zslayton/cron | ?? | Apache 2.0 / MIT |
+| `cron` | https://github.com/zslayton/cron | ?? | MIT |
 | `acme` | https://github.com/instant-labs/instant-acme | 5e12971830a5907f0aeba4dfd602ec26db4bc30c | Apache 2.0 |
 | `anyerr` | https://github.com/dtolnay/anyhow | 5a88bc48ca18c9720be292487dcdcbc93004d15a | MIT |
 | `constant_time_eq` | https://github.com/cesarb/constant_time_eq | 09a34625babf29e1b622ed46e959ea517986b12a | CC0-1.0 |
