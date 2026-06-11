@@ -4,13 +4,13 @@ use std::{
 };
 
 use nom::{
-    IResult,
+    IResult, Parser,
     branch::alt,
     bytes::complete::tag,
     character::complete::{alpha1, digit1, multispace0},
-    combinator::{all_consuming, eof, map, map_res, opt},
+    combinator::{all_consuming, eof, opt},
     multi::separated_list1,
-    sequence::{delimited, separated_pair, terminated, tuple},
+    sequence::{delimited, separated_pair, terminated},
 };
 
 use crate::{
@@ -71,11 +71,15 @@ where
 }
 
 fn ordinal(i: &str) -> IResult<&str, u32> {
-    map_res(delimited(multispace0, digit1, multispace0), u32::from_str)(i)
+    delimited(multispace0, digit1, multispace0)
+        .map_res(u32::from_str)
+        .parse(i)
 }
 
 fn name(i: &str) -> IResult<&str, String> {
-    map(delimited(multispace0, alpha1, multispace0), ToOwned::to_owned)(i)
+    delimited(multispace0, alpha1, multispace0)
+        .map(ToOwned::to_owned)
+        .parse(i)
 }
 
 fn point(i: &str) -> IResult<&str, Specifier> {
@@ -89,27 +93,27 @@ fn named_point(i: &str) -> IResult<&str, RootSpecifier> {
 }
 
 fn period(i: &str) -> IResult<&str, RootSpecifier> {
-    map(separated_pair(specifier, tag("/"), ordinal), |(start, step)| {
-        RootSpecifier::Period(start, step)
-    })(i)
+    separated_pair(specifier, tag("/"), ordinal)
+        .map(|(start, step)| RootSpecifier::Period(start, step))
+        .parse(i)
 }
 
 fn period_with_any(i: &str) -> IResult<&str, RootSpecifier> {
-    map(separated_pair(specifier_with_any, tag("/"), ordinal), |(start, step)| {
-        RootSpecifier::Period(start, step)
-    })(i)
+    separated_pair(specifier_with_any, tag("/"), ordinal)
+        .map(|(start, step)| RootSpecifier::Period(start, step))
+        .parse(i)
 }
 
 fn range(i: &str) -> IResult<&str, Specifier> {
-    map(separated_pair(ordinal, tag("-"), ordinal), |(start, end)| {
-        Specifier::Range(start, end)
-    })(i)
+    separated_pair(ordinal, tag("-"), ordinal)
+        .map(|(start, end)| Specifier::Range(start, end))
+        .parse(i)
 }
 
 fn named_range(i: &str) -> IResult<&str, Specifier> {
-    map(separated_pair(name, tag("-"), name), |(start, end)| {
-        Specifier::NamedRange(start, end)
-    })(i)
+    separated_pair(name, tag("-"), name)
+        .map(|(start, end)| Specifier::NamedRange(start, end))
+        .parse(i)
 }
 
 fn all(i: &str) -> IResult<&str, Specifier> {
@@ -123,31 +127,31 @@ fn any(i: &str) -> IResult<&str, Specifier> {
 }
 
 fn specifier(i: &str) -> IResult<&str, Specifier> {
-    alt((all, range, point, named_range))(i)
+    alt((all, range, point, named_range)).parse(i)
 }
 
 fn specifier_with_any(i: &str) -> IResult<&str, Specifier> {
-    alt((any, specifier))(i)
+    alt((any, specifier)).parse(i)
 }
 
 fn root_specifier(i: &str) -> IResult<&str, RootSpecifier> {
-    alt((period, map(specifier, RootSpecifier::from), named_point))(i)
+    alt((period, specifier.map(RootSpecifier::from), named_point)).parse(i)
 }
 
 fn root_specifier_with_any(i: &str) -> IResult<&str, RootSpecifier> {
-    alt((period_with_any, map(specifier_with_any, RootSpecifier::from), named_point))(i)
+    alt((period_with_any, specifier_with_any.map(RootSpecifier::from), named_point)).parse(i)
 }
 
 fn root_specifier_list(i: &str) -> IResult<&str, Vec<RootSpecifier>> {
     let list = separated_list1(tag(","), root_specifier);
-    let single_item = map(root_specifier, |spec| vec![spec]);
-    delimited(multispace0, alt((list, single_item)), multispace0)(i)
+    let single_item = root_specifier.map(|spec| vec![spec]);
+    delimited(multispace0, alt((list, single_item)), multispace0).parse(i)
 }
 
 fn root_specifier_list_with_any(i: &str) -> IResult<&str, Vec<RootSpecifier>> {
     let list = separated_list1(tag(","), root_specifier_with_any);
-    let single_item = map(root_specifier_with_any, |spec| vec![spec]);
-    delimited(multispace0, alt((list, single_item)), multispace0)(i)
+    let single_item = root_specifier_with_any.map(|spec| vec![spec]);
+    delimited(multispace0, alt((list, single_item)), multispace0).parse(i)
 }
 
 fn field(i: &str) -> IResult<&str, Field> {
@@ -248,30 +252,29 @@ fn shorthand(i: &str) -> IResult<&str, ScheduleFields> {
         shorthand_daily,
         shorthand_hourly,
     ));
-    delimited(multispace0, keywords, multispace0)(i)
+    delimited(multispace0, keywords, multispace0).parse(i)
 }
 
 fn longhand(i: &str) -> IResult<&str, ScheduleFields> {
-    let seconds = map_res(field, Seconds::from_field);
-    let minutes = map_res(field, Minutes::from_field);
-    let hours = map_res(field, Hours::from_field);
-    let days_of_month = map_res(field_with_any, DaysOfMonth::from_field);
-    let months = map_res(field, Months::from_field);
-    let days_of_week = map_res(field_with_any, DaysOfWeek::from_field);
-    let years = opt(map_res(field, Years::from_field));
-    let fields = tuple((seconds, minutes, hours, days_of_month, months, days_of_week, years));
+    let seconds = field.map_res(Seconds::from_field);
+    let minutes = field.map_res(Minutes::from_field);
+    let hours = field.map_res(Hours::from_field);
+    let days_of_month = field_with_any.map_res(DaysOfMonth::from_field);
+    let months = field.map_res(Months::from_field);
+    let days_of_week = field_with_any.map_res(DaysOfWeek::from_field);
+    let years = opt(field.map_res(Years::from_field));
+    let fields = (seconds, minutes, hours, days_of_month, months, days_of_week, years);
 
-    map(
-        terminated(fields, eof),
-        |(seconds, minutes, hours, days_of_month, months, days_of_week, years)| {
+    terminated(fields, eof)
+        .map(|(seconds, minutes, hours, days_of_month, months, days_of_week, years)| {
             let years = years.unwrap_or_else(Years::all);
             ScheduleFields::new(seconds, minutes, hours, days_of_month, months, days_of_week, years)
-        },
-    )(i)
+        })
+        .parse(i)
 }
 
 fn schedule(i: &str) -> IResult<&str, ScheduleFields> {
-    all_consuming(alt((shorthand, longhand)))(i)
+    all_consuming(alt((shorthand, longhand))).parse(i)
 }
 
 #[cfg(test)]

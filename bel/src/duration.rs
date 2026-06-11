@@ -1,11 +1,6 @@
 use chrono::Duration;
 use nom::{
-    IResult,
-    branch::alt,
-    bytes::complete::tag,
-    character::complete::char,
-    combinator::{map, opt},
-    multi::many1,
+    IResult, Parser, branch::alt, bytes::complete::tag, character::complete::char, combinator::opt, multi::many1,
     number::complete::double,
 };
 
@@ -34,12 +29,13 @@ const MICROSECOND: u64 = 1_000;
 /// - `1ns` parses as 1 nanosecond
 /// - `1.5ns` parses as 1 nanosecond (sub-nanosecond durations not supported)
 pub fn parse_duration(i: &str) -> IResult<&str, Duration> {
-    let (i, neg) = opt(parse_negative)(i)?;
+    let (i, neg) = opt(parse_negative).parse(i)?;
     if i == "0" {
         return Ok((i, Duration::zero()));
     }
-    let (i, duration) =
-        many1(parse_number_unit)(i).map(|(i, d)| (i, d.iter().fold(Duration::zero(), |acc, next| acc + *next)))?;
+    let (i, duration) = many1(parse_number_unit)
+        .parse(i)
+        .map(|(i, d)| (i, d.iter().fold(Duration::zero(), |acc, next| acc + *next)))?;
     Ok((i, duration * if neg.is_some() { -1 } else { 1 }))
 }
 
@@ -73,19 +69,20 @@ fn parse_number_unit(i: &str) -> IResult<&str, Duration> {
 }
 
 fn parse_negative(i: &str) -> IResult<&str, ()> {
-    let (i, _): (&str, char) = char('-')(i)?;
+    let (i, _): (&str, char) = char('-').parse(i)?;
     Ok((i, ()))
 }
 
 fn parse_unit(i: &str) -> IResult<&str, Unit> {
     alt((
-        map(tag("ms"), |_| Unit::Millisecond),
-        map(tag("us"), |_| Unit::Microsecond),
-        map(tag("ns"), |_| Unit::Nanosecond),
-        map(char('h'), |_| Unit::Hour),
-        map(char('m'), |_| Unit::Minute),
-        map(char('s'), |_| Unit::Second),
-    ))(i)
+        tag("ms").map(|_| Unit::Millisecond),
+        tag("us").map(|_| Unit::Microsecond),
+        tag("ns").map(|_| Unit::Nanosecond),
+        char('h').map(|_| Unit::Hour),
+        char('m').map(|_| Unit::Minute),
+        char('s').map(|_| Unit::Second),
+    ))
+    .parse(i)
 }
 
 fn to_duration(num: f64, unit: Unit) -> Duration {
