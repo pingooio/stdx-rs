@@ -1,6 +1,6 @@
 # Rust's (unofficial) extended standard library: simplicity, performance and supply chain security for everyone
 
-Rust's biggest problem is its anemic standard library unable to fulfill the needs of most developers. It leads not only to a fragmented ecosystem with multiple competing packages (so you end up with 10 different packages to handle time and 15 crypto libraries) but also to elevated supply chain risks (see [Supply chain nightmare: How Rust will be attacked and what we can do to mitigate the inevitable](https://kerkour.com/rust-supply-chain-nightmare)).
+Rust's biggest problem is its anemic standard library unable to fulfill the needs of most developers. It leads not only to a fragmented ecosystem with multiple competing packages (so you end up with 10 different packages to handle time and 15 crypto libraries, and no more package named "froggy" because "template" was already taken on crates.io) but also to elevated supply chain risks (see [Supply chain nightmare: How Rust will be attacked and what we can do to mitigate the inevitable](https://kerkour.com/rust-supply-chain-nightmare)).
 
 This is why we are creating Rust's extended standard library, inspired by Go's extensive standard library and `golang.org/x/...` packages, to bring simplicity, performance and supply chain security to every Rust developer.
 
@@ -49,7 +49,7 @@ https://rust-stdx.github.io/stdx
 
 `stdx` is only possible thanks to our awesome partners!
 
-See [FUNDING.md](./FUNDING.md) or reach out at [code@pingoo.io](mailto:code@pingoo.io) to join our partner program to invest in the future of Rust and get unfair advantages such as priority support.
+Join our partner program to invest in the future of Rust and get unfair advantages such as priority support and roadmap prioritization. See [FUNDING.md](./FUNDING.md) or reach out at [code@pingoo.io](mailto:code@pingoo.io) to learn more.
 
 
 ## Contributing
@@ -58,7 +58,7 @@ Contributions are welcome, especially bug reports, improvement ideas and new pac
 
 Except for minor typos, no pull request will be accepted without a preliminary discussion. Please open an issue first.
 
-See [CONTRIBUTING.md](./CONTRIBUTIN.md) for what is tolerated (or not) regarding AI-assisted contributions.
+See [CONTRIBUTING.md](./CONTRIBUTIN.md) for details and for our AI policy.
 
 
 ## Development
