@@ -4,9 +4,9 @@ Rust's biggest problem is its anemic standard library unable to fulfill the need
 
 This is why we are creating Rust's extended standard library, inspired by Go's extensive standard library and `golang.org/x/...` packages, to bring simplicity, performance and supply chain security to every Rust developer.
 
-The goal is that `stdx` only uses code from `std` and `stdx`, also supports `no_std` use cases, and doesn't import any third-party packages. No supply chain risks, no ecosystem fragmentation.
+The goal is that `stdx` only uses code from `std` and `stdx`, supports `no_std` use cases, and doesn't import any third-party packages. No supply chain risks, no ecosystem fragmentation.
 
-Once the idea has proven to be valuable, we plan to donate the entire codebase to the Rust Foundation to build trust and drive adoption.
+Once the idea has proven valuable, we plan to donate the entire codebase to the Rust Foundation to build trust and drive adoption.
 
 
 Learn more in the announcement post: https://kerkour.com/stdx
@@ -52,9 +52,9 @@ See [FUNDING.md](./FUNDING.md) or reach out at [code@pingoo.io](mailto:code@ping
 
 Contributions are welcome, especially bug reports, improvement ideas and new package suggestions.
 
-Other than for minor typos, no pull request will be accepted without a preliminary discussion. Please open an issue first.
+Except for minor typos, no pull request will be accepted without a preliminary discussion. Please open an issue first.
 
-See [AI_POLICY.md](/AI_POLICY.md) for what is tolerated (or not) regarding AI-assisted programming.
+See [AI_POLICY.md](/AI_POLICY.md) for what is tolerated (or not) regarding AI-assisted contributions.
 
 
 ## Development
@@ -67,7 +67,7 @@ then:
 rustup default stable
 ```
 
-And you are ready to <s>Go</s> Rust!
+And you are ready to ~~Go~~ Rust!
 
 See `Makefile` for the most common commands used during development.
 
