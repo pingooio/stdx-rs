@@ -4,41 +4,6 @@
 //! an AST and renders them via a tree-walking interpreter. It supports both
 //! HTML mode (with automatic escaping) and text mode (no escaping).
 //!
-//! # Architecture
-//!
-//! ```text
-//!               ┌──────────────┐
-//!  add_template │              │
-//!  ────────────▶│   PARSER     │
-//!   (source)    │  (recursive  │
-//!               │   descent    │
-//!               │   parser)    │
-//!               └──────┬───────┘
-//!                      │ AST
-//!               ┌──────▼───────┐
-//!               │   ENGINE     │
-//!               │  (template   │
-//!               │   cache)     │
-//!               └──────┬───────┘
-//!                      │ render(name, ctx)
-//!               ┌──────▼───────┐
-//!               │  RENDERER    │
-//!               │  (tree-walk  │
-//!               │   VM with   │
-//!               │   extends /  │
-//!               │   blocks /   │
-//!               │   includes   │
-//!               │   resolution)│
-//!               └──────┬───────┘
-//!                      │ output
-//!               ┌──────▼───────┐
-//!               │  fmt::Write  │
-//!               │  (String,    │
-//!               │   Vec<u8>,   │
-//!               │   io::Write) │
-//!               └──────────────┘
-//! ```
-//!
 //! # Quick start
 //!
 //! ```rust
@@ -251,6 +216,41 @@
 //! - `add_template` returns an error if a template with the same name already exists.
 //! - Unknown filter names (`{{ x | unknown }}`) produce a parse-time error.
 //! - Exceeding the include depth (64) or extend depth (128) returns a render error.
+//!
+//! # Architecture
+//!
+//! ```text
+//!               ┌──────────────┐
+//!  add_template │              │
+//!  ────────────▶│   PARSER     │
+//!   (source)    │  (recursive  │
+//!               │   descent    │
+//!               │   parser)    │
+//!               └──────┬───────┘
+//!                      │ AST
+//!               ┌──────▼───────┐
+//!               │   ENGINE     │
+//!               │  (template   │
+//!               │   cache)     │
+//!               └──────┬───────┘
+//!                      │ render(name, ctx)
+//!               ┌──────▼───────┐
+//!               │  RENDERER    │
+//!               │  (tree-walk  │
+//!               │   VM with   │
+//!               │   extends /  │
+//!               │   blocks /   │
+//!               │   includes   │
+//!               │   resolution)│
+//!               └──────┬───────┘
+//!                      │ output
+//!               ┌──────▼───────┐
+//!               │  fmt::Write  │
+//!               │  (String,    │
+//!               │   Vec<u8>,   │
+//!               │   io::Write) │
+//!               └──────────────┘
+//! ```
 
 mod ast;
 pub mod engine;
