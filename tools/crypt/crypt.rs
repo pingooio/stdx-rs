@@ -1,6 +1,6 @@
 use std::{env, fs, process};
 
-use crypto::{Aes256Gcm, Xof, sha3::Shake256};
+use crypto::{Xof, aes::Aes256Gcm, sha3::Shake256};
 use zeroize::{Zeroize, Zeroizing};
 
 const KEY_LENGTH: usize = 32;
