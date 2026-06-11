@@ -7,6 +7,7 @@ edition = "2024"
 path = "./template.rs"
 
 [dependencies]
+memchr = { workspace = true }
 serde = { workspace = true }
 
 [dev-dependencies]

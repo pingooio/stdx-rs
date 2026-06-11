@@ -303,6 +303,24 @@ impl ExprParser {
                 Some(Token::LBracket) => {
                     self.advance();
                     let index = self.parse_or()?;
+                    match &index {
+                        Expr::I64(n) if *n < 0 => {
+                            let (_, pos) = &self.tokens[0];
+                            return Err(Error::syntax("negative index is not allowed", pos.line, pos.column));
+                        }
+                        Expr::F64(n) if *n < 0.0 => {
+                            let (_, pos) = &self.tokens[0];
+                            return Err(Error::syntax("negative index is not allowed", pos.line, pos.column));
+                        }
+                        Expr::UnaryOp {
+                            op: UnaryOp::Neg,
+                            expr: e,
+                        } if matches!(e.as_ref(), Expr::I64(_) | Expr::F64(_)) => {
+                            let (_, pos) = &self.tokens[0];
+                            return Err(Error::syntax("negative index is not allowed", pos.line, pos.column));
+                        }
+                        _ => {}
+                    }
                     match self.expect_position("expected ]")?.0 {
                         Token::RBracket => {}
                         tok => return Err(Error::syntax(format!("expected `]`, got {tok:?}"), 0, 0)),

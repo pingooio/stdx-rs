@@ -76,7 +76,12 @@ fn filter_escape(val: &Value, _args: &[Value]) -> Result<Value, crate::error::Er
 fn filter_safe(val: &Value, _args: &[Value]) -> Result<Value, crate::error::Error> {
     match val {
         Value::Str(s) => Ok(Value::Safe(Rc::clone(s))),
-        other => Ok(other.clone()),
+        Value::Safe(s) => Ok(Value::Safe(Rc::clone(s))),
+        other => {
+            let mut buf = String::new();
+            other.fmt_to(&mut buf).unwrap();
+            Ok(Value::Safe(buf.into()))
+        }
     }
 }
 
@@ -120,15 +125,14 @@ fn filter_join(val: &Value, args: &[Value]) -> Result<Value, crate::error::Error
     let separator = args.first().and_then(|v| v.as_str()).unwrap_or("");
     match val {
         Value::Array(arr) => {
-            let parts: Vec<String> = arr
-                .iter()
-                .map(|v| {
-                    let mut buf = String::new();
-                    v.fmt_to(&mut buf).unwrap();
-                    buf
-                })
-                .collect();
-            Ok(Value::Str(parts.join(separator).into()))
+            let mut result = String::new();
+            for (i, v) in arr.iter().enumerate() {
+                if i > 0 {
+                    result.push_str(separator);
+                }
+                v.fmt_to(&mut result).unwrap();
+            }
+            Ok(Value::Str(result.into()))
         }
         v => {
             let mut buf = String::new();
@@ -147,17 +151,20 @@ fn filter_title(val: &Value, _args: &[Value]) -> Result<Value, crate::error::Err
             buf
         }
     };
-    let result: String = s
-        .split_whitespace()
-        .map(|word| {
-            let mut chars = word.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(c) => c.to_uppercase().to_string() + &chars.as_str().to_lowercase(),
+    let mut result = String::with_capacity(s.len());
+    for (i, word) in s.split_whitespace().enumerate() {
+        if i > 0 {
+            result.push(' ');
+        }
+        let mut chars = word.chars();
+        match chars.next() {
+            None => {}
+            Some(c) => {
+                result.push_str(&c.to_uppercase().to_string());
+                result.push_str(&chars.as_str().to_lowercase());
             }
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
+        }
+    }
     Ok(Value::Str(result.into()))
 }
 
@@ -523,5 +530,89 @@ mod tests {
         let val = Value::Array(Rc::new(vec![] as Vec<Value>));
         let result = filter_last(&val, &[]).unwrap();
         assert_eq!(result, Value::Null);
+    }
+
+    #[test]
+    fn test_default_on_f64_zero() {
+        let val = Value::F64(0.0);
+        let result = filter_default(&val, &[Value::Str("fb".into())]).unwrap();
+        assert_eq!(result.as_str(), Some("fb"));
+    }
+
+    #[test]
+    fn test_default_on_f64_nan() {
+        let val = Value::F64(f64::NAN);
+        let result = filter_default(&val, &[Value::Str("fb".into())]).unwrap();
+        assert_eq!(result.as_str(), Some("fb"));
+    }
+
+    #[test]
+    fn test_default_on_empty_array() {
+        let val = Value::Array(Rc::new(vec![]));
+        let result = filter_default(&val, &[Value::Str("fb".into())]).unwrap();
+        assert_eq!(result.as_str(), Some("fb"));
+    }
+
+    #[test]
+    fn test_default_on_empty_map() {
+        let val = Value::Map(Rc::new(BTreeMap::new()));
+        let result = filter_default(&val, &[Value::Str("fb".into())]).unwrap();
+        assert_eq!(result.as_str(), Some("fb"));
+    }
+
+    #[test]
+    fn test_length_on_empty_map() {
+        let val = Value::Map(Rc::new(BTreeMap::new()));
+        let result = filter_length(&val, &[]).unwrap();
+        assert_eq!(result, Value::I64(0));
+    }
+
+    #[test]
+    fn test_length_on_multibyte_string() {
+        let val = Value::Str("é".into());
+        let result = filter_length(&val, &[]).unwrap();
+        assert_eq!(result, Value::I64(1));
+    }
+
+    #[test]
+    fn test_join_on_empty_array() {
+        let val = Value::Array(Rc::new(vec![]));
+        let result = filter_join(&val, &[Value::Str(",".into())]).unwrap();
+        assert_eq!(result.as_str(), Some(""));
+    }
+
+    #[test]
+    fn test_join_with_non_string_separator() {
+        let val = Value::Array(Rc::new(vec![Value::Str("a".into()), Value::Str("b".into())]));
+        let result = filter_join(&val, &[Value::I64(42)]).unwrap();
+        assert_eq!(result.as_str(), Some("ab"));
+    }
+
+    #[test]
+    fn test_safe_on_non_string() {
+        let val = Value::I64(42);
+        let result = filter_safe(&val, &[]).unwrap();
+        assert_eq!(result, Value::Safe("42".into()));
+    }
+
+    #[test]
+    fn test_escape_on_non_string() {
+        let val = Value::I64(42);
+        let result = filter_escape(&val, &[]).unwrap();
+        assert_eq!(result, Value::Safe("42".into()));
+    }
+
+    #[test]
+    fn test_upper_on_safe() {
+        let val = Value::Safe("abc".into());
+        let result = filter_upper(&val, &[]).unwrap();
+        assert_eq!(result, Value::Str("ABC".into()));
+    }
+
+    #[test]
+    fn test_lower_on_safe() {
+        let val = Value::Safe("ABC".into());
+        let result = filter_lower(&val, &[]).unwrap();
+        assert_eq!(result, Value::Str("abc".into()));
     }
 }

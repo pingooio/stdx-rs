@@ -1,6 +1,6 @@
 //! Tree-walking interpreter that evaluates template AST nodes and expressions.
 
-use std::{collections::BTreeMap, fmt, rc::Rc};
+use std::{collections::BTreeMap, fmt, rc::Rc, sync::OnceLock};
 
 use crate::{
     ast::{BinOp, Expr, ForNode, IfNode, Node, NodeList, UnaryOp},
@@ -20,6 +20,17 @@ pub struct Renderer<'a> {
 }
 
 const MAX_INCLUDE_DEPTH: usize = 64;
+
+fn ascii_char_cache() -> &'static [&'static str; 128] {
+    static CACHE: OnceLock<[&'static str; 128]> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        // Leak one-byte strings so they live forever as &'static str
+        std::array::from_fn(|i| {
+            let s: &'static str = Box::leak((i as u8 as char).to_string().into_boxed_str());
+            s
+        })
+    })
+}
 
 impl<'a> Renderer<'a> {
     pub fn new(engine: &'a crate::engine::Engine, out: &'a mut dyn fmt::Write, variables: Value) -> Self {
@@ -66,6 +77,11 @@ impl<'a> Renderer<'a> {
                     Value::Safe(s) => {
                         self.out.write_str(s).map_err(|e| Error::render(e.to_string()))?;
                     }
+                    Value::Str(s) => {
+                        let mut escaped = String::new();
+                        (self.escaper)(s, &mut escaped)?;
+                        self.out.write_str(&escaped).map_err(|e| Error::render(e.to_string()))?;
+                    }
                     _ => {
                         let mut s = String::new();
                         val.fmt_to(&mut s).map_err(|e| Error::render(e.to_string()))?;
@@ -100,10 +116,9 @@ impl<'a> Renderer<'a> {
             }
             Node::Block(block) => {
                 let chain = self.block_overrides.get(&block.name).cloned();
-                if let Some(mut chain) = chain {
-                    let child_body = chain.remove(0);
+                if let Some(chain) = chain {
                     let mut output = String::new();
-                    for parent_body in chain.iter().rev() {
+                    for parent_body in chain[1..].iter().rev() {
                         let mut buf = String::new();
                         {
                             let mut sub = Renderer {
@@ -126,7 +141,7 @@ impl<'a> Renderer<'a> {
                     let mut scope = BTreeMap::new();
                     scope.insert("__parent__".into(), Value::Str(output.clone().into()));
                     self.scopes.push(scope);
-                    self.render_nodes(&child_body)?;
+                    self.render_nodes(&chain[0])?;
                     self.scopes.pop();
                 } else {
                     self.render_nodes(&block.body)?;
@@ -168,7 +183,16 @@ impl<'a> Renderer<'a> {
         let iterable = self.eval_expr(&for_node.iterable)?;
         let items: Vec<Value> = match &iterable {
             Value::Array(arr) => arr.iter().cloned().collect(),
-            Value::Str(s) => s.chars().map(|c| Value::Str(c.to_string().into())).collect(),
+            Value::Str(s) => s
+                .chars()
+                .map(|c| {
+                    if c.is_ascii() {
+                        Value::Str(ascii_char_cache()[c as usize].into())
+                    } else {
+                        Value::Str(c.to_string().into())
+                    }
+                })
+                .collect(),
             _ => Vec::new(),
         };
         for item in items {
@@ -207,7 +231,18 @@ impl<'a> Renderer<'a> {
                 let val = self.eval_expr(inner)?;
                 let idx_val = self.eval_expr(index_expr)?;
                 match idx_val {
-                    Value::I64(n) => Ok(val.get_index(n as usize).unwrap_or(Value::Null)),
+                    Value::I64(n) => {
+                        if n < 0 {
+                            return Err(Error::render("negative index is not allowed"));
+                        }
+                        Ok(val.get_index(n as usize).unwrap_or(Value::Null))
+                    }
+                    Value::F64(n) => {
+                        if n < 0.0 || !n.is_finite() || n.fract() != 0.0 {
+                            return Err(Error::render("invalid index"));
+                        }
+                        Ok(val.get_index(n as usize).unwrap_or(Value::Null))
+                    }
                     Value::Str(s) => Ok(val.get(&s).unwrap_or(Value::Null)),
                     _ => Ok(Value::Null),
                 }
@@ -236,7 +271,12 @@ impl<'a> Renderer<'a> {
                 right,
             } => {
                 let l = self.eval_expr(left)?;
-                let r = self.eval_expr(right)?;
+                // Short-circuit evaluation for And / Or
+                let r = match op {
+                    BinOp::And if !l.is_truthy() => return Ok(Value::Bool(false)),
+                    BinOp::Or if l.is_truthy() => return Ok(Value::Bool(true)),
+                    _ => self.eval_expr(right)?,
+                };
                 self.eval_binop(&l, op, &r)
             }
             Expr::UnaryOp {
@@ -265,6 +305,12 @@ impl<'a> Renderer<'a> {
                         Ok(Value::Null)
                     }
                     "range" => {
+                        if eval_args.is_empty() {
+                            return Err(Error::render("range() requires at least one argument"));
+                        }
+                        if eval_args.len() > 2 {
+                            return Err(Error::render("range() takes at most two arguments"));
+                        }
                         let mut range_args: Vec<i64> = Vec::with_capacity(eval_args.len());
                         for (i, arg) in eval_args.iter().enumerate() {
                             match arg {

@@ -221,7 +221,8 @@
 //!
 //! ## Safety boundaries
 //!
-//! - **Division/modulo by zero** is rejected with a render error (not a panic).
+//! - **Integer division/modulo by zero** is rejected with a render error (not a panic).
+//!   Float division/modulo by zero follows IEEE 754 (returns `inf` / `-inf` / `NaN`).
 //! - **Circular includes** (`a -> b -> a`) are detected by a depth limit (64).
 //! - **Circular extends** (`a extends b extends a`) are detected by a depth limit (128).
 //! - **Unknown functions** (`{{ myfunc() }}`) return a render error.

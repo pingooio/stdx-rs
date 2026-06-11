@@ -727,4 +727,187 @@ mod tests {
         let result = engine.render("t", serde_json::json!({})).unwrap();
         assert_eq!(result, "5");
     }
+
+    #[test]
+    fn test_short_circuit_and() {
+        let mut engine = Engine::new(Mode::Text);
+        engine.add_template("t", "{% if false and 1/0 %}ok{% endif %}").unwrap();
+        let result = engine.render("t", serde_json::json!({})).unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_short_circuit_or() {
+        let mut engine = Engine::new(Mode::Text);
+        engine.add_template("t", "{% if true or 1/0 %}ok{% endif %}").unwrap();
+        let result = engine.render("t", serde_json::json!({})).unwrap();
+        assert_eq!(result, "ok");
+    }
+
+    #[test]
+    fn test_range_no_args() {
+        let mut engine = Engine::new(Mode::Text);
+        engine.add_template("t", "{{ range() }}").unwrap();
+        let result = engine.render("t", serde_json::json!({}));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_range_extra_args() {
+        let mut engine = Engine::new(Mode::Text);
+        engine
+            .add_template("t", "{% for i in range(1,2,3) %}{{ i }}{% endfor %}")
+            .unwrap();
+        let result = engine.render("t", serde_json::json!({}));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_for_empty_string() {
+        let mut engine = Engine::new(Mode::Text);
+        engine
+            .add_template("t", "{% for c in \"\" %}{{ c }}{% endfor %}")
+            .unwrap();
+        let result = engine.render("t", serde_json::json!({})).unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_for_empty_array() {
+        let mut engine = Engine::new(Mode::Text);
+        engine
+            .add_template("t", "{% for i in items %}{{ i }}{% endfor %}")
+            .unwrap();
+        let result = engine.render("t", serde_json::json!({"items": []})).unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_for_over_number() {
+        let mut engine = Engine::new(Mode::Text);
+        engine
+            .add_template("t", "{% for i in 42 %}{{ i }}{% endfor %}")
+            .unwrap();
+        let result = engine.render("t", serde_json::json!({})).unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_for_over_map() {
+        let mut engine = Engine::new(Mode::Text);
+        engine.add_template("t", "{% for i in m %}{{ i }}{% endfor %}").unwrap();
+        let result = engine.render("t", serde_json::json!({"m": {"a": 1}})).unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_missing_include() {
+        let mut engine = Engine::new(Mode::Text);
+        engine.add_template("t", "{% include \"missing\" %}").unwrap();
+        let result = engine.render("t", serde_json::json!({}));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_missing_extends() {
+        let mut engine = Engine::new(Mode::Text);
+        engine.add_template("t", "{% extends \"missing\" %}").unwrap();
+        let result = engine.render("t", serde_json::json!({}));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_super_without_parent() {
+        let mut engine = Engine::new(Mode::Text);
+        engine.add_template("t", "{{ super() }}").unwrap();
+        let result = engine.render("t", serde_json::json!({})).unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_set_overwrite() {
+        let mut engine = Engine::new(Mode::Text);
+        engine
+            .add_template("t", "{% set x = 1 %}{% set x = 2 %}{{ x }}")
+            .unwrap();
+        let result = engine.render("t", serde_json::json!({})).unwrap();
+        assert_eq!(result, "2");
+    }
+
+    #[test]
+    fn test_nested_missing() {
+        let mut engine = Engine::new(Mode::Text);
+        engine.add_template("t", "{{ a.b.c }}").unwrap();
+        let result = engine.render("t", serde_json::json!({})).unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_negative_index_runtime() {
+        let mut engine = Engine::new(Mode::Text);
+        engine.add_template("t", "{{ items[i] }}").unwrap();
+        let result = engine.render("t", serde_json::json!({"items": [1, 2], "i": -1}));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_float_index_runtime() {
+        let mut engine = Engine::new(Mode::Text);
+        engine.add_template("t", "{{ items[i] }}").unwrap();
+        let result = engine.render("t", serde_json::json!({"items": [1, 2], "i": 1.5}));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_empty_map_index() {
+        let mut engine = Engine::new(Mode::Text);
+        engine.add_template("t", "{{ m.key }}").unwrap();
+        let result = engine.render("t", serde_json::json!({})).unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_float_div_by_zero_inf() {
+        let mut engine = Engine::new(Mode::Text);
+        engine.add_template("t", "{{ 1.0 / 0.0 }}").unwrap();
+        let result = engine.render("t", serde_json::json!({})).unwrap();
+        assert_eq!(result, "inf");
+    }
+
+    #[test]
+    fn test_neg_float_div_by_zero_neg_inf() {
+        let mut engine = Engine::new(Mode::Text);
+        engine.add_template("t", "{{ -1.0 / 0.0 }}").unwrap();
+        let result = engine.render("t", serde_json::json!({})).unwrap();
+        assert_eq!(result, "-inf");
+    }
+
+    #[test]
+    fn test_float_zero_div_by_zero_nan() {
+        let mut engine = Engine::new(Mode::Text);
+        engine.add_template("t", "{{ 0.0 / 0.0 }}").unwrap();
+        let result = engine.render("t", serde_json::json!({})).unwrap();
+        assert_eq!(result, "NaN");
+    }
+
+    #[test]
+    fn test_elif_after_else_error() {
+        let mut engine = Engine::new(Mode::Text);
+        let result = engine.add_template("t", "{% if a %}b{% else %}c{% elif d %}e{% endif %}");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_multiple_else_error() {
+        let mut engine = Engine::new(Mode::Text);
+        let result = engine.add_template("t", "{% if a %}b{% else %}c{% else %}d{% endif %}");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_empty_if_condition_error() {
+        let mut engine = Engine::new(Mode::Text);
+        let result = engine.add_template("t", "{% if %}a{% endif %}");
+        assert!(result.is_err());
+    }
 }

@@ -92,11 +92,11 @@ impl Value {
     /// Arrays and maps render as `[Array]` / `[Object]` placeholders.
     pub fn fmt_to(&self, buf: &mut impl fmt::Write) -> fmt::Result {
         match self {
-            Value::Null => write!(buf, ""),
+            Value::Null => Ok(()),
             Value::Bool(b) => write!(buf, "{b}"),
             Value::I64(n) => write!(buf, "{n}"),
             Value::F64(n) => write!(buf, "{n}"),
-            Value::Str(s) | Value::Safe(s) => write!(buf, "{s}"),
+            Value::Str(s) | Value::Safe(s) => buf.write_str(s),
             Value::Array(_) => write!(buf, "[Array]"),
             Value::Map(_) => write!(buf, "[Object]"),
         }
@@ -790,5 +790,61 @@ mod tests {
     fn test_neg_infinity_truthy() {
         let val = Value::F64(f64::NEG_INFINITY);
         assert!(val.is_truthy());
+    }
+
+    #[test]
+    fn test_f64_neg_zero_truthy() {
+        let val = Value::F64(-0.0);
+        assert!(!val.is_truthy());
+    }
+
+    #[test]
+    fn test_get_on_non_map() {
+        let val = Value::I64(42);
+        assert_eq!(val.get("key"), None);
+    }
+
+    #[test]
+    fn test_get_index_on_non_array() {
+        let val = Value::I64(42);
+        assert_eq!(val.get_index(0), None);
+    }
+
+    #[test]
+    fn test_get_index_out_of_bounds() {
+        let val = Value::Array(Rc::new(vec![Value::I64(1)]));
+        assert_eq!(val.get_index(5), None);
+    }
+
+    #[test]
+    fn test_as_str_on_non_string() {
+        let val = Value::I64(42);
+        assert_eq!(val.as_str(), None);
+    }
+
+    #[test]
+    fn test_fmt_to_null() {
+        let val = Value::Null;
+        let mut buf = String::new();
+        val.fmt_to(&mut buf).unwrap();
+        assert_eq!(buf, "");
+    }
+
+    #[test]
+    fn test_fmt_to_array() {
+        let val = Value::Array(Rc::new(vec![Value::I64(1)]));
+        let mut buf = String::new();
+        val.fmt_to(&mut buf).unwrap();
+        assert_eq!(buf, "[Array]");
+    }
+
+    #[test]
+    fn test_fmt_to_map() {
+        let mut m = BTreeMap::new();
+        m.insert("k".to_string(), Value::I64(1));
+        let val = Value::Map(Rc::new(m));
+        let mut buf = String::new();
+        val.fmt_to(&mut buf).unwrap();
+        assert_eq!(buf, "[Object]");
     }
 }
