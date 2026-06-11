@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [lib]
-path = "./src/postmark.rs"
+path = "./postmark.rs"
 
 [dependencies]
 reqwest = { workspace = true }
