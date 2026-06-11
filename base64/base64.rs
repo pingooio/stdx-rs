@@ -254,6 +254,14 @@ pub fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result
 ///
 /// Consumers may prefer the faster [`encode_into`] which dispatches to
 /// a SIMD-accelerated path when available (non constant-time).
+///
+/// # Example
+///
+/// ```rust
+/// let mut buf = [0u8; 4];
+/// base64::encode_into_constant_time(&mut buf, b"foo", base64::Alphabet::Standard).unwrap();
+/// assert_eq!(&buf, b"Zm9v");
+/// ```
 pub const fn encode_into_constant_time(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), EncodeError> {
     match check_encode_output_length(output.len(), data.len(), alphabet) {
         Ok(_) => {}
@@ -555,6 +563,14 @@ pub fn decode_into(output: &mut [u8], encoded_data: &[u8], alphabet: Alphabet) -
 ///
 /// Consumers may prefer the faster [`decode_into`] which dispatches to
 /// a SIMD-accelerated path when available (non constant-time).
+///
+/// # Example
+///
+/// ```rust
+/// let mut buf = [0u8; 3];
+/// base64::decode_into_constant_time(&mut buf, b"Zm9v", base64::Alphabet::Standard).unwrap();
+/// assert_eq!(&buf, b"foo");
+/// ```
 pub const fn decode_into_constant_time(
     output: &mut [u8],
     encoded_data: &[u8],

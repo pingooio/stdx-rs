@@ -4,7 +4,6 @@ version = "2.3.2"
 authors = ["The rust-url developers"]
 description = "Percent encoding and decoding"
 categories = ["no-std"]
-repository = "https://github.com/bloom42/stdx"
 license = "Apache-2.0"
 edition = "2024"
 rust-version = "1.85"

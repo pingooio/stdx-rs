@@ -1,6 +1,56 @@
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+//! Fast base32 encoding and decoding with SIMD acceleration, constant-time
+//! operations, and `const fn` support.
+//!
+//! Nine alphabet variants are available via [`Alphabet`]:
+//!
+//! | Variant               | Characters              | Padding | Description                |
+//! |-----------------------|-------------------------|---------|----------------------------|
+//! | `Rfc4648`             | `A-Z 2-7`               | `=`     | RFC 4648 (standard)        |
+//! | `Rfc4648NoPadding`    | `A-Z 2-7`               | none    | RFC 4648 without padding   |
+//! | `Rfc4648Lower`        | `a-z 2-7`               | `=`     | RFC 4648 lowercase         |
+//! | `Rfc4648LowerNoPadding`| `a-z 2-7`              | none    | RFC 4648 lowercase no pad  |
+//! | `Rfc4648Hex`          | `0-9 A-V`               | `=`     | RFC 4648 extended hex      |
+//! | `Rfc4648HexNoPadding` | `0-9 A-V`               | none    | RFC 4648 extended hex no pad|
+//! | `Rfc4648HexLower`     | `0-9 a-v`               | `=`     | RFC 4648 extended hex lower|
+//! | `Rfc4648HexLowerNoPadding`| `0-9 a-v`           | none    | RFC 4648 extended hex lower no pad|
+//! | `Crockford`           | `0-9 A-H J-K M-N P-Z`   | none    | Crockford (no I L O U)     |
+//!
+//! # Feature flags
+//!
+//! | Flag    | Description                                             |
+//! |---------|---------------------------------------------------------|
+//! | `std`   | [`std::error::Error`] trait impls (enabled by default)  |
+//! | `alloc` | `String`/`Vec`-returning convenience APIs               |
+//! | `serde` | Serde [`serialize`](crate::serde::serialize)/[`deserialize`](crate::serde::deserialize) helpers  |
+//!
+//! # Performance
+//!
+//! The [`encode_into`] and [`decode_into`] functions
+//! automatically dispatch to SIMD-accelerated paths (AVX2 on x86/x86_64,
+//! NEON on aarch64). When a constant-time guarantee is required, use
+//! [`encode_into_constant_time`] or [`decode_into_constant_time`].
+//!
+//! # `const fn` support
+//!
+//! [`encode_array`] and [`decode_array`] are `const fn`, enabling base32
+//! encoding and decoding at compile time.
+//!
+//! # Examples
+//!
+//! ```rust
+//! let encoded = base32::encode(b"hello", base32::Alphabet::Rfc4648);
+//! assert_eq!(encoded, "NBSWY3DP");
+//!
+//! let decoded = base32::decode(b"NBSWY3DP", base32::Alphabet::Rfc4648).unwrap();
+//! assert_eq!(decoded, b"hello");
+//!
+//! let url = base32::encode(b"hello", base32::Alphabet::Crockford);
+//! assert_eq!(url, "D1JPRV3F");
+//! ```
+
 #[cfg(any(feature = "alloc", test))]
 extern crate alloc;
 
@@ -81,6 +131,17 @@ impl std::error::Error for EncodeError {}
 #[cfg(feature = "std")]
 impl std::error::Error for DecodeError {}
 
+/// Returns the size in bytes of the input data after base32 encoding.
+///
+/// Returns `None` if the output size overflows `usize`.
+///
+/// # Example
+///
+/// ```rust
+/// assert_eq!(base32::encoded_length(5, true), Some(8));
+/// assert_eq!(base32::encoded_length(1, false), Some(2));
+/// assert_eq!(base32::encoded_length(usize::MAX, true), None);
+/// ```
 pub const fn encoded_length(bytes_len: usize, padding: bool) -> Option<usize> {
     if bytes_len == 0 {
         return Some(0);
@@ -111,6 +172,14 @@ pub const fn encoded_length(bytes_len: usize, padding: bool) -> Option<usize> {
 /// Encode
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// Encodes bytes to a base32 string using the given [`Alphabet`].
+///
+/// # Example
+///
+/// ```rust
+/// let encoded = base32::encode(b"hello", base32::Alphabet::Rfc4648);
+/// assert_eq!(encoded, "NBSWY3DP");
+/// ```
 #[cfg(feature = "alloc")]
 pub fn encode(data: impl AsRef<[u8]>, alphabet: Alphabet) -> alloc::string::String {
     let data = data.as_ref();
@@ -121,6 +190,18 @@ pub fn encode(data: impl AsRef<[u8]>, alphabet: Alphabet) -> alloc::string::Stri
     unsafe { alloc::string::String::from_utf8_unchecked(output) }
 }
 
+/// Encodes `data` into a fixed-size array at compile time.
+///
+/// The generic parameter `OUT` is the output array length. It must be exactly
+/// the encoded length of `data` or a compile-time panic is raised.
+///
+/// # Example
+///
+/// ```rust
+/// const DATA: [u8; 5] = [0x68, 0x65, 0x6C, 0x6C, 0x6F];
+/// const B32: [u8; 8] = base32::encode_array::<8>(&DATA, base32::Alphabet::Rfc4648);
+/// assert_eq!(&B32, b"NBSWY3DP");
+/// ```
 pub const fn encode_array<const OUT: usize>(data: &[u8], alphabet: Alphabet) -> [u8; OUT] {
     match encoded_length(data.len(), alphabet.is_padded()) {
         Some(len) if len == OUT => {}
@@ -133,6 +214,25 @@ pub const fn encode_array<const OUT: usize>(data: &[u8], alphabet: Alphabet) -> 
     }
 }
 
+/// Encodes bytes into an existing buffer.
+///
+/// Dispatches to a SIMD-accelerated implementation (AVX2 or NEON) when
+/// the target feature is available.
+///
+/// See [`encode_into_constant_time`] for security-sensitive and cryptographic operations.
+///
+/// # Errors
+///
+/// Returns [`EncodeError`] if `output.len()` is less than the expected encoded
+/// length.
+///
+/// # Example
+///
+/// ```rust
+/// let mut buf = [0u8; 8];
+/// base32::encode_into(&mut buf, b"hello", base32::Alphabet::Rfc4648).unwrap();
+/// assert_eq!(&buf, b"NBSWY3DP");
+/// ```
 pub fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), EncodeError> {
     let padding = alphabet.is_padded();
     let expected = encoded_length(data.len(), padding).expect("encoded length overflow");
@@ -153,6 +253,20 @@ pub fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result
     encode_into_constant_time(output, data, alphabet)
 }
 
+/// Constant-time base32 encoding. Processes all input data without
+/// secret-dependent branches or memory accesses, making it suitable
+/// for cryptographic applications.
+///
+/// Consumers may prefer the faster [`encode_into`] which dispatches to
+/// a SIMD-accelerated path when available (non constant-time).
+///
+/// # Example
+///
+/// ```rust
+/// let mut buf = [0u8; 8];
+/// base32::encode_into_constant_time(&mut buf, b"hello", base32::Alphabet::Rfc4648).unwrap();
+/// assert_eq!(&buf, b"NBSWY3DP");
+/// ```
 pub const fn encode_into_constant_time(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), EncodeError> {
     let padding = alphabet.is_padded();
     let expected = encoded_length(data.len(), padding).expect("encoded length overflow");
@@ -253,7 +367,15 @@ pub const fn encode_into_constant_time(output: &mut [u8], data: &[u8], alphabet:
     Ok(())
 }
 
-/// Helper function that appends the encoded data to a `String`.
+/// Appends the base32-encoded representation of `data` to a [`String`].
+///
+/// # Example
+///
+/// ```rust
+/// let mut s = String::from("tag: ");
+/// base32::encode_into_string(&mut s, b"hello", base32::Alphabet::Rfc4648);
+/// assert_eq!(s, "tag: NBSWY3DP");
+/// ```
 #[cfg(feature = "alloc")]
 pub fn encode_into_string(output: &mut alloc::string::String, data: &[u8], alphabet: Alphabet) {
     let encoded_length = encoded_length(data.len(), alphabet.is_padded()).expect("output length overflow");
@@ -389,6 +511,19 @@ const fn decoded_length(encoded_content_len: usize) -> Result<usize, DecodeError
     }
 }
 
+/// Decodes a base32 string into bytes.
+///
+/// # Errors
+///
+/// Returns [`DecodeError`] if any character is invalid for the chosen
+/// [`Alphabet`], the input length is not valid, or padding is incorrect.
+///
+/// # Example
+///
+/// ```rust
+/// let decoded = base32::decode(b"NBSWY3DP", base32::Alphabet::Rfc4648).unwrap();
+/// assert_eq!(decoded, b"hello");
+/// ```
 #[cfg(feature = "alloc")]
 pub fn decode(data: impl AsRef<[u8]>, alphabet: Alphabet) -> Result<alloc::vec::Vec<u8>, DecodeError> {
     let data = data.as_ref();
@@ -400,6 +535,18 @@ pub fn decode(data: impl AsRef<[u8]>, alphabet: Alphabet) -> Result<alloc::vec::
     Ok(output)
 }
 
+/// Decodes a base32 string into a fixed-size array at compile time.
+///
+/// The generic parameter `OUT` is the output array length. It must be exactly
+/// the decoded length of the input or an error is returned.
+///
+/// # Example
+///
+/// ```rust
+/// const RESULT: Result<[u8; 5], base32::DecodeError> =
+///     base32::decode_array::<5>(b"NBSWY3DP", base32::Alphabet::Rfc4648);
+/// assert_eq!(RESULT.unwrap(), *b"hello");
+/// ```
 pub const fn decode_array<const OUT: usize>(encoded_data: &[u8], alphabet: Alphabet) -> Result<[u8; OUT], DecodeError> {
     let mut result = [0u8; OUT];
     match decode_into_constant_time(&mut result, encoded_data, alphabet) {
@@ -408,6 +555,26 @@ pub const fn decode_array<const OUT: usize>(encoded_data: &[u8], alphabet: Alpha
     }
 }
 
+/// Decodes a base32 string into an existing buffer.
+///
+/// Dispatches to a SIMD-accelerated implementation (AVX2 or NEON) when
+/// the target feature is available.
+///
+/// See [`decode_into_constant_time`] for security-sensitive and cryptographic operations.
+///
+/// # Errors
+///
+/// Returns [`DecodeError`] if any character is invalid for the chosen
+/// [`Alphabet`], if the input length is not valid, if padding is incorrect,
+/// or if `output.len()` is too small to hold the decoded data.
+///
+/// # Example
+///
+/// ```rust
+/// let mut buf = [0u8; 5];
+/// base32::decode_into(&mut buf, b"NBSWY3DP", base32::Alphabet::Rfc4648).unwrap();
+/// assert_eq!(&buf, b"hello");
+/// ```
 pub fn decode_into(output: &mut [u8], encoded_data: &[u8], alphabet: Alphabet) -> Result<(), DecodeError> {
     let padding = alphabet.is_padded();
     let (content_len, _) = strip_padding_info(encoded_data, padding)?;
@@ -431,6 +598,20 @@ pub fn decode_into(output: &mut [u8], encoded_data: &[u8], alphabet: Alphabet) -
     decode_into_constant_time(output, encoded_data, alphabet)
 }
 
+/// Constant-time base32 decoding. Processes all input data without
+/// secret-dependent branches or memory accesses, making it suitable
+/// for cryptographic applications.
+///
+/// Consumers may prefer the faster [`decode_into`] which dispatches to
+/// a SIMD-accelerated path when available (non constant-time).
+///
+/// # Example
+///
+/// ```rust
+/// let mut buf = [0u8; 5];
+/// base32::decode_into_constant_time(&mut buf, b"NBSWY3DP", base32::Alphabet::Rfc4648).unwrap();
+/// assert_eq!(&buf, b"hello");
+/// ```
 pub const fn decode_into_constant_time(
     output: &mut [u8],
     encoded_data: &[u8],

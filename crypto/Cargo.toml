@@ -2,7 +2,6 @@
 name = "crypto"
 version = "0.1.0"
 edition = "2024"
-authors = ["Sylvain Kerkour"]
 
 [lib]
 path = "./src/crypto.rs"

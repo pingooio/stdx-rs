@@ -4,7 +4,6 @@ version = "0.21.1"
 authors = ["Abhishek Chanda <abhishek.becs@gmail.com>", "Linus Färnstrand <faern@faern.net>"]
 description = "A library to work with IP CIDRs in Rust"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/achanda/ipnetwork"
 keywords = ["network", "ip", "address", "cidr"]
 readme = "README.md"
 categories = ["network-programming", "parser-implementations"]
@@ -18,10 +17,6 @@ serde = { workspace = true, optional = true }
 [dev-dependencies]
 serde_json = { workspace = true }
 # criterion = {version = "0.5.1", features= ["html_reports"]}
-
-[badges]
-travis-ci = { repository = "achanda/ipnetwork" }
-maintenance = { status = "passively-maintained" }
 
 [features]
 # Keep optional dependencies out of the default features.

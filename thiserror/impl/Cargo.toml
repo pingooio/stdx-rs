@@ -5,7 +5,6 @@ authors = ["David Tolnay <dtolnay@gmail.com>"]
 description = "Implementation detail of the `thiserror` crate"
 edition = "2024"
 license = "Apache-2.0"
-repository = "https://github.com/bloom42/stdx"
 rust-version = "1.85"
 
 [lib]

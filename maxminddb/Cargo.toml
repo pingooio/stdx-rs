@@ -8,7 +8,6 @@ keywords = ["MaxMind", "GeoIP2", "GeoIP", "geolocation", "ip"]
 categories = ["database", "network-programming"]
 homepage = "https://github.com/oschwald/maxminddb-rust"
 documentation = "http://oschwald.github.io/maxminddb-rust/maxminddb/struct.Reader.html"
-repository = "https://github.com/bloom42/stdx"
 license = "ISC"
 include = ["/Cargo.toml", "/benches/*.rs", "/src/**/*.rs", "/README.md", "/LICENSE"]
 edition = "2024"

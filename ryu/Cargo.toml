@@ -9,7 +9,6 @@ edition = "2024"
 exclude = ["build.rs", "performance.png", "chart/**"]
 keywords = ["float"]
 license = "Apache-2.0 OR BSL-1.0"
-repository = "https://github.com/bloom42/stdx"
 rust-version = "1.85"
 
 [features]

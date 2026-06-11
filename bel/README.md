@@ -20,13 +20,6 @@ headers.all(header, header.length() < 256)
 
 ## Usage
 
-Add `bel` to your `Cargo.toml`:
-
-```toml
-[dependencies]
-bel = { git = "https://github.com/bloom42/bel-rs", branch = "main" }
-```
-
 Create and execute a simple BEL expression:
 
 ```rust

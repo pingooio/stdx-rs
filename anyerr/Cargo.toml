@@ -8,7 +8,6 @@ documentation = "https://docs.rs/anyhow"
 edition = "2024"
 keywords = ["error", "error-handling"]
 license = "Apache-2.0"
-repository = "https://github.com/bloom42/stdx"
 rust-version = "1.85"
 
 [features]

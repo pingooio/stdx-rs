@@ -8,7 +8,6 @@ documentation = "https://docs.rs/thiserror"
 edition = "2024"
 keywords = ["error", "error-handling", "derive"]
 license = "Apache-2.0"
-repository = "https://github.com/bloom42/stdx"
 rust-version = "1.85"
 
 [dependencies]

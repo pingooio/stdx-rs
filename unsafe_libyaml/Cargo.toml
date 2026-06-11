@@ -8,7 +8,6 @@ documentation = "https://docs.rs/unsafe-libyaml"
 edition = "2024"
 keywords = ["yaml"]
 license = "MIT"
-repository = "https://github.com/bloom42/stdx"
 rust-version = "1.85"
 
 # [workspace]

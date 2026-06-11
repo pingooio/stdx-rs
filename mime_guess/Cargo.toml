@@ -6,7 +6,6 @@ authors = ["Austin Bonander <austin.bonander@gmail.com>"]
 license = "MIT"
 description = "A simple crate for detection of a file's MIME type by its extension."
 keywords = ["mime", "filesystem", "extension"]
-repository = "https://github.com/bloom42/stdx"
 documentation = "https://docs.rs/mime_guess/"
 readme = "README.md"
 edition = "2024"

@@ -5,7 +5,6 @@ edition = "2024"
 authors = ["Cesar Eduardo Barros <cesarb@cesarb.eti.br>"]
 description = "Compares two equal-sized byte strings in constant time."
 documentation = "https://docs.rs/constant_time_eq"
-repository = "https://github.com/bloom42/stdx"
 readme = "README"
 keywords = ["constant_time"]
 categories = ["cryptography", "no-std"]

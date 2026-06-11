@@ -7,7 +7,6 @@ authors = [
   "Alex Crichton <alex@alexcrichton.com>"
 ]
 description = "Fast, SIMD-accelerated CRC32 (IEEE) checksum computation"
-repository = "https://github.com/bloom42/stdx"
 readme = "README.md"
 keywords = ["hash", "crc", "crc32", "simd", "fast"]
 categories = ["algorithms", "no-std"]

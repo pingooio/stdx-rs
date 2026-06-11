@@ -6,7 +6,6 @@ license = "Apache-2.0"
 description = "HTTP date parsing and formatting"
 keywords = ["http", "date", "time", "simple", "timestamp"]
 readme = "README.md"
-repository = "https://github.com/bloom42/stdx"
 edition = "2024"
 rust-version = "1.85"
 

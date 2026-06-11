@@ -4,7 +4,6 @@ version = "8.4.0"
 description = "Utilities for rust-embed"
 readme = "readme.md"
 documentation = "https://docs.rs/rust-embed"
-repository = "https://github.com/bloom42/stdx"
 license = "MIT"
 keywords = ["http", "rocket", "static", "web", "server"]
 categories = ["web-programming::http-server"]

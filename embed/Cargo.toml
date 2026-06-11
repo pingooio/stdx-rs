@@ -4,7 +4,6 @@ version = "8.4.0"
 description = "Rust Custom Derive Macro which loads files into the rust binary at compile time during release and loads the file from the fs during dev"
 readme = "readme.md"
 documentation = "https://docs.rs/rust-embed"
-repository = "https://github.com/bloom42/stdx"
 license = "MIT"
 keywords = ["http", "rocket", "static", "web", "server"]
 categories = ["web-programming", "filesystem"]
@@ -19,14 +18,6 @@ path = "./embed.rs"
 walkdir = { workspace = true }
 embed_impl = { path = "./embed_impl"}
 embed_utils = { path = "./embed_utils"}
-
-
-[badges]
-appveyor = { repository = "pyros2097/rust-embed" }
-travis-ci = { repository = "pyros2097/rust-embed" }
-is-it-maintained-issue-resolution = { repository = "pyros2097/rust-embed" }
-is-it-maintained-open-issues = { repository = "pyros2097/rust-embed" }
-maintenance = { status = "passively-maintained" }
 
 
 #[[example]]

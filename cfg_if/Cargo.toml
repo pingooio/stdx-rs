@@ -4,7 +4,6 @@ version = "1.0.0"
 authors = ["Alex Crichton <alex@alexcrichton.com>"]
 license = "Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/bloom42/stdx"
 description = """
 A macro to ergonomically define an item depending on a large number of #[cfg]
 parameters. Structured like an if-else chain, the first matching branch is the

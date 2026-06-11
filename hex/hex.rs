@@ -216,6 +216,14 @@ pub fn encode_into(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result
 ///
 /// Consumers may prefer the faster [`encode_into`] which dispatches to
 /// a SIMD-accelerated path when available (non constant-time).
+///
+/// # Example
+///
+/// ```rust
+/// let mut buf = [0u8; 10];
+/// hex::encode_into_constant_time(&mut buf, b"hello", hex::Alphabet::Lower).unwrap();
+/// assert_eq!(&buf, b"68656c6c6f");
+/// ```
 pub const fn encode_into_constant_time(output: &mut [u8], data: &[u8], alphabet: Alphabet) -> Result<(), EncodeError> {
     match check_encode_output_length(data.len(), output.len()) {
         Ok(_) => {}
@@ -439,6 +447,14 @@ pub fn decode_into(output: &mut [u8], encoded_data: &[u8]) -> Result<(), DecodeE
 ///
 /// Consumers may prefer the faster [`decode_into`] which dispatches to
 /// a SIMD-accelerated path when available (non constant-time).
+///
+/// # Example
+///
+/// ```rust
+/// let mut buf = [0u8; 5];
+/// hex::decode_into_constant_time(&mut buf, b"68656c6c6f").unwrap();
+/// assert_eq!(&buf, b"hello");
+/// ```
 pub const fn decode_into_constant_time(output: &mut [u8], encoded_data: &[u8]) -> Result<(), DecodeError> {
     match check_decode_input_and_output_length(encoded_data.len(), output.len()) {
         Ok(_) => {}

@@ -18,7 +18,11 @@ Learn more in the announcement post: https://kerkour.com/stdx
 To avoid namespace clashes and supply chain risks, we do not use a centralized package repository. Import packages directly from source, for example:
 
 ```toml
-base64 = { git = "https://github.com/rust-stdx/stdx", branch = "main" } # or ref = to pin a commit
+base64 = { git = "https://github.com/rust-stdx/stdx", branch = "main" }
+# or, to pin to a commit
+base64 = { git = "https://github.com/rust-stdx/stdx", ref = "1234" }
+# or, to use codeberg
+base64 = { git = "https://codeberg.org/rust-stdx/stdx", branch = "main" }
 ```
 
 > **Warning ⚠️**: The project is moving fast, we can't provide any stability guarantees at this time.
@@ -54,7 +58,7 @@ Contributions are welcome, especially bug reports, improvement ideas and new pac
 
 Except for minor typos, no pull request will be accepted without a preliminary discussion. Please open an issue first.
 
-See [AI_POLICY.md](/AI_POLICY.md) for what is tolerated (or not) regarding AI-assisted contributions.
+See [CONTRIBUTING.md](./CONTRIBUTIN.md) for what is tolerated (or not) regarding AI-assisted contributions.
 
 
 ## Development
