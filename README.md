@@ -35,7 +35,7 @@ base64 = { git = "https://github.com/rust-stdx/stdx", branch = "main" } # or ref
 <table align="center">
   <tr>
     <td>
-      <a href="https://pingoo.io">
+      <a href="https://github.com/pingooio/pingoo">
         <img src="https://avatars.githubusercontent.com/u/211801982" height="80" alt="Pingoo" /><br />
         Pingoo
       </a>
