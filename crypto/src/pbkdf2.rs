@@ -1,29 +1,4 @@
 //! PBKDF2 (Password-Based Key Derivation Function 2) as defined in RFC 2898.
-//!
-//! Uses HMAC as the pseudo-random function, generic over the hash function.
-//!
-//! ⚠️ **PBKDF2 is not memory-hard**, making it vulnerable to GPU/ASIC-based
-//! brute-force attacks. For password hashing, prefer [`crate::argon2::Argon2id`]
-//! unless PBKDF2 is required for legacy compatibility or specific protocol
-//! standards.
-//!
-//! # Example
-//!
-//! ```ignore
-//! use crypto::pbkdf2;
-//! use crypto::sha2::Sha256;
-//!
-//! let key: [u8; 32] = pbkdf2::derive::<Sha256, 32>(
-//!     b"password",
-//!     b"salt",
-//!     4096,
-//! );
-//! ```
-//!
-//! # Panics
-//!
-//! Panics if `iterations` is 0, or if `N > (2^32 - 1) * H::OUTPUT_SIZE`.
-
 use crate::{Hasher, MAX_HASH_BLOCK_SIZE, hmac::Hmac};
 
 /// Derives a key using PBKDF2-HMAC with the given hash function.
@@ -31,9 +6,23 @@ use crate::{Hasher, MAX_HASH_BLOCK_SIZE, hmac::Hmac};
 /// PBKDF2 applies the HMAC-based PRF repeatedly (`iterations` times) to
 /// produce a derived key of `N` bytes.
 ///
-/// ⚠️ **PBKDF2 is not memory-hard** and is susceptible to GPU/ASIC attacks.
-/// Prefer [`crate::argon2::Argon2id`] for password hashing unless PBKDF2 is
-/// mandated by a specific protocol.
+/// ⚠️ **PBKDF2 is not memory-hard**, making it vulnerable to GPU/ASIC-based
+/// brute-force attacks. For password hashing, prefer [`crate::argon2::Argon2id`]
+/// unless PBKDF2 is required for legacy compatibility or specific protocol
+/// standards.
+///
+/// # Example
+///
+/// ```ignore
+/// use crypto::pbkdf2;
+/// use crypto::sha2::Sha256;
+///
+/// let key: [u8; 32] = pbkdf2::derive::<Sha256, 32>(
+///     b"password",
+///     b"salt",
+///     4096,
+/// );
+/// ```
 ///
 /// # Panics
 ///
