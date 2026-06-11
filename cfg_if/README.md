@@ -1,15 +1,9 @@
-# cfg-if
-
-[Documentation](https://docs.rs/cfg-if)
+# cfg_if
 
 A macro to ergonomically define an item depending on a large number of #[cfg]
 parameters. Structured like an if-else chain, the first matching branch is the
 item that gets emitted.
 
-```toml
-[dependencies]
-cfg-if = "1.0"
-```
 
 ## Example
 
@@ -35,7 +29,7 @@ fn foo() { /* unix specific functionality */ }
 #[cfg(all(target_pointer_width = "32", not(unix)))]
 fn foo() { /* non-unix, 32-bit functionality */ }
 #[cfg(not(any(unix, target_pointer_width = "32")))]
-fn foo() { /* fallback implementation */ }        
+fn foo() { /* fallback implementation */ }
 ```
 
 # License
@@ -52,5 +46,5 @@ at your option.
 ### Contribution
 
 Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in `cfg-if` by you, as defined in the Apache-2.0 license, shall be
+for inclusion in `cfg_if` by you, as defined in the Apache-2.0 license, shall be
 dual licensed as above, without any additional terms or conditions.
