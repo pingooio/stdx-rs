@@ -141,6 +141,8 @@
 
 use std::{collections::HashSet, env, fmt, fmt::Display, fs, io, str::FromStr};
 
+use memchr::memchr;
+
 /// Errors that can occur when loading a `.env` file.
 #[derive(Debug)]
 pub enum Error {
@@ -263,7 +265,7 @@ fn parse(input: &str) -> Result<Vec<(String, String)>, Error> {
             continue;
         }
 
-        let eq_pos = line.find('=').ok_or_else(|| {
+        let eq_pos = memchr(b'=', line.as_bytes()).ok_or_else(|| {
             Error::Parse(ParseError {
                 line: line_idx + 1,
                 kind: ParseErrorKind::MissingEquals,
@@ -297,6 +299,20 @@ fn parse(input: &str) -> Result<Vec<(String, String)>, Error> {
     Ok(pairs)
 }
 
+/// Find the first `#` preceded by whitespace (indicating a comment start).
+fn find_comment_start(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut offset = 0;
+    while let Some(pos) = memchr(b'#', &bytes[offset..]) {
+        let abs = offset + pos;
+        if abs > 0 && bytes[abs - 1].is_ascii_whitespace() {
+            return Some(abs);
+        }
+        offset = abs + 1;
+    }
+    None
+}
+
 /// Parse a single value string (everything after `=`).
 fn parse_value(s: &str, line: usize) -> Result<String, Error> {
     let trimmed = s.trim();
@@ -308,7 +324,7 @@ fn parse_value(s: &str, line: usize) -> Result<String, Error> {
     match trimmed.as_bytes()[0] {
         b'"' => {
             let rest = &trimmed[1..];
-            let close = rest.find('"').ok_or(Error::Parse(ParseError {
+            let close = memchr(b'"', rest.as_bytes()).ok_or(Error::Parse(ParseError {
                 line,
                 kind: ParseErrorKind::UnmatchedQuote,
             }))?;
@@ -323,7 +339,7 @@ fn parse_value(s: &str, line: usize) -> Result<String, Error> {
         }
         b'\'' => {
             let rest = &trimmed[1..];
-            let close = rest.find('\'').ok_or(Error::Parse(ParseError {
+            let close = memchr(b'\'', rest.as_bytes()).ok_or(Error::Parse(ParseError {
                 line,
                 kind: ParseErrorKind::UnmatchedQuote,
             }))?;
@@ -337,11 +353,7 @@ fn parse_value(s: &str, line: usize) -> Result<String, Error> {
             Ok(rest[..close].to_string())
         }
         _ => {
-            let comment_start = s
-                .as_bytes()
-                .windows(2)
-                .position(|w| w[0].is_ascii_whitespace() && w[1] == b'#')
-                .map(|i| i + 1);
+            let comment_start = find_comment_start(s);
             let val = match comment_start {
                 Some(pos) => &s[..pos],
                 None => s,
