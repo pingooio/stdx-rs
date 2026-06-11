@@ -4,6 +4,30 @@ use crate::Xof;
 pub(crate) const SHAKE128_RATE: usize = 168;
 const SHAKE128_DOMAIN_SEPARATOR: u8 = 0x1f;
 
+/// SHAKE128 extensible-output function (XOF) as defined in FIPS 202.
+///
+/// Implements the [`Xof`] trait.
+///
+/// # One-shot API
+///
+/// ```ignore
+/// use crypto::sha3::Shake128;
+///
+/// let mut output = [0u8; 32];
+/// Shake128::hash(b"hello world", &mut output);
+/// ```
+///
+/// # Incremental API
+///
+/// ```ignore
+/// use crypto::{sha3::Shake128, Xof};
+///
+/// let mut shake = Shake128::new();
+/// shake.absorb(b"hello ");
+/// shake.absorb(b"world");
+/// let mut out = [0u8; 32];
+/// shake.squeeze(&mut out);
+/// ```
 #[derive(Clone)]
 pub struct Shake128 {
     keccak: Keccak<24>,

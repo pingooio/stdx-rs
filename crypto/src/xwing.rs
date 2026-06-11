@@ -4,13 +4,18 @@ use crate::{
     sha3::{Sha3_256, Shake256},
 };
 
+/// Size of the X-Wing secret key (32 bytes).
 pub const SECRET_KEY_SIZE: usize = 32;
+/// Size of the X-Wing public key in bytes (ML-KEM-768 pk + X25519 pk = 1216).
 pub const PUBLIC_KEY_SIZE: usize = mlkem::PUBLIC_KEY_SIZE_768 + x25519::KEY_SIZE; // 1216
+/// Size of the X-Wing ciphertext in bytes (ML-KEM-768 ct + X25519 shared secret = 1120).
 pub const CIPHERTEXT_SIZE: usize = mlkem::CIPHERTEXT_SIZE_768 + x25519::SHARED_SECRET_SIZE; // 1120
+/// Size of the X-Wing shared secret (32 bytes).
 pub const SHARED_SECRET_SIZE: usize = 32;
 
 const XWING_LABEL: &[u8; 6] = b"\\.//^\\";
 
+/// X-Wing error type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum XWingError {
     MlKem(MlKemError),
@@ -30,7 +35,22 @@ impl core::fmt::Display for XWingError {
     }
 }
 
-/// The X-Wing decapsulation (private) key
+/// X-Wing hybrid KEM decapsulation (secret) key.
+///
+/// Combines an ML-KEM-768 and an X25519 secret key as specified in the
+/// X-Wing draft. The shared secret is derived via a combiner that hashes
+/// both component secrets together.
+///
+/// # Example
+///
+/// ```ignore
+/// use crypto::xwing::{generate_keypair, SecretKey, PublicKey};
+///
+/// let (secret_key, public_key) = generate_keypair();
+/// let (shared_secret, ciphertext) = public_key.encapsulate();
+/// let decapsulated = secret_key.decapsulate(&ciphertext).unwrap();
+/// assert_eq!(shared_secret, decapsulated);
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SecretKey {
     bytes: [u8; SECRET_KEY_SIZE],
@@ -55,7 +75,9 @@ impl SecretKey {
     }
 }
 
-/// The X-Wing encapsulation (public) key
+/// X-Wing hybrid KEM encapsulation (public) key.
+///
+/// See [`SecretKey`] for a full usage example.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PublicKey {
     mlkem_public_key: mlkem::PublicKey768,
@@ -93,13 +115,17 @@ impl PublicKey {
     }
 }
 
+/// Generate an X-Wing keypair.
+///
+/// This is a convenience wrapper around [`SecretKey`] generation.
+///
+/// See [`SecretKey`] for a usage example.
 pub fn generate_keypair() -> (SecretKey, PublicKey) {
     let seed: [u8; SECRET_KEY_SIZE] = rand::random();
     generate_keypair_derand(&seed)
 }
 
-/// Generate a deterministic keypair from the given seed. This function is not public because it
-/// should be used exclusively for testing.
+/// Generate a deterministic keypair from the given seed (for testing).
 fn generate_keypair_derand(secret_key: &[u8; SECRET_KEY_SIZE]) -> (SecretKey, PublicKey) {
     let (mlkem_sk, x25519_sk, mlkem_pk, x25519_pk) = expand_decapsulation_key(secret_key);
 

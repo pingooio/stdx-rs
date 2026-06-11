@@ -3,6 +3,31 @@ use zeroize::Zeroize;
 
 use crate::{Hash, Hasher, MAX_HASH_BLOCK_SIZE};
 
+/// HMAC (Hash-based Message Authentication Code) implementation.
+///
+/// Uses a generic hash function implementing the [`Hasher`] trait (e.g.
+/// [`Sha256`](crate::sha2::Sha256) or [`Sha512`](crate::sha2::Sha512)).
+///
+/// # One-shot API
+///
+/// ```ignore
+/// use crypto::hmac::Hmac;
+/// use crypto::sha2::Sha256;
+///
+/// let tag = Hmac::<Sha256>::mac(b"key", b"message");
+/// ```
+///
+/// # Incremental API
+///
+/// ```ignore
+/// use crypto::hmac::Hmac;
+/// use crypto::sha2::Sha256;
+///
+/// let mut mac = Hmac::<Sha256>::new(b"key");
+/// mac.update(b"hello ");
+/// mac.update(b"world");
+/// let tag = mac.finalize();
+/// ```
 #[derive(Clone)]
 #[cfg_attr(feature = "zeroize", derive(Zeroize))]
 pub struct Hmac<H: Hasher> {
@@ -11,6 +36,10 @@ pub struct Hmac<H: Hasher> {
 }
 
 impl<H: Hasher> Hmac<H> {
+    /// One-shot HMAC: computes `HMAC(key, data)` in a single call.
+    ///
+    /// This is a convenience wrapper around [`new`](Self::new) +
+    /// [`update`](Self::update) + [`finalize`](Self::finalize).
     #[inline]
     pub fn mac(key: &[u8], data: &[u8]) -> Hash {
         let mut mac = Self::new(key);

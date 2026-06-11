@@ -2,12 +2,47 @@ use big_number::{Uint, mac};
 
 use crate::{EllipticCurveError, Hasher, hmac::Hmac, sha2::Sha256};
 
+/// Size of a P-256 private key in bytes (32 bytes).
 pub const PRIVATE_KEY_SIZE: usize = 32;
+/// Size of a compressed P-256 public key in bytes (33 bytes, includes 0x02/0x03 prefix).
 pub const PUBLIC_KEY_COMPRESSED_SIZE: usize = 33;
+/// Size of an uncompressed P-256 public key in bytes (65 bytes, includes 0x04 prefix).
 pub const PUBLIC_KEY_UNCOMPRESSED_SIZE: usize = 65;
+/// Size of a P-256 ECDSA signature in bytes (64 bytes, r || s).
 pub const SIGNATURE_SIZE: usize = 64;
+/// Size of the raw ECDH shared secret in bytes (32 bytes). **Must not** be used directly
+/// as an encryption key; apply a KDF first.
 pub const ECDH_SHARED_SECRET_SIZE: usize = 32;
 
+/// P-256 (secp256r1) ECDSA private key.
+///
+/// Supports signing and ECDH key agreement.
+///
+/// # Signing
+///
+/// ```ignore
+/// use crypto::p256::PrivateKey;
+///
+/// let key = PrivateKey::generate().unwrap();
+/// let signature = key.sign(b"message").unwrap();
+/// ```
+///
+/// # ECDH key exchange
+///
+/// ```ignore
+/// use crypto::p256::PrivateKey;
+///
+/// let alice = PrivateKey::generate().unwrap();
+/// let bob = PrivateKey::generate().unwrap();
+/// let alice_shared = alice.ecdh(&bob.public_key()).unwrap();
+/// let bob_shared = bob.ecdh(&alice.public_key()).unwrap();
+/// assert_eq!(alice_shared, bob_shared);
+/// ```
+///
+/// # Security
+///
+/// The raw shared secret from [`ecdh`](Self::ecdh) **must not** be used
+/// directly as an encryption key. Apply a KDF (e.g. HKDF) first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PrivateKey {
     scalar: Scalar,
@@ -50,6 +85,19 @@ impl PrivateKey {
     }
 }
 
+/// P-256 (secp256r1) ECDSA public key.
+///
+/// Supports signature verification and ECDH key agreement.
+///
+/// # Verification
+///
+/// ```ignore
+/// use crypto::p256::PrivateKey;
+///
+/// let key = PrivateKey::generate().unwrap();
+/// let signature = key.sign(b"message").unwrap();
+/// assert!(key.public_key().verify(b"message", &signature).is_ok());
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PublicKey {
     point: AffinePoint,

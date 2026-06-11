@@ -1,28 +1,19 @@
-use crate::{Hash, Hasher, hmac::Hmac};
+use crate::{Hash, Hasher, HkdfError, hmac::Hmac};
 
 const DEFAULT_SALT: [u8; 64] = [0u8; 64];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HkdfError {
-    PrkIsTooShort(usize),
-    OutputIsTooLong,
-}
-
-#[cfg(feature = "alloc")]
-impl core::fmt::Display for HkdfError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            HkdfError::PrkIsTooShort(prk_size) => write!(f, "PRK must be at least {prk_size} bytes"),
-            HkdfError::OutputIsTooLong => {
-                write!(f, "HKDF output length exceeds RFC 5869 limit (255 * Hash's output size)")
-            }
-        }
-    }
-}
-
-/// Extract step: `PRK = HMAC-Hash(salt, IKM)`.
+/// HKDF extract step: `PRK = HMAC-Hash(salt, IKM)`.
 ///
 /// If `salt` is `None`, a string of `H::OUTPUT_SIZE` zero bytes is used.
+///
+/// # Example
+///
+/// ```ignore
+/// use crypto::hkdf;
+/// use crypto::sha2::Sha256;
+///
+/// let prk = hkdf::extract::<Sha256>(Some(b"salt"), b"input key material");
+/// ```
 pub fn extract<H: Hasher>(salt: Option<&[u8]>, ikm: &[u8]) -> Hash {
     let salt = salt.unwrap_or(&DEFAULT_SALT[..H::OUTPUT_SIZE]);
     let mut mac = Hmac::<H>::new(salt);
@@ -30,8 +21,18 @@ pub fn extract<H: Hasher>(salt: Option<&[u8]>, ikm: &[u8]) -> Hash {
     return mac.finalize();
 }
 
-/// Expand step: `OKM = T(1) || T(2) || ...`, where
+/// HKDF expand step: `OKM = T(1) || T(2) || ...`, where
 /// `T(i) = HMAC-Hash(PRK, T(i-1) || info || i)`.
+///
+/// # Example
+///
+/// ```ignore
+/// use crypto::hkdf;
+/// use crypto::sha2::Sha256;
+///
+/// let prk = hkdf::extract::<Sha256>(Some(b"salt"), b"input key material");
+/// let okm: [u8; 32] = hkdf::expand::<Sha256, 32>(&prk, b"context info").unwrap();
+/// ```
 ///
 /// # Error
 ///
@@ -73,11 +74,24 @@ pub fn expand<H: Hasher, const N: usize>(prk: &[u8], info: &[u8]) -> Result<[u8;
     return Ok(okm);
 }
 
-/// One-shot extract-then-expand.
+/// One-shot HKDF: extract-then-expand in a single call.
+///
+/// # Example
+///
+/// ```ignore
+/// use crypto::hkdf;
+/// use crypto::sha2::Sha256;
+///
+/// let okm: [u8; 32] = hkdf::derive_key::<Sha256, 32>(
+///     b"input key material",
+///     b"context info",
+///     Some(b"salt"),
+/// ).unwrap();
+/// ```
 ///
 /// # Error
 ///
-/// Returns an error if if `N > 255 * H::OUTPUT_SIZE`.
+/// Returns an error if `N > 255 * H::OUTPUT_SIZE`.
 pub fn derive_key<H: Hasher, const N: usize>(
     ikm: &[u8],
     info: &[u8],

@@ -15,6 +15,38 @@ const BASEPOINT_U: [u8; 32] = {
     u
 };
 
+/// X25519 Diffie-Hellman key exchange private key (RFC 7748).
+///
+/// # Generating a key
+///
+/// ```ignore
+/// use crypto::curve25519::x25519::SecretKey;
+///
+/// let alice = SecretKey::generate();
+/// let bob = SecretKey::generate();
+/// ```
+///
+/// # Diffie-Hellman key exchange
+///
+/// ```ignore
+/// use crypto::curve25519::x25519::SecretKey;
+///
+/// let alice = SecretKey::generate();
+/// let bob = SecretKey::generate();
+/// let alice_shared = alice.ecdh(&bob.public_key());
+/// let bob_shared = bob.ecdh(&alice.public_key());
+/// assert_eq!(alice_shared, bob_shared);
+/// ```
+///
+/// # Conversion from Ed25519
+///
+/// An Ed25519 [`SecretKey`](crate::curve25519::ed25519::SecretKey) can be
+/// converted to an X25519 key via [`From<&ed25519::SecretKey>`](From).
+///
+/// # Security
+///
+/// The shared secret produced by [`ecdh`](Self::ecdh) **must not** be used
+/// directly as an encryption key. Apply a KDF (e.g. HKDF) first.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SecretKey {
     bytes: [u8; KEY_SIZE],
@@ -91,6 +123,21 @@ impl TryFrom<&[u8]> for SecretKey {
     }
 }
 
+/// X25519 Diffie-Hellman key exchange public key (RFC 7748).
+///
+/// # Deserializing from bytes
+///
+/// ```ignore
+/// use crypto::curve25519::x25519::PublicKey;
+///
+/// let bytes = [0u8; 32]; // replace with a peer's public key
+/// let pub_key = PublicKey::from_bytes(&bytes);
+/// ```
+///
+/// # Conversion from Ed25519
+///
+/// An Ed25519 [`PublicKey`](crate::curve25519::ed25519::PublicKey) can be
+/// converted to an X25519 public key via [`TryFrom<&ed25519::PublicKey>`](TryFrom).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PublicKey {
     u: FieldElement,

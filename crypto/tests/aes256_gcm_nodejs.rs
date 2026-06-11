@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use crypto::Aes256Gcm;
+use crypto::aes::Aes256Gcm;
 
 fn node_encrypt(key: &[u8; 32], nonce: &[u8; 12], aad: &[u8], plaintext: &[u8]) -> (Vec<u8>, [u8; 16]) {
     let output = Command::new("node")

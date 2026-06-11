@@ -3,6 +3,30 @@ use crate::Xof;
 
 const KMAC256_RATE: usize = 136;
 
+/// KMAC256 (cSHAKE256-based MAC) as defined in SP 800-185.
+///
+/// # One-shot API
+///
+/// ```ignore
+/// use crypto::sha3::Kmac256;
+///
+/// let key = b"super secret key 32 bytes!";
+/// let mut tag = [0u8; 64];
+/// Kmac256::mac(key, b"message", b"customization", &mut tag);
+/// ```
+///
+/// # Incremental API
+///
+/// ```ignore
+/// use crypto::sha3::Kmac256;
+///
+/// let key = b"super secret key 32 bytes!";
+/// let mut kmac = Kmac256::new(key, b"customization");
+/// kmac.update(b"hello ");
+/// kmac.update(b"world");
+/// let mut tag = [0u8; 64];
+/// kmac.finalize_into(&mut tag);
+/// ```
 #[derive(Clone)]
 pub struct Kmac256 {
     cshake: CShake256,

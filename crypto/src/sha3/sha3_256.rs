@@ -4,6 +4,28 @@ use crate::{Hash, Hasher};
 const SHA3_256_RATE: usize = 136;
 const SHA3_256_DOMAIN_SEPARATOR: u8 = 0x06;
 
+/// SHA3-256 hash function (FIPS 202).
+///
+/// Implements the [`Hasher`] trait.
+///
+/// # One-shot API
+///
+/// ```ignore
+/// use crypto::{Hasher, sha3::Sha3_256};
+///
+/// let hash = Sha3_256::hash(b"hello world");
+/// ```
+///
+/// # Incremental API
+///
+/// ```ignore
+/// use crypto::sha3::Sha3_256;
+///
+/// let mut hasher = Sha3_256::new();
+/// hasher.write(b"hello ");
+/// hasher.write(b"world");
+/// let hash = hasher.sum();
+/// ```
 #[derive(Clone)]
 #[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
 pub struct Sha3_256 {

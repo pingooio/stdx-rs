@@ -45,6 +45,7 @@ pub(crate) enum SpongeMode {
     Squeezing,
 }
 
+/// A sponge construction based on Keccak p1600
 #[derive(Clone)]
 #[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
 pub(crate) struct Keccak<const ROUNDS: usize> {
@@ -56,7 +57,6 @@ pub(crate) struct Keccak<const ROUNDS: usize> {
     mode: SpongeMode,
 }
 
-// A sponge construction based on Keccak p1600
 impl<const ROUNDS: usize> Keccak<ROUNDS> {
     #[inline]
     pub(crate) fn new(rate: usize, delimiter: u8) -> Self {

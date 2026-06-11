@@ -8,6 +8,30 @@ const SHAKE256_DOMAIN_SEPARATOR: u8 = 0x1f;
 // fixed-size buffer to avoid allocations when encoding inputs
 type EncodedBytes = Bytes<9>;
 
+/// SHAKE256 extensible-output function (XOF) as defined in FIPS 202.
+///
+/// Implements both the [`Xof`] and [`Hasher`] traits.
+///
+/// # One-shot API
+///
+/// ```ignore
+/// use crypto::sha3::Shake256;
+///
+/// let mut output = [0u8; 64];
+/// Shake256::hash(b"hello world", &mut output);
+/// ```
+///
+/// # Incremental XOF API
+///
+/// ```ignore
+/// use crypto::{sha3::Shake256, Xof};
+///
+/// let mut shake = Shake256::new();
+/// shake.absorb(b"hello ");
+/// shake.absorb(b"world");
+/// let mut out = [0u8; 64];
+/// shake.squeeze(&mut out);
+/// ```
 #[derive(Clone)]
 #[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
 pub struct Shake256 {
@@ -64,6 +88,33 @@ impl Hasher for Shake256 {
     }
 }
 
+/// cSHAKE256 (customizable SHAKE256) as defined in SP 800-185.
+///
+/// Allows domain separation via a function name and customization string.
+/// When both parameters are empty, `CShake256` behaves identically to [`Shake256`].
+///
+/// Implements the [`Xof`] trait.
+///
+/// # One-shot API
+///
+/// ```ignore
+/// use crypto::sha3::CShake256;
+///
+/// let mut output = [0u8; 64];
+/// CShake256::hash(b"message", b"FUNCTION", b"customization", &mut output);
+/// ```
+///
+/// # Incremental API
+///
+/// ```ignore
+/// use crypto::{sha3::CShake256, Xof};
+///
+/// let mut cshake = CShake256::new(b"FUNCTION", b"customization");
+/// cshake.absorb(b"hello ");
+/// cshake.absorb(b"world");
+/// let mut out = [0u8; 64];
+/// cshake.squeeze(&mut out);
+/// ```
 #[derive(Clone)]
 #[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
 pub struct CShake256 {

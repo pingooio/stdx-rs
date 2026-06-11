@@ -26,38 +26,39 @@ const ARGON2D: u32 = 0;
 const ARGON2I: u32 = 1;
 const ARGON2ID: u32 = 2;
 
-/// Parameters for Argon2id.
+/// Argon2id parameters (RFC 9106).
+///
+/// # Example
+///
+/// ```ignore
+/// use crypto::argon2::Params;
+///
+/// let params = Params {
+///     iterations: 3,
+///     memory: 65536,
+///     parallelism: 4,
+///     tag_length: 32,
+/// };
+/// ```
 #[derive(Debug, Clone)]
 pub struct Params {
     /// Number of passes (iterations). Must be >= 1.
-    pub t_cost: u32,
-    /// Memory size in KiB. Must be >= 8*p_cost.
-    pub m_cost: u32,
+    pub iterations: u32,
+    /// Memory size in KiB. Must be >= 8 * `parallelism`.
+    pub memory: u32,
     /// Degree of parallelism (number of lanes). Must be >= 1.
-    pub p_cost: u32,
+    pub parallelism: u32,
     /// Output tag length in bytes. Must be >= 4.
     pub tag_length: u32,
-}
-
-impl Params {
-    /// Create new Argon2id parameters.
-    pub fn new(t_cost: u32, m_cost: u32, p_cost: u32, tag_length: u32) -> Self {
-        Params {
-            t_cost,
-            m_cost,
-            p_cost,
-            tag_length,
-        }
-    }
 }
 
 impl Default for Params {
     /// Default parameters: t=3, m=64 MiB, p=4, tag=32 bytes (SECOND RECOMMENDED option).
     fn default() -> Self {
         Params {
-            t_cost: 3,
-            m_cost: 65536,
-            p_cost: 4,
+            iterations: 3,
+            memory: 65536,
+            parallelism: 4,
             tag_length: 32,
         }
     }
@@ -138,7 +139,7 @@ impl Block {
 // Core Argon2 algorithm
 // ============================================================
 
-/// Derive a key using Argon2id.
+/// Derive a key using Argon2id (RFC 9106).
 ///
 /// This is the main entry point for Argon2id key derivation.
 ///
@@ -151,6 +152,21 @@ impl Block {
 ///
 /// # Returns
 /// The derived key as a Vec<u8> of length `params.tag_length`.
+///
+/// # Example
+///
+/// ```ignore
+/// use crypto::argon2::{derive_key, Params};
+///
+/// let tag = derive_key(
+///     b"correct horse battery staple",
+///     b"randomsalt123456",
+///     &[],  // no secret
+///     &[],  // no associated data
+///     &Params { iterations: 3, memory: 65536, parallelism: 4, tag_length: 32 },
+/// ).unwrap();
+/// assert_eq!(tag.len(), 32);
+/// ```
 #[cfg(feature = "alloc")]
 pub fn derive_key(
     password: &[u8],
@@ -173,22 +189,22 @@ fn argon2_core(
     params: &Params,
 ) -> Result<Vec<u8>, Argon2Error> {
     // Validate parameters
-    if params.t_cost < 1 {
-        return Err(Argon2Error::InvalidParams("t_cost must be >= 1"));
+    if params.iterations < 1 {
+        return Err(Argon2Error::InvalidParams("iterations must be >= 1"));
     }
-    if params.p_cost < 1 {
-        return Err(Argon2Error::InvalidParams("p_cost must be >= 1"));
+    if params.parallelism < 1 {
+        return Err(Argon2Error::InvalidParams("parallelism must be >= 1"));
     }
     if params.tag_length < 4 {
         return Err(Argon2Error::InvalidParams("tag_length must be >= 4"));
     }
-    if params.m_cost < 8 * params.p_cost {
-        return Err(Argon2Error::InvalidParams("m_cost must be >= 8*p_cost"));
+    if params.memory < 8 * params.parallelism {
+        return Err(Argon2Error::InvalidParams("memory must be >= 8*parallelism"));
     }
 
-    let p = params.p_cost;
-    let t = params.t_cost;
-    let m = params.m_cost;
+    let p = params.parallelism;
+    let t = params.iterations;
+    let m = params.memory;
     let tag_length = params.tag_length;
 
     // Step 1: Compute H_0
@@ -587,7 +603,7 @@ fn gb(v: &mut [u64], a: usize, b: usize, c: usize, d: usize) {
 // ============================================================
 
 /// Encode an Argon2id hash in the PHC string format:
-/// `$argon2id$v=19$m=<m_cost>,t=<t_cost>,p=<p_cost>$<salt_b64>$<hash_b64>`
+/// `$argon2id$v=19$m=<memory>,t=<iterations>,p=<parallelism>$<salt_b64>$<hash_b64>`
 ///
 /// Uses base64 encoding without padding (standard alphabet with +/ replaced by the
 /// PHC-standard base64 which is actually the standard base64 without padding).
@@ -597,9 +613,9 @@ pub fn encode_phc(params: &Params, salt: &[u8], tag: &[u8]) -> String {
     let tag_b64 = base64_encode_no_pad(tag);
     alloc::format!(
         "$argon2id$v=19$m={},t={},p={}${}${}",
-        params.m_cost,
-        params.t_cost,
-        params.p_cost,
+        params.memory,
+        params.iterations,
+        params.parallelism,
         salt_b64,
         tag_b64
     )
@@ -631,17 +647,17 @@ pub fn decode_phc(encoded: &str) -> Result<(Params, Vec<u8>, Vec<u8>), Argon2Err
         return Err(Argon2Error::InvalidEncoding("invalid parameters"));
     }
 
-    let m_cost = parse_param(param_parts[0], "m=")?;
-    let t_cost = parse_param(param_parts[1], "t=")?;
-    let p_cost = parse_param(param_parts[2], "p=")?;
+    let memory = parse_param(param_parts[0], "m=")?;
+    let iterations = parse_param(param_parts[1], "t=")?;
+    let parallelism = parse_param(param_parts[2], "p=")?;
 
     let salt = base64_decode_no_pad(parts[4]).map_err(|_| Argon2Error::InvalidEncoding("invalid base64 in salt"))?;
     let tag = base64_decode_no_pad(parts[5]).map_err(|_| Argon2Error::InvalidEncoding("invalid base64 in hash"))?;
 
     let params = Params {
-        t_cost,
-        m_cost,
-        p_cost,
+        iterations,
+        memory,
+        parallelism,
         tag_length: tag.len() as u32,
     };
 
@@ -649,6 +665,21 @@ pub fn decode_phc(encoded: &str) -> Result<(Params, Vec<u8>, Vec<u8>), Argon2Err
 }
 
 /// Hash a password and return the PHC-encoded string.
+///
+/// # Example
+///
+/// ```ignore
+/// use crypto::argon2::{hash_password, verify_password, Params};
+///
+/// let encoded = hash_password(
+///     b"correct horse battery staple",
+///     b"randomsalt123456",
+///     &Params { iterations: 3, memory: 65536, parallelism: 4, tag_length: 32 },
+/// ).unwrap();
+///
+/// assert!(verify_password(b"correct horse battery staple", &encoded).is_ok());
+/// assert!(verify_password(b"wrong password", &encoded).is_err());
+/// ```
 #[cfg(feature = "alloc")]
 pub fn hash_password(password: &[u8], salt: &[u8], params: &Params) -> Result<String, Argon2Error> {
     let tag = derive_key(password, salt, &[], &[], params)?;
@@ -656,6 +687,8 @@ pub fn hash_password(password: &[u8], salt: &[u8], params: &Params) -> Result<St
 }
 
 /// Verify a password against a PHC-encoded hash string.
+///
+/// See [`hash_password`] for an example.
 #[cfg(feature = "alloc")]
 pub fn verify_password(password: &[u8], encoded: &str) -> Result<(), Argon2Error> {
     let (params, salt, expected_tag) = decode_phc(encoded)?;
@@ -705,12 +738,17 @@ mod tests {
         salt: &[u8],
         secret: &[u8],
         ad: &[u8],
-        t_cost: u32,
-        m_cost: u32,
-        p_cost: u32,
+        iterations: u32,
+        memory: u32,
+        parallelism: u32,
         tag_length: u32,
     ) -> Vec<u8> {
-        let params = Params::new(t_cost, m_cost, p_cost, tag_length);
+        let params = Params {
+            iterations: iterations,
+            memory: memory,
+            parallelism: parallelism,
+            tag_length: tag_length,
+        };
         argon2_core(argon_type, password, salt, secret, ad, &params).unwrap()
     }
 
@@ -1160,15 +1198,20 @@ mod tests {
 
     #[test]
     fn test_phc_encode_decode() {
-        let params = Params::new(3, 65536, 4, 32);
+        let params = Params {
+            iterations: 3,
+            memory: 65536,
+            parallelism: 4,
+            tag_length: 32,
+        };
         let salt = b"somesalt12345678";
         let tag = vec![0xAB; 32];
         let encoded = encode_phc(&params, salt, &tag);
         assert!(encoded.starts_with("$argon2id$v=19$m=65536,t=3,p=4$"));
         let (dp, ds, dt) = decode_phc(&encoded).unwrap();
-        assert_eq!(dp.t_cost, 3);
-        assert_eq!(dp.m_cost, 65536);
-        assert_eq!(dp.p_cost, 4);
+        assert_eq!(dp.iterations, 3);
+        assert_eq!(dp.memory, 65536);
+        assert_eq!(dp.parallelism, 4);
         assert_eq!(dp.tag_length, 32);
         assert_eq!(ds, salt);
         assert_eq!(dt, tag);
@@ -1178,7 +1221,12 @@ mod tests {
     fn test_hash_and_verify() {
         let password = b"correct horse battery staple";
         let salt = b"randomsalt123456";
-        let params = Params::new(1, 64, 1, 32);
+        let params = Params {
+            iterations: 1,
+            memory: 64,
+            parallelism: 1,
+            tag_length: 32,
+        };
         let encoded = hash_password(password, salt, &params).unwrap();
         assert!(verify_password(password, &encoded).is_ok());
         assert_eq!(verify_password(b"wrong password", &encoded), Err(Argon2Error::VerifyMismatch));
@@ -1194,9 +1242,51 @@ mod tests {
 
     #[test]
     fn test_invalid_params() {
-        assert!(derive_key(b"password", b"salt", &[], &[], &Params::new(0, 64, 1, 32)).is_err());
-        assert!(derive_key(b"password", b"salt", &[], &[], &Params::new(1, 4, 1, 32)).is_err());
-        assert!(derive_key(b"password", b"salt", &[], &[], &Params::new(1, 64, 1, 3)).is_err());
+        assert!(
+            derive_key(
+                b"password",
+                b"salt",
+                &[],
+                &[],
+                &Params {
+                    iterations: 0,
+                    memory: 64,
+                    parallelism: 1,
+                    tag_length: 32
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            derive_key(
+                b"password",
+                b"salt",
+                &[],
+                &[],
+                &Params {
+                    iterations: 1,
+                    memory: 4,
+                    parallelism: 1,
+                    tag_length: 32
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            derive_key(
+                b"password",
+                b"salt",
+                &[],
+                &[],
+                &Params {
+                    iterations: 1,
+                    memory: 64,
+                    parallelism: 1,
+                    tag_length: 3
+                }
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1218,23 +1308,51 @@ mod tests {
 
     #[test]
     fn test_argon2id_min_memory() {
-        let result = derive_key(b"password", b"saltsalt", &[], &[], &Params::new(1, 8, 1, 32)).unwrap();
+        let result = derive_key(
+            b"password",
+            b"saltsalt",
+            &[],
+            &[],
+            &Params {
+                iterations: 1,
+                memory: 8,
+                parallelism: 1,
+                tag_length: 32,
+            },
+        )
+        .unwrap();
         assert_eq!(result.len(), 32);
     }
 
     #[test]
     fn test_argon2id_multiple_lanes() {
         assert_eq!(
-            derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &Params::new(1, 64, 4, 32))
-                .unwrap()
-                .len(),
+            derive_key(
+                b"password",
+                b"saltsaltsaltsalt",
+                &[],
+                &[],
+                &Params {
+                    iterations: 1,
+                    memory: 64,
+                    parallelism: 4,
+                    tag_length: 32
+                }
+            )
+            .unwrap()
+            .len(),
             32
         );
     }
 
     #[test]
     fn test_different_passwords() {
-        let p = Params::new(1, 64, 1, 32);
+        let p = Params {
+            iterations: 1,
+            memory: 64,
+            parallelism: 1,
+            tag_length: 32,
+        };
         assert_ne!(
             derive_key(b"password1", b"saltsaltsaltsalt", &[], &[], &p).unwrap(),
             derive_key(b"password2", b"saltsaltsaltsalt", &[], &[], &p).unwrap()
@@ -1243,7 +1361,12 @@ mod tests {
 
     #[test]
     fn test_different_salts() {
-        let p = Params::new(1, 64, 1, 32);
+        let p = Params {
+            iterations: 1,
+            memory: 64,
+            parallelism: 1,
+            tag_length: 32,
+        };
         assert_ne!(
             derive_key(b"password", b"salt1234salt1234", &[], &[], &p).unwrap(),
             derive_key(b"password", b"salt5678salt5678", &[], &[], &p).unwrap()
@@ -1252,7 +1375,19 @@ mod tests {
 
     #[test]
     fn test_long_tag() {
-        let result = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &Params::new(1, 64, 1, 64)).unwrap();
+        let result = derive_key(
+            b"password",
+            b"saltsaltsaltsalt",
+            &[],
+            &[],
+            &Params {
+                iterations: 1,
+                memory: 64,
+                parallelism: 1,
+                tag_length: 64,
+            },
+        )
+        .unwrap();
         assert_eq!(result.len(), 64);
     }
 
@@ -1260,13 +1395,18 @@ mod tests {
     fn test_phc_roundtrip() {
         let password = b"password";
         let salt = b"somesalt";
-        let params = Params::new(1, 64, 1, 24);
+        let params = Params {
+            iterations: 1,
+            memory: 64,
+            parallelism: 1,
+            tag_length: 24,
+        };
         let tag = derive_key(password, salt, &[], &[], &params).unwrap();
         let encoded = encode_phc(&params, salt, &tag);
         let (dp, ds, dt) = decode_phc(&encoded).unwrap();
-        assert_eq!(dp.m_cost, params.m_cost);
-        assert_eq!(dp.t_cost, params.t_cost);
-        assert_eq!(dp.p_cost, params.p_cost);
+        assert_eq!(dp.memory, params.memory);
+        assert_eq!(dp.iterations, params.iterations);
+        assert_eq!(dp.parallelism, params.parallelism);
         assert_eq!(ds, salt);
         assert_eq!(dt, tag);
     }
@@ -1286,9 +1426,9 @@ mod tests {
         ad: &[u8],
         params: &Params,
     ) -> Vec<Vec<Block>> {
-        let p = params.p_cost;
-        let t = params.t_cost;
-        let m = params.m_cost;
+        let p = params.parallelism;
+        let t = params.iterations;
+        let m = params.memory;
         let tag_length = params.tag_length;
 
         let h0 = compute_h0(argon_type, password, salt, secret, ad, p, tag_length, m, t);
@@ -1341,11 +1481,16 @@ mod tests {
         let salt = vec![0x02u8; 16];
         let secret = vec![0x03u8; 8];
         let ad = vec![0x04u8; 12];
-        let params = Params::new(3, 32, 4, 32);
+        let params = Params {
+            iterations: 3,
+            memory: 32,
+            parallelism: 4,
+            tag_length: 32,
+        };
         let passes = argon2_core_with_passes(ARGON2D, &pwd, &salt, &secret, &ad, &params);
 
-        let p = params.p_cost;
-        let q = (4 * p * (params.m_cost / (4 * p))) / p;
+        let p = params.parallelism;
+        let q = (4 * p * (params.memory / (4 * p))) / p;
         let m_prime = p * q;
 
         assert_eq!(block0_word(&passes[0][0], 0), "db2fea6b2c6f5c8a");
@@ -1364,11 +1509,16 @@ mod tests {
         let salt = vec![0x02u8; 16];
         let secret = vec![0x03u8; 8];
         let ad = vec![0x04u8; 12];
-        let params = Params::new(3, 32, 4, 32);
+        let params = Params {
+            iterations: 3,
+            memory: 32,
+            parallelism: 4,
+            tag_length: 32,
+        };
         let passes = argon2_core_with_passes(ARGON2I, &pwd, &salt, &secret, &ad, &params);
 
-        let p = params.p_cost;
-        let q = (4 * p * (params.m_cost / (4 * p))) / p;
+        let p = params.parallelism;
+        let q = (4 * p * (params.memory / (4 * p))) / p;
         let m_prime = p * q;
 
         assert_eq!(block0_word(&passes[0][0], 0), "f8f9e84545db08f6");
@@ -1413,15 +1563,44 @@ mod tests {
 
     #[test]
     fn test_argon2id_empty_secret_and_ad() {
-        let result = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &Params::new(1, 64, 1, 32)).unwrap();
+        let result = derive_key(
+            b"password",
+            b"saltsaltsaltsalt",
+            &[],
+            &[],
+            &Params {
+                iterations: 1,
+                memory: 64,
+                parallelism: 1,
+                tag_length: 32,
+            },
+        )
+        .unwrap();
         assert_eq!(result.len(), 32);
-        let result2 = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &Params::new(1, 64, 1, 32)).unwrap();
+        let result2 = derive_key(
+            b"password",
+            b"saltsaltsaltsalt",
+            &[],
+            &[],
+            &Params {
+                iterations: 1,
+                memory: 64,
+                parallelism: 1,
+                tag_length: 32,
+            },
+        )
+        .unwrap();
         assert_eq!(result, result2);
     }
 
     #[test]
     fn test_argon2id_with_secret() {
-        let p = Params::new(1, 64, 1, 32);
+        let p = Params {
+            iterations: 1,
+            memory: 64,
+            parallelism: 1,
+            tag_length: 32,
+        };
         let without_secret = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &p).unwrap();
         let with_secret = derive_key(b"password", b"saltsaltsaltsalt", b"secret", &[], &p).unwrap();
         assert_ne!(without_secret, with_secret);
@@ -1429,7 +1608,12 @@ mod tests {
 
     #[test]
     fn test_argon2id_with_ad() {
-        let p = Params::new(1, 64, 1, 32);
+        let p = Params {
+            iterations: 1,
+            memory: 64,
+            parallelism: 1,
+            tag_length: 32,
+        };
         let without_ad = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &p).unwrap();
         let with_ad = derive_key(b"password", b"saltsaltsaltsalt", &[], b"associated data", &p).unwrap();
         assert_ne!(without_ad, with_ad);
@@ -1437,25 +1621,66 @@ mod tests {
 
     #[test]
     fn test_argon2id_tag_length_4() {
-        let result = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &Params::new(1, 64, 1, 4)).unwrap();
+        let result = derive_key(
+            b"password",
+            b"saltsaltsaltsalt",
+            &[],
+            &[],
+            &Params {
+                iterations: 1,
+                memory: 64,
+                parallelism: 1,
+                tag_length: 4,
+            },
+        )
+        .unwrap();
         assert_eq!(result.len(), 4);
     }
 
     #[test]
     fn test_argon2id_tag_length_128() {
-        let result = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &Params::new(1, 64, 1, 128)).unwrap();
+        let result = derive_key(
+            b"password",
+            b"saltsaltsaltsalt",
+            &[],
+            &[],
+            &Params {
+                iterations: 1,
+                memory: 64,
+                parallelism: 1,
+                tag_length: 128,
+            },
+        )
+        .unwrap();
         assert_eq!(result.len(), 128);
     }
 
     #[test]
     fn test_argon2id_tag_length_256() {
-        let result = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &Params::new(1, 64, 1, 256)).unwrap();
+        let result = derive_key(
+            b"password",
+            b"saltsaltsaltsalt",
+            &[],
+            &[],
+            &Params {
+                iterations: 1,
+                memory: 64,
+                parallelism: 1,
+                tag_length: 256,
+            },
+        )
+        .unwrap();
         assert_eq!(result.len(), 256);
     }
 
     #[test]
     fn test_argon2id_long_tag_consistency() {
-        let p = Params::new(1, 64, 1, 100);
+        let p = Params {
+            iterations: 1,
+            memory: 64,
+            parallelism: 1,
+            tag_length: 100,
+        };
         let r1 = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &p).unwrap();
         let r2 = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &p).unwrap();
         assert_eq!(r1, r2);
@@ -1464,7 +1689,12 @@ mod tests {
 
     #[test]
     fn test_argon2i_long_tag_consistency() {
-        let params = Params::new(1, 64, 1, 100);
+        let params = Params {
+            iterations: 1,
+            memory: 64,
+            parallelism: 1,
+            tag_length: 100,
+        };
         let r1 = argon2_core(ARGON2I, b"password", b"saltsaltsaltsalt", &[], &[], &params).unwrap();
         let r2 = argon2_core(ARGON2I, b"password", b"saltsaltsaltsalt", &[], &[], &params).unwrap();
         assert_eq!(r1, r2);
@@ -1473,7 +1703,12 @@ mod tests {
 
     #[test]
     fn test_argon2d_long_tag_consistency() {
-        let params = Params::new(1, 64, 1, 100);
+        let params = Params {
+            iterations: 1,
+            memory: 64,
+            parallelism: 1,
+            tag_length: 100,
+        };
         let r1 = argon2_core(ARGON2D, b"password", b"saltsaltsaltsalt", &[], &[], &params).unwrap();
         let r2 = argon2_core(ARGON2D, b"password", b"saltsaltsaltsalt", &[], &[], &params).unwrap();
         assert_eq!(r1, r2);
@@ -1482,13 +1717,37 @@ mod tests {
 
     #[test]
     fn test_argon2id_single_pass() {
-        let result = derive_key(b"password", b"saltsalt", &[], &[], &Params::new(1, 32, 1, 32)).unwrap();
+        let result = derive_key(
+            b"password",
+            b"saltsalt",
+            &[],
+            &[],
+            &Params {
+                iterations: 1,
+                memory: 32,
+                parallelism: 1,
+                tag_length: 32,
+            },
+        )
+        .unwrap();
         assert_eq!(result.len(), 32);
     }
 
     #[test]
     fn test_argon2id_high_parallelism() {
-        let result = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &Params::new(1, 64, 8, 32)).unwrap();
+        let result = derive_key(
+            b"password",
+            b"saltsaltsaltsalt",
+            &[],
+            &[],
+            &Params {
+                iterations: 1,
+                memory: 64,
+                parallelism: 8,
+                tag_length: 32,
+            },
+        )
+        .unwrap();
         assert_eq!(result.len(), 32);
     }
 
@@ -1557,27 +1816,57 @@ mod tests {
     }
 
     #[test]
-    fn test_argon2id_different_t_costs() {
-        let p1 = Params::new(1, 64, 1, 32);
-        let p2 = Params::new(2, 64, 1, 32);
+    fn test_argon2id_different_iterations() {
+        let p1 = Params {
+            iterations: 1,
+            memory: 64,
+            parallelism: 1,
+            tag_length: 32,
+        };
+        let p2 = Params {
+            iterations: 2,
+            memory: 64,
+            parallelism: 1,
+            tag_length: 32,
+        };
         let r1 = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &p1).unwrap();
         let r2 = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &p2).unwrap();
         assert_ne!(r1, r2);
     }
 
     #[test]
-    fn test_argon2id_different_m_costs() {
-        let p1 = Params::new(1, 64, 1, 32);
-        let p2 = Params::new(1, 128, 1, 32);
+    fn test_argon2id_different_memory() {
+        let p1 = Params {
+            iterations: 1,
+            memory: 64,
+            parallelism: 1,
+            tag_length: 32,
+        };
+        let p2 = Params {
+            iterations: 1,
+            memory: 128,
+            parallelism: 1,
+            tag_length: 32,
+        };
         let r1 = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &p1).unwrap();
         let r2 = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &p2).unwrap();
         assert_ne!(r1, r2);
     }
 
     #[test]
-    fn test_argon2id_different_p_costs() {
-        let p1 = Params::new(1, 64, 1, 32);
-        let p2 = Params::new(1, 64, 2, 32);
+    fn test_argon2id_different_parallelisms() {
+        let p1 = Params {
+            iterations: 1,
+            memory: 64,
+            parallelism: 1,
+            tag_length: 32,
+        };
+        let p2 = Params {
+            iterations: 1,
+            memory: 64,
+            parallelism: 2,
+            tag_length: 32,
+        };
         let r1 = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &p1).unwrap();
         let r2 = derive_key(b"password", b"saltsaltsaltsalt", &[], &[], &p2).unwrap();
         assert_ne!(r1, r2);
@@ -1609,7 +1898,12 @@ mod tests {
     fn test_phc_verify_known() {
         let password = b"password";
         let salt = b"randomsalt123456";
-        let params = Params::new(1, 64, 1, 32);
+        let params = Params {
+            iterations: 1,
+            memory: 64,
+            parallelism: 1,
+            tag_length: 32,
+        };
         let encoded = hash_password(password, salt, &params).unwrap();
         assert!(verify_password(password, &encoded).is_ok());
         assert_eq!(verify_password(b"wrong", &encoded), Err(Argon2Error::VerifyMismatch));
@@ -1618,14 +1912,19 @@ mod tests {
     #[test]
     fn test_decode_phc_roundtrip_all_types() {
         for tag_len in [4, 16, 32, 64] {
-            let params = Params::new(1, 64, 1, tag_len);
+            let params = Params {
+                iterations: 1,
+                memory: 64,
+                parallelism: 1,
+                tag_length: tag_len,
+            };
             let salt = b"testsalt12345678";
             let tag = vec![0xAB; tag_len as usize];
             let encoded = encode_phc(&params, salt, &tag);
             let (dp, ds, dt) = decode_phc(&encoded).unwrap();
-            assert_eq!(dp.m_cost, 64);
-            assert_eq!(dp.t_cost, 1);
-            assert_eq!(dp.p_cost, 1);
+            assert_eq!(dp.memory, 64);
+            assert_eq!(dp.iterations, 1);
+            assert_eq!(dp.parallelism, 1);
             assert_eq!(dp.tag_length, tag_len);
             assert_eq!(ds, salt);
             assert_eq!(dt, tag);

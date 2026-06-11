@@ -86,6 +86,27 @@ const BASEPOINT: EdwardsPoint = EdwardsPoint {
     ])),
 };
 
+/// Ed25519 signing key (RFC 8032).
+///
+/// # Generating a key
+///
+/// ```ignore
+/// use crypto::curve25519::ed25519::SecretKey;
+///
+/// let priv_key = SecretKey::generate();
+/// let pub_key = priv_key.public_key();
+/// ```
+///
+/// # Signing and verification
+///
+/// ```ignore
+/// use crypto::curve25519::ed25519::SecretKey;
+///
+/// let priv_key = SecretKey::generate();
+/// let pub_key = priv_key.public_key();
+/// let sig = priv_key.sign(b"message");
+/// assert!(pub_key.verify(b"message", &sig).is_ok());
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SecretKey {
     seed: [u8; SECRET_KEY_SIZE],
@@ -164,6 +185,27 @@ impl TryFrom<&[u8]> for SecretKey {
     }
 }
 
+/// Ed25519 public key for signature verification (RFC 8032).
+///
+/// # Verifying a signature
+///
+/// ```ignore
+/// use crypto::curve25519::ed25519::{PublicKey, SecretKey};
+///
+/// let priv_key = SecretKey::generate();
+/// let pub_key = priv_key.public_key();
+/// let sig = priv_key.sign(b"message");
+/// assert!(pub_key.verify(b"message", &sig).is_ok());
+/// ```
+///
+/// # Deserializing from bytes
+///
+/// ```ignore
+/// use crypto::curve25519::ed25519::PublicKey;
+///
+/// let bytes = [0u8; 32]; // replace with a real public key
+/// let pub_key = PublicKey::from_bytes(&bytes);
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PublicKey {
     point: EdwardsPoint,

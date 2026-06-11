@@ -7,19 +7,37 @@ pub const PUBLIC_KEY_SIZE_768: usize = 1184;
 pub const SECRET_KEY_SIZE_768: usize = 2400;
 pub const CIPHERTEXT_SIZE_768: usize = 1088;
 
-/// ML-KEM-768 decapsulation key (secret key).
+/// ML-KEM-768 decapsulation key (secret key) as defined in FIPS 203.
+///
+/// # Example
+///
+/// ```ignore
+/// use crypto::mlkem::{SecretKey768, generate_keypair_768};
+///
+/// let (secret_key, public_key) = generate_keypair_768();
+/// let (ciphertext, shared_secret) = public_key.encapsulate();
+/// let decapsulated = secret_key.decapsulate(&ciphertext).unwrap();
+/// assert_eq!(shared_secret, decapsulated);
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
 pub struct SecretKey768 {
     bytes: [u8; SECRET_KEY_SIZE_768],
 }
 
-/// ML-KEM-768 encapsulation key (public key).
+/// ML-KEM-768 encapsulation key (public key) as defined in FIPS 203.
+///
+/// See [`SecretKey768`] for a full usage example.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PublicKey768 {
     bytes: [u8; PUBLIC_KEY_SIZE_768],
 }
 
+/// Generate an ML-KEM-768 keypair.
+///
+/// This is a convenience wrapper around [`SecretKey768::generate`].
+///
+/// See [`SecretKey768`] for a usage example.
 #[inline]
 pub fn generate_keypair_768() -> (SecretKey768, PublicKey768) {
     SecretKey768::generate()

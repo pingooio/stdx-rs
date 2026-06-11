@@ -1,3 +1,11 @@
+//! Pure Rust cryptography with `no_std` support and hardware / SIMD acceleration
+//! for `x86_64` and `aarch64` (and sometimes WASM).
+//!
+//! # ⚠️ Warning
+//!
+//! This crate has **not** undergone a third-party security audit or formal
+//! cryptographic review yet. Use at your own risk.
+
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
@@ -24,35 +32,36 @@ mod bytes;
 #[cfg(feature = "alloc")]
 pub mod encoding;
 pub mod p256;
-pub use aes::Aes256Gcm;
 pub use bytes::Bytes;
-
-pub use crate::hkdf::HkdfError;
 
 const MAX_HASH_BLOCK_SIZE: usize = 128;
 
 pub type Hash = Bytes<64>;
 pub type Tag = Bytes<32>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Error {
-    Hkdf(HkdfError),
-    Aead(AeadError),
-    EllipticCurve(EllipticCurveError),
-}
+////////////////////////////////////////////////////////////////////////////////////////////////////
+/// Errors
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
-impl core::fmt::Display for Error {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Error::Hkdf(err) => write!(f, "{err}"),
-            Error::Aead(err) => write!(f, "{err}"),
-            Error::EllipticCurve(err) => write!(f, "{err}"),
-        }
-    }
-}
+// #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// pub enum Error {
+//     Hkdf(HkdfError),
+//     Aead(AeadError),
+//     EllipticCurve(EllipticCurveError),
+// }
 
-#[cfg(feature = "std")]
-impl std::error::Error for Error {}
+// impl core::fmt::Display for Error {
+//     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+//         match self {
+//             Error::Hkdf(err) => write!(f, "{err}"),
+//             Error::Aead(err) => write!(f, "{err}"),
+//             Error::EllipticCurve(err) => write!(f, "{err}"),
+//         }
+//     }
+// }
+
+// #[cfg(feature = "std")]
+// impl std::error::Error for Error {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AeadError {
@@ -90,6 +99,30 @@ impl core::fmt::Display for EllipticCurveError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for EllipticCurveError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HkdfError {
+    PrkIsTooShort(usize),
+    OutputIsTooLong,
+}
+
+impl core::fmt::Display for HkdfError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            HkdfError::PrkIsTooShort(_) => write!(f, "PRK is too short"),
+            HkdfError::OutputIsTooLong => {
+                write!(f, "HKDF output length exceeds RFC 5869 limit (255 * Hash's output size)")
+            }
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for HkdfError {}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+/// Traits
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub trait StreamCipher: Sized {
     fn xor_keystream(&mut self, in_out: &mut [u8]);

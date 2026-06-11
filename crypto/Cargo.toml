@@ -11,10 +11,11 @@ path = "./src/crypto.rs"
 default = ["std", "zeroize"]
 
 alloc = []
-std = ["alloc"]
+std = ["alloc", "memchr/std"]
 zeroize = ["dep:zeroize"]
 
 [dependencies]
+memchr = { version = "2", default-features = false, features = ["alloc"] }
 zeroize = { workspace = true, optional = true }
 big_number = { path = "../big_number" }
 constant_time_eq = { path = "../constant_time_eq" }

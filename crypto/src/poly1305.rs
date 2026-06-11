@@ -1,6 +1,15 @@
 /// Computes the Poly1305 message authentication code as specified in RFC 8439.
 ///
 /// `key` must be 32 bytes (`r || s`).
+///
+/// # Example
+///
+/// ```ignore
+/// use crypto::poly1305::poly1305_mac;
+///
+/// let key = b"0123456789abcdef0123456789abcdef";
+/// let tag = poly1305_mac(key, b"message");
+/// ```
 pub fn poly1305_mac(key: &[u8; 32], data: &[u8]) -> [u8; 16] {
     const MASK26: u64 = 0x3ffffff;
 

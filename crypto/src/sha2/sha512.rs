@@ -87,6 +87,28 @@ pub(crate) const SHA512_K: [u64; 80] = [
     0x6c44198c4a475817,
 ];
 
+/// SHA-512 hash function (RFC 6234 / FIPS 180-4).
+///
+/// Implements the [`Hasher`] trait.
+///
+/// # One-shot API
+///
+/// ```ignore
+/// use crypto::{Hasher, sha2::Sha512};
+///
+/// let hash = Sha512::hash(b"hello world");
+/// ```
+///
+/// # Incremental API
+///
+/// ```ignore
+/// use crypto::{Hasher, sha2::Sha512};
+///
+/// let mut hasher = Sha512::new();
+/// hasher.update(b"hello ");
+/// hasher.update(b"world");
+/// let hash = hasher.sum();
+/// ```
 #[derive(Clone)]
 #[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
 pub struct Sha512 {

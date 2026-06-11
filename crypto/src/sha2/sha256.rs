@@ -15,6 +15,28 @@ pub(crate) const SHA256_K: [u32; 64] = [
     0xc67178f2,
 ];
 
+/// SHA-256 hash function (RFC 6234 / FIPS 180-4).
+///
+/// Implements the [`Hasher`] trait.
+///
+/// # One-shot API
+///
+/// ```ignore
+/// use crypto::{Hasher, sha2::Sha256};
+///
+/// let hash = Sha256::hash(b"hello world");
+/// ```
+///
+/// # Incremental API
+///
+/// ```ignore
+/// use crypto::{Hasher, sha2::Sha256};
+///
+/// let mut hasher = Sha256::new();
+/// hasher.update(b"hello ");
+/// hasher.update(b"world");
+/// let hash = hasher.sum();
+/// ```
 #[derive(Clone)]
 #[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
 pub struct Sha256 {

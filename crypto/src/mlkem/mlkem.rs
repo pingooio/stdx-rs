@@ -7,6 +7,7 @@ use crate::{
     sha3::{Sha3_256, Sha3_512, Shake128, Shake256},
 };
 
+/// Size of the shared secret produced by ML-KEM encapsulation/decapsulation (32 bytes).
 pub const SHARED_SECRET_SIZE: usize = 32;
 
 pub(crate) const N: usize = 256;
@@ -37,6 +38,7 @@ pub(crate) const ML_KEM_1024: MlKemParams<4> = MlKemParams {
     polyveccompressedbytes: 1408,
 };
 
+/// ML-KEM error type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MlKemError {
     InvalidKey,

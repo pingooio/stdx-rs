@@ -1,6 +1,8 @@
 use alloc::{string::String, vec::Vec};
 use core::fmt;
 
+use memchr::{memchr, memchr2, memmem};
+
 const BEGIN_MARKER: &[u8] = b"-----BEGIN ";
 const END_MARKER: &[u8] = b"-----END ";
 const MARKER_END: &[u8] = b"-----";
@@ -282,7 +284,7 @@ fn parse_one_block<'a>(input: &'a [u8], pos: &mut usize) -> Result<Block<'a>, Pe
             break;
         }
 
-        if let Some(colon_pos) = line.iter().position(|&b| b == b':') {
+        if let Some(colon_pos) = memchr(b':', line) {
             let key = core::str::from_utf8(&line[..colon_pos])
                 .map_err(|_| PemError::InvalidEncoding("non-UTF-8 header key"))?;
             let value_start = colon_pos + 1;
@@ -430,37 +432,31 @@ fn find_pattern(data: &[u8], pattern: &[u8]) -> Option<usize> {
     if pattern.is_empty() || data.len() < pattern.len() {
         return None;
     }
-    data.windows(pattern.len()).position(|w| w == pattern)
+    memmem::find(data, pattern)
 }
 
 fn find_line_end(data: &[u8]) -> Option<usize> {
     if data.is_empty() {
         return None;
     }
-    for i in 0..data.len() {
-        if data[i] == b'\n' || data[i] == b'\r' {
-            return Some(i);
-        }
-    }
-    return Some(data.len());
+    Some(memchr2(b'\n', b'\r', data).unwrap_or(data.len()))
 }
 
 fn line_advance(data: &[u8]) -> usize {
     if data.is_empty() {
         return 0;
     }
-    for i in 0..data.len() {
+    if let Some(i) = memchr2(b'\n', b'\r', data) {
         if data[i] == b'\n' {
             return i + 1;
         }
-        if data[i] == b'\r' {
-            if i + 1 < data.len() && data[i + 1] == b'\n' {
-                return i + 2;
-            }
-            return i + 1;
+        // data[i] == b'\r'
+        if i + 1 < data.len() && data[i + 1] == b'\n' {
+            return i + 2;
         }
+        return i + 1;
     }
-    return data.len();
+    data.len()
 }
 
 #[cfg(test)]
