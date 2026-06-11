@@ -1,5 +1,4 @@
 use crypto::{Hasher, hmac::Hmac, sha2::Sha256};
-use rand::TryRngCore;
 
 use crate::{
     error::{PgError, Result},
@@ -9,7 +8,7 @@ use crate::{
 fn hi(password: &str, salt: &[u8], iterations: u32) -> [u8; 32] {
     let pw = password.as_bytes();
     let mut u = hmac_sha256(pw, &[salt, &[0, 0, 0, 1]].concat());
-    let mut result = [0u8; 32];
+    let result = [0u8; 32];
     let mut result = [0u8; 32];
     result.copy_from_slice(u.as_ref());
 
@@ -40,9 +39,7 @@ pub(crate) struct ScramClient {
 
 impl ScramClient {
     pub fn new(username: &str, password: &str) -> Self {
-        let mut rng = rand::rngs::OsRng;
-        let mut raw = [0u8; 24];
-        rng.try_fill_bytes(&mut raw).unwrap();
+        let raw: [u8; 24] = rand::random();
         let client_nonce = hex::encode(&raw);
 
         ScramClient {

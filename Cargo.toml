@@ -79,7 +79,7 @@ mime = "0.3"
 nix = { version = "0.31", features = ["socket"] }
 nom = "7"
 paste = { git = "https://github.com/dtolnay/paste", ref = "6a302522990cbfd9de4e0c61d91854622f7b2999" }
-rand = "0.9"
+rand = "0.10"
 regex = { version = "1" }
 reqwest = { version = "0.13", default-features = false, features = ["charset", "gzip", "http2", "multipart", "json", "rustls", "zstd"] }
 aws-lc-rs = { version = "1" }
@@ -92,7 +92,7 @@ walkdir = "2"
 zeroize = { version = "1", features = ["simd", "derive"] }
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "logging", "tls12"] }
 tokio-rustls = { version = "0.26" }
-lru = "0.15"
+lru = "0.18"
 
 
 # For macros
@@ -101,4 +101,4 @@ quote = "1"
 proc-macro2 = "1"
 
 
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }

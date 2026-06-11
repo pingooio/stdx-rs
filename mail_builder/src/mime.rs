@@ -15,7 +15,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use rand::Rng;
+use rand::RngExt;
 
 use crate::{
     encoders::{
@@ -134,8 +134,8 @@ pub fn make_boundary(separator: &str) -> String {
         .unwrap_or_else(|_| Duration::new(0, 0))
         .as_nanos();
 
-    let pid = rand::thread_rng().gen_range(0..999);
-    let rint = rand::thread_rng().gen_range(0..999);
+    let pid = rand::rng().random_range(0..999);
+    let rint = rand::rng().random_range(0..999);
 
     return format!("{:x}{}{:x}{}{:x}", unix_nano, separator, pid, separator, rint);
 }
@@ -326,6 +326,7 @@ impl<'x> MimePart<'x> {
                                             ct.attributes.push(("boundary".into(), make_boundary("_").into()));
                                             pos
                                         };
+
                                         ct.write_header(&mut output, 14)?;
                                         ct.attributes.swap_remove(bpos).1.into()
                                     }
