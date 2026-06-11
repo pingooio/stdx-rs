@@ -11,7 +11,7 @@ bytes = { workspace = true }
 chrono = { workspace = true }
 crypto = { path = "../crypto" }
 hex = { path = "../hex" }
-pg-derive = { path = "../pg-derive" }
+pg_derive = { path = "../pg_derive" }
 rand = { workspace = true }
 thiserror = { path = "../thiserror" }
 tokio = { workspace = true }

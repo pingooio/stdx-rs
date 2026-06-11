@@ -1,9 +1,10 @@
 [package]
-name = "pg-derive"
+name = "pg_derive"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
+path = "./pg_derive.rs"
 proc-macro = true
 
 [dependencies]
