@@ -661,7 +661,7 @@ mod tests {
         // Load the precomputed software round keys into __m128i registers.
         // This is safe on any x86_64 (SSE2 is baseline).
         let soft = crate::aes::aes256::key_expand(key);
-        let mut rk = [_mm_setzero_si128(); 15];
+        let mut rk = [unsafe { _mm_setzero_si128() }; 15];
         for i in 0..15 {
             rk[i] = unsafe { _mm_loadu_si128(soft[i].as_ptr().cast()) };
         }
@@ -670,7 +670,7 @@ mod tests {
 
     fn make_h_powers(key: &[u8; 32]) -> [__m128i; 8] {
         let (bytes, _) = crate::aes::aes256::precompute_ghash_powers(key);
-        let mut hp = [_mm_setzero_si128(); 8];
+        let mut hp = [unsafe { _mm_setzero_si128() }; 8];
         for i in 0..8 {
             hp[i] = unsafe { _mm_loadu_si128(bytes[i].as_ptr().cast()) };
         }
