@@ -82,9 +82,9 @@ impl Hasher for Shake256 {
 
     #[inline]
     fn sum(mut self) -> Hash {
-        let mut hash = Hash::with_length(Self::OUTPUT_SIZE);
+        let mut hash = Bytes::<64>::with_length(Self::OUTPUT_SIZE);
         self.squeeze(hash.as_mut());
-        return hash;
+        return Hash(hash);
     }
 }
 

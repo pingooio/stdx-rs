@@ -2,7 +2,7 @@
 use super::sha256_amd64;
 #[cfg(target_arch = "aarch64")]
 use super::sha256_arm64;
-use crate::{Hash, Hasher};
+use crate::{Bytes, Hash, Hasher};
 
 pub(crate) const SHA256_K: [u32; 64] = [
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98,
@@ -112,12 +112,12 @@ impl Hasher for Sha256 {
             process_block(&mut self.state, chunk.try_into().unwrap());
         }
 
-        let mut hash = Hash::new();
+        let mut hash = Bytes::<64>::new();
         for word in self.state.iter() {
             hash.append(&word.to_be_bytes());
         }
 
-        return hash;
+        return Hash(hash);
     }
 }
 

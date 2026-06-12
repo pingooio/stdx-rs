@@ -33,12 +33,9 @@ mod bytes;
 pub mod encoding;
 pub mod p256;
 pub mod pbkdf2;
-pub use bytes::Bytes;
+pub use bytes::{Bytes, Hash, Tag};
 
 const MAX_HASH_BLOCK_SIZE: usize = 128;
-
-pub type Hash = Bytes<64>;
-pub type Tag = Bytes<32>;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 /// Errors

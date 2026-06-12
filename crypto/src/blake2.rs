@@ -1,4 +1,4 @@
-use crate::{Hash, Hasher};
+use crate::{Bytes, Hash, Hasher};
 
 const IV: [u64; 8] = [
     0x6A09E667F3BCC908,
@@ -193,9 +193,9 @@ impl Hasher for Blake2b {
         for i in 0..self.outlen {
             out[i] = (self.h[i >> 3] >> ((i & 7) * 8)) as u8;
         }
-        let mut hash = Hash::new();
+        let mut hash = Bytes::<64>::new();
         hash.append(&out[..self.outlen]);
-        hash
+        Hash(hash)
     }
 }
 

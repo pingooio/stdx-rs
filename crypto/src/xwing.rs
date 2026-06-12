@@ -168,13 +168,14 @@ fn combiner(
     ct_x: &[u8; x25519::KEY_SIZE],
     pk_x: &[u8; x25519::KEY_SIZE],
 ) -> [u8; SHARED_SECRET_SIZE] {
+    use crate::Hasher;
     let mut hasher = Sha3_256::new();
-    hasher.write(ss_m);
-    hasher.write(ss_x);
-    hasher.write(ct_x);
-    hasher.write(pk_x);
-    hasher.write(XWING_LABEL);
-    hasher.sum()
+    hasher.update(ss_m);
+    hasher.update(ss_x);
+    hasher.update(ct_x);
+    hasher.update(pk_x);
+    hasher.update(XWING_LABEL);
+    hasher.sum().as_ref().try_into().unwrap()
 }
 
 #[cfg(test)]

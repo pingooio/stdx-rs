@@ -2,9 +2,27 @@
 ///
 /// Design notes:
 /// - Favours speed over constant-time execution (table-driven S-box lookups).
+/// - Uses T-tables (Te0..Te3) combining SubBytes+ShiftRows+MixColumns into a
+///   single 32-bit lookup per byte per round, matching Go's software AES approach.
+/// - GHASH uses a precomputed 16-entry nibble-lookup table to process GF(2¹²⁸)
+///   multiplication 4 bits at a time instead of bit-by-bit.
 /// - The x86-64 code path (aes256_amd64) dispatches to AES-NI + PCLMULQDQ
 ///   at runtime and is used whenever the required CPU features are present.
 use crate::AeadError;
+
+// ── Bit-reverse lookup table ─────────────────────────────────────────────────
+
+/// Precomputed bit-reversal for all 256 byte values.
+/// Replaces 16 × reverse_bits() calls with simple table lookups.
+const BIT_REVERSE: [u8; 256] = {
+    let mut t = [0u8; 256];
+    let mut i = 0usize;
+    while i < 256 {
+        t[i] = (i as u8).reverse_bits();
+        i += 1;
+    }
+    t
+};
 
 // ── AES constants ─────────────────────────────────────────────────────────────
 
@@ -108,10 +126,155 @@ pub(crate) fn key_expand(key: &[u8; 32]) -> RoundKeys {
 // ── AES block cipher (encrypt / decrypt) ─────────────────────────────────────
 
 #[inline(always)]
-fn xtime(a: u8) -> u8 {
+const fn xtime(a: u8) -> u8 {
     let hi = a & 0x80;
     let b = a << 1;
     if hi != 0 { b ^ 0x1b } else { b }
+}
+
+// ── T-tables: combine SubBytes + ShiftRows + MixColumns ─────────────────────
+//
+// Each Teᵢ[x] = S[x] multiplied by a column of the MixColumns matrix
+// (rotated left by i positions). A u32 holds row 0..row 3 in LE byte order.
+
+const TE0: [u32; 256] = {
+    let mut t = [0u32; 256];
+    let mut i = 0usize;
+    while i < 256 {
+        let s = SBOX[i] as u32;
+        let s2 = xtime(SBOX[i]) as u32;
+        let s3 = (s ^ s2) as u32;
+        // Column: [2·S, 1·S, 1·S, 3·S] in rows 0..3
+        t[i] = (s3 << 24) | (s << 16) | (s << 8) | s2;
+        i += 1;
+    }
+    t
+};
+
+const TE1: [u32; 256] = {
+    let mut t = [0u32; 256];
+    let mut i = 0usize;
+    while i < 256 {
+        let s = SBOX[i] as u32;
+        let s2 = xtime(SBOX[i]) as u32;
+        let s3 = (s ^ s2) as u32;
+        // Column: [3·S, 2·S, 1·S, 1·S]  → LE bytes [3S,2S,1S,1S]
+        t[i] = (s << 24) | (s << 16) | (s2 << 8) | s3;
+        i += 1;
+    }
+    t
+};
+
+const TE2: [u32; 256] = {
+    let mut t = [0u32; 256];
+    let mut i = 0usize;
+    while i < 256 {
+        let s = SBOX[i] as u32;
+        let s2 = xtime(SBOX[i]) as u32;
+        let s3 = (s ^ s2) as u32;
+        // Column: [1·S, 3·S, 2·S, 1·S]
+        t[i] = (s << 24) | (s2 << 16) | (s3 << 8) | s;
+        i += 1;
+    }
+    t
+};
+
+const TE3: [u32; 256] = {
+    let mut t = [0u32; 256];
+    let mut i = 0usize;
+    while i < 256 {
+        let s = SBOX[i] as u32;
+        let s2 = xtime(SBOX[i]) as u32;
+        let s3 = (s ^ s2) as u32;
+        // Column: [1·S, 1·S, 3·S, 2·S]
+        t[i] = (s2 << 24) | (s3 << 16) | (s << 8) | s;
+        i += 1;
+    }
+    t
+};
+
+// Inverse T-tables for decryption (InvSubBytes + InvShiftRows + InvMixColumns).
+
+const TD0: [u32; 256] = {
+    let mut t = [0u32; 256];
+    let mut i = 0usize;
+    while i < 256 {
+        let s = SBOX_INV[i] as u32;
+        let s2 = xtime_const(s as u8) as u32;
+        let s4 = xtime_const(s2 as u8) as u32;
+        let s8 = xtime_const(s4 as u8) as u32;
+        let c0 = (s8 ^ s4 ^ s2) as u32; // 0e·S
+        let c1 = (s8 ^ s2 ^ s) as u32; // 0b·S
+        let c2 = (s8 ^ s4 ^ s) as u32; // 0d·S
+        let c3 = (s8 ^ s) as u32; // 09·S
+        // Column: [0e·S, 09·S, 0d·S, 0b·S]  → LE bytes [c0,c3,c2,c1]
+        t[i] = (c1 << 24) | (c2 << 16) | (c3 << 8) | c0;
+        i += 1;
+    }
+    t
+};
+
+const TD1: [u32; 256] = {
+    let mut t = [0u32; 256];
+    let mut i = 0usize;
+    while i < 256 {
+        let s = SBOX_INV[i] as u32;
+        let s2 = xtime_const(s as u8) as u32;
+        let s4 = xtime_const(s2 as u8) as u32;
+        let s8 = xtime_const(s4 as u8) as u32;
+        let c0 = (s8 ^ s4 ^ s2) as u32;
+        let c1 = (s8 ^ s2 ^ s) as u32;
+        let c2 = (s8 ^ s4 ^ s) as u32;
+        let c3 = (s8 ^ s) as u32;
+        // Column: [0b·S, 0e·S, 09·S, 0d·S]
+        t[i] = (c2 << 24) | (c3 << 16) | (c0 << 8) | c1;
+        i += 1;
+    }
+    t
+};
+
+const TD2: [u32; 256] = {
+    let mut t = [0u32; 256];
+    let mut i = 0usize;
+    while i < 256 {
+        let s = SBOX_INV[i] as u32;
+        let s2 = xtime_const(s as u8) as u32;
+        let s4 = xtime_const(s2 as u8) as u32;
+        let s8 = xtime_const(s4 as u8) as u32;
+        let c0 = (s8 ^ s4 ^ s2) as u32;
+        let c1 = (s8 ^ s2 ^ s) as u32;
+        let c2 = (s8 ^ s4 ^ s) as u32;
+        let c3 = (s8 ^ s) as u32;
+        // Column: [0d·S, 0b·S, 0e·S, 09·S]
+        t[i] = (c3 << 24) | (c0 << 16) | (c1 << 8) | c2;
+        i += 1;
+    }
+    t
+};
+
+const TD3: [u32; 256] = {
+    let mut t = [0u32; 256];
+    let mut i = 0usize;
+    while i < 256 {
+        let s = SBOX_INV[i] as u32;
+        let s2 = xtime_const(s as u8) as u32;
+        let s4 = xtime_const(s2 as u8) as u32;
+        let s8 = xtime_const(s4 as u8) as u32;
+        let c0 = (s8 ^ s4 ^ s2) as u32;
+        let c1 = (s8 ^ s2 ^ s) as u32;
+        let c2 = (s8 ^ s4 ^ s) as u32;
+        let c3 = (s8 ^ s) as u32;
+        // Column: [09·S, 0d·S, 0b·S, 0e·S]
+        t[i] = (c0 << 24) | (c1 << 16) | (c2 << 8) | c3;
+        i += 1;
+    }
+    t
+};
+
+/// Const-time gf128 xtime (same logic as xtime but exposed at const level
+/// for use inside const-table generators).
+const fn xtime_const(a: u8) -> u8 {
+    if a & 0x80 != 0 { (a << 1) ^ 0x1b } else { a << 1 }
 }
 
 #[inline(always)]
@@ -242,36 +405,180 @@ fn inv_mix_columns(state: &mut [u8; 16]) {
 
 // ── Pure-Rust AES-256 block encrypt / decrypt ─────────────────────────────────
 
-/// Encrypt one 16-byte block (pure Rust, FIPS 197 §5.1).
+/// Encrypt one 16-byte block using T-table accelerated routine.
+///
+/// Combines SubBytes, ShiftRows, and MixColumns into four 32-bit table lookups
+/// per column, matching the approach used by Go and OpenSSL for software AES.
 pub(crate) fn encrypt_block(rk: &RoundKeys, block: &[u8; 16]) -> [u8; 16] {
-    let mut state = *block;
-    add_round_key(&mut state, &rk[0]);
-    for r in 1..14 {
-        sub_bytes(&mut state);
-        shift_rows(&mut state);
-        mix_columns(&mut state);
-        add_round_key(&mut state, &rk[r]);
+    let mut s = *block;
+
+    // Round 0: AddRoundKey
+    for i in 0..16 {
+        s[i] ^= rk[0][i];
     }
-    sub_bytes(&mut state);
-    shift_rows(&mut state);
-    add_round_key(&mut state, &rk[14]);
-    state
+
+    // Rounds 1..13: SubBytes + ShiftRows + MixColumns + AddRoundKey via T-tables
+    for r in 1..14 {
+        let t0 = TE0[s[0] as usize]
+            ^ TE1[s[5] as usize]
+            ^ TE2[s[10] as usize]
+            ^ TE3[s[15] as usize]
+            ^ u32::from_ne_bytes(rk[r][0..4].try_into().unwrap());
+        let t1 = TE0[s[4] as usize]
+            ^ TE1[s[9] as usize]
+            ^ TE2[s[14] as usize]
+            ^ TE3[s[3] as usize]
+            ^ u32::from_ne_bytes(rk[r][4..8].try_into().unwrap());
+        let t2 = TE0[s[8] as usize]
+            ^ TE1[s[13] as usize]
+            ^ TE2[s[2] as usize]
+            ^ TE3[s[7] as usize]
+            ^ u32::from_ne_bytes(rk[r][8..12].try_into().unwrap());
+        let t3 = TE0[s[12] as usize]
+            ^ TE1[s[1] as usize]
+            ^ TE2[s[6] as usize]
+            ^ TE3[s[11] as usize]
+            ^ u32::from_ne_bytes(rk[r][12..16].try_into().unwrap());
+
+        s[0..4].copy_from_slice(&t0.to_ne_bytes());
+        s[4..8].copy_from_slice(&t1.to_ne_bytes());
+        s[8..12].copy_from_slice(&t2.to_ne_bytes());
+        s[12..16].copy_from_slice(&t3.to_ne_bytes());
+    }
+
+    // Round 14: SubBytes + ShiftRows + AddRoundKey (no MixColumns)
+    s = [
+        SBOX[s[0] as usize] ^ rk[14][0],
+        SBOX[s[5] as usize] ^ rk[14][1],
+        SBOX[s[10] as usize] ^ rk[14][2],
+        SBOX[s[15] as usize] ^ rk[14][3],
+        SBOX[s[4] as usize] ^ rk[14][4],
+        SBOX[s[9] as usize] ^ rk[14][5],
+        SBOX[s[14] as usize] ^ rk[14][6],
+        SBOX[s[3] as usize] ^ rk[14][7],
+        SBOX[s[8] as usize] ^ rk[14][8],
+        SBOX[s[13] as usize] ^ rk[14][9],
+        SBOX[s[2] as usize] ^ rk[14][10],
+        SBOX[s[7] as usize] ^ rk[14][11],
+        SBOX[s[12] as usize] ^ rk[14][12],
+        SBOX[s[1] as usize] ^ rk[14][13],
+        SBOX[s[6] as usize] ^ rk[14][14],
+        SBOX[s[11] as usize] ^ rk[14][15],
+    ];
+    s
 }
 
-/// Decrypt one 16-byte block (pure Rust, FIPS 197 §5.3).
+/// Decrypt one 16-byte block using inverse T-tables.
+///
+/// Note: the inverse T-tables (TD0..TD3) combine InvSubBytes + InvMixColumns.
+/// Because AddRoundKey falls between InvSubBytes and InvMixColumns in the
+/// decryption round, each round key rk[1]..rk[13] must have InvMixColumns
+/// applied to it before the XOR.
 pub(crate) fn decrypt_block(rk: &RoundKeys, block: &[u8; 16]) -> [u8; 16] {
-    let mut state = *block;
-    add_round_key(&mut state, &rk[14]);
-    for r in (1..14).rev() {
-        inv_shift_rows(&mut state);
-        inv_sub_bytes(&mut state);
-        add_round_key(&mut state, &rk[r]);
-        inv_mix_columns(&mut state);
+    let mut s = *block;
+
+    // Round 14 reversed: AddRoundKey
+    for i in 0..16 {
+        s[i] ^= rk[14][i];
     }
-    inv_shift_rows(&mut state);
-    inv_sub_bytes(&mut state);
-    add_round_key(&mut state, &rk[0]);
-    state
+
+    // Rounds 13..1: InvShiftRows + InvSubBytes + AddRoundKey + InvMixColumns via inverse T-tables
+    for r in (1..14).rev() {
+        // Apply InvMixColumns to round key columns for correct T-table XOR
+        let mut rk_adj = rk[r];
+        inv_mix_columns(&mut rk_adj);
+
+        let t0 = TD0[s[0] as usize]
+            ^ TD1[s[13] as usize]
+            ^ TD2[s[10] as usize]
+            ^ TD3[s[7] as usize]
+            ^ u32::from_ne_bytes(rk_adj[0..4].try_into().unwrap());
+        let t1 = TD0[s[4] as usize]
+            ^ TD1[s[1] as usize]
+            ^ TD2[s[14] as usize]
+            ^ TD3[s[11] as usize]
+            ^ u32::from_ne_bytes(rk_adj[4..8].try_into().unwrap());
+        let t2 = TD0[s[8] as usize]
+            ^ TD1[s[5] as usize]
+            ^ TD2[s[2] as usize]
+            ^ TD3[s[15] as usize]
+            ^ u32::from_ne_bytes(rk_adj[8..12].try_into().unwrap());
+        let t3 = TD0[s[12] as usize]
+            ^ TD1[s[9] as usize]
+            ^ TD2[s[6] as usize]
+            ^ TD3[s[3] as usize]
+            ^ u32::from_ne_bytes(rk_adj[12..16].try_into().unwrap());
+
+        s[0..4].copy_from_slice(&t0.to_ne_bytes());
+        s[4..8].copy_from_slice(&t1.to_ne_bytes());
+        s[8..12].copy_from_slice(&t2.to_ne_bytes());
+        s[12..16].copy_from_slice(&t3.to_ne_bytes());
+    }
+
+    // Round 0: InvShiftRows + InvSubBytes + AddRoundKey (no InvMixColumns)
+    s = [
+        SBOX_INV[s[0] as usize] ^ rk[0][0],
+        SBOX_INV[s[13] as usize] ^ rk[0][1],
+        SBOX_INV[s[10] as usize] ^ rk[0][2],
+        SBOX_INV[s[7] as usize] ^ rk[0][3],
+        SBOX_INV[s[4] as usize] ^ rk[0][4],
+        SBOX_INV[s[1] as usize] ^ rk[0][5],
+        SBOX_INV[s[14] as usize] ^ rk[0][6],
+        SBOX_INV[s[11] as usize] ^ rk[0][7],
+        SBOX_INV[s[8] as usize] ^ rk[0][8],
+        SBOX_INV[s[5] as usize] ^ rk[0][9],
+        SBOX_INV[s[2] as usize] ^ rk[0][10],
+        SBOX_INV[s[15] as usize] ^ rk[0][11],
+        SBOX_INV[s[12] as usize] ^ rk[0][12],
+        SBOX_INV[s[9] as usize] ^ rk[0][13],
+        SBOX_INV[s[6] as usize] ^ rk[0][14],
+        SBOX_INV[s[3] as usize] ^ rk[0][15],
+    ];
+    s
+}
+
+/// Reverse bits in each byte of a 16-byte block.
+/// Converts from GCM's big-endian polynomial representation to
+/// PCLMULQDQ's little-endian domain (and vice versa).
+#[inline(always)]
+fn bitreverse_bytes(block: &[u8; 16]) -> [u8; 16] {
+    let mut out = [0u8; 16];
+    for i in 0..16 {
+        out[i] = BIT_REVERSE[block[i] as usize];
+    }
+    out
+}
+
+/// Precompute GHASH powers H¹ through H⁸ in bit-reversed-per-byte form.
+///
+/// Returns `([h1_br..h8_br], h_natural)` where:
+/// - `h1_br`..`h8_br` are in the bit-reversed domain used by hardware GHASH
+/// - `h_natural` is H in the natural big-endian byte order (for software fallback / E(J0))
+///
+/// H⁵..H⁸ are needed for 8-block aggregated GHASH in the hardware paths.
+pub(crate) fn precompute_ghash_powers(key: &[u8; 32]) -> ([[u8; 16]; 8], [u8; 16]) {
+    let rk = key_expand(key);
+    let h = encrypt_block(&rk, &[0u8; 16]);
+    let h2 = gf128_mul(&h, &h);
+    let h3 = gf128_mul(&h2, &h);
+    let h4 = gf128_mul(&h3, &h);
+    let h5 = gf128_mul(&h4, &h);
+    let h6 = gf128_mul(&h5, &h);
+    let h7 = gf128_mul(&h6, &h);
+    let h8 = gf128_mul(&h7, &h);
+    (
+        [
+            bitreverse_bytes(&h),
+            bitreverse_bytes(&h2),
+            bitreverse_bytes(&h3),
+            bitreverse_bytes(&h4),
+            bitreverse_bytes(&h5),
+            bitreverse_bytes(&h6),
+            bitreverse_bytes(&h7),
+            bitreverse_bytes(&h8),
+        ],
+        h,
+    )
 }
 
 // ── GF(2^128) arithmetic for GHASH ───────────────────────────────────────────
@@ -318,32 +625,109 @@ pub(crate) fn gf128_mul(x: &[u8; 16], h: &[u8; 16]) -> [u8; 16] {
     z.to_be_bytes()
 }
 
+// ── GHASH table-based GF(2¹²⁸) multiplication ────────────────────────────────
+//
+// Precomputes 16 multiples of H (0×H through 15×H) and uses them as a nibble
+// lookup table. Each byte of the multiplicand X is split into two 4-bit nibbles;
+// the accumulator is shifted by 4 field bits (gf128_mul_x applied 4 times)
+// per nibble, then XOR'd with the table entry. This reduces GF(2¹²⁸)
+// multiplication from 128 iterations (bit-by-bit) to 32 iterations
+// (nibble-by-nibble).
+
+/// Table of 16 precomputed GHASH field elements (0×H through 15×H).
+pub(crate) type GhashTable = [[u8; 16]; 16];
+
+/// Build a nibble-lookup table for a given GHASH subkey H.
+///
+/// Each nibble value n (0..15, bits n3..n0 where n3=MSB) corresponds to
+/// GCM polynomial x^0·n3 + x^1·n2 + x^2·n1 + x^3·n0.
+/// The table entry table[n] = n_as_polynomial · H.
+pub(crate) fn precompute_ghash_table(h: &[u8; 16]) -> GhashTable {
+    let mut tab = [[0u8; 16]; 16];
+    let h_val = u128::from_be_bytes(*h);
+    // n=8 = 0b1000 → poly = x^0 → H
+    tab[8] = *h;
+    // n=4 = 0b0100 → poly = x^1 → H·x
+    tab[4] = gf128_mul_x(h_val).to_be_bytes();
+    // n=2 = 0b0010 → poly = x^2 → H·x²
+    tab[2] = gf128_mul_x(gf128_mul_x(h_val)).to_be_bytes();
+    // n=1 = 0b0001 → poly = x^3 → H·x³
+    tab[1] = gf128_mul_x(gf128_mul_x(gf128_mul_x(h_val))).to_be_bytes();
+
+    fn be(x: &[u8; 16]) -> u128 {
+        u128::from_be_bytes(*x)
+    }
+    fn tobe(x: u128) -> [u8; 16] {
+        x.to_be_bytes()
+    }
+
+    tab[12] = tobe(be(&tab[8]) ^ be(&tab[4])); // 1100
+    tab[10] = tobe(be(&tab[8]) ^ be(&tab[2])); // 1010
+    tab[9] = tobe(be(&tab[8]) ^ be(&tab[1])); // 1001
+    tab[6] = tobe(be(&tab[4]) ^ be(&tab[2])); // 0110
+    tab[5] = tobe(be(&tab[4]) ^ be(&tab[1])); // 0101
+    tab[3] = tobe(be(&tab[2]) ^ be(&tab[1])); // 0011
+    tab[14] = tobe(be(&tab[12]) ^ be(&tab[2])); // 1110
+    tab[13] = tobe(be(&tab[12]) ^ be(&tab[1])); // 1101
+    tab[11] = tobe(be(&tab[10]) ^ be(&tab[1])); // 1011
+    tab[7] = tobe(be(&tab[6]) ^ be(&tab[1])); // 0111
+    tab[15] = tobe(be(&tab[14]) ^ be(&tab[1])); // 1111
+    tab
+}
+
+/// Multiply X by H using a precomputed nibble-lookup table.
+///
+/// Processes nibbles from LSB (last nibble) to MSB (first nibble) with
+/// shift-before-XOR, so the most-significant nibble accumulates the
+/// fewest shifts. This matches the bit-by-bit GF(2¹²⁸) multiplication
+/// algorithm where later bits (higher x-powers) are shifted more.
+#[inline]
+fn ghash_mul_table(table: &GhashTable, x: &[u8; 16]) -> [u8; 16] {
+    let mut z = 0u128;
+    // Iterate bytes from last (LSB = byte 15) to first (MSB = byte 0),
+    // and within each byte process low nibble first (bits 3..0 = higher x-powers),
+    // then high nibble (bits 7..4 = lower x-powers).
+    for &byte in x.iter().rev() {
+        let hi = (byte >> 4) as usize;
+        let lo = (byte & 0xf) as usize;
+        for _ in 0..4 {
+            z = gf128_mul_x(z);
+        }
+        z ^= u128::from_be_bytes(table[lo]);
+        for _ in 0..4 {
+            z = gf128_mul_x(z);
+        }
+        z ^= u128::from_be_bytes(table[hi]);
+    }
+    z.to_be_bytes()
+}
+
 // ── GHASH ─────────────────────────────────────────────────────────────────────
 
 /// Update a running GHASH state by XOR-ing one 16-byte block and multiplying
 /// by H (NIST SP 800-38D §6.4).
 #[inline(always)]
-fn ghash_block(state: &mut [u8; 16], h: &[u8; 16], block: &[u8; 16]) {
+fn ghash_block(state: &mut [u8; 16], table: &GhashTable, block: &[u8; 16]) {
     for i in 0..16 {
         state[i] ^= block[i];
     }
-    let new = gf128_mul(state, h);
+    let new = ghash_mul_table(table, state);
     *state = new;
 }
 
 /// Feed an arbitrarily-sized byte slice into GHASH, zero-padding the last
 /// block if necessary.
-fn ghash_update(state: &mut [u8; 16], h: &[u8; 16], data: &[u8]) {
+fn ghash_update(state: &mut [u8; 16], table: &GhashTable, data: &[u8]) {
     let mut chunks = data.chunks_exact(16);
     for chunk in chunks.by_ref() {
         let block: [u8; 16] = chunk.try_into().unwrap();
-        ghash_block(state, h, &block);
+        ghash_block(state, table, &block);
     }
     let rem = chunks.remainder();
     if !rem.is_empty() {
         let mut padded = [0u8; 16];
         padded[..rem.len()].copy_from_slice(rem);
-        ghash_block(state, h, &padded);
+        ghash_block(state, table, &padded);
     }
 }
 
@@ -380,19 +764,19 @@ fn ctr_encrypt(rk: &RoundKeys, in_out: &mut [u8], counter: &mut [u8; 16]) {
 
 /// Compute the GCM authentication tag (pure Rust).
 ///
-/// `h`   – GHASH subkey = AES_K(0^128)
-/// `ej0` – E(J0) used to mask the final GHASH output
-fn compute_tag(h: &[u8; 16], aad: &[u8], ciphertext: &[u8], ej0: &[u8; 16]) -> [u8; 16] {
+/// `table` – GHASH nibble-lookup table (derived from H = AES_K(0^128))
+/// `ej0`   – E(J0) used to mask the final GHASH output
+fn compute_tag(table: &GhashTable, aad: &[u8], ciphertext: &[u8], ej0: &[u8; 16]) -> [u8; 16] {
     let mut state = [0u8; 16];
 
-    ghash_update(&mut state, h, aad);
-    ghash_update(&mut state, h, ciphertext);
+    ghash_update(&mut state, table, aad);
+    ghash_update(&mut state, table, ciphertext);
 
     // Length block: len(A) || len(C) in bits as two 64-bit big-endian integers
     let mut len_block = [0u8; 16];
     len_block[..8].copy_from_slice(&((aad.len() as u64) * 8).to_be_bytes());
     len_block[8..].copy_from_slice(&((ciphertext.len() as u64) * 8).to_be_bytes());
-    ghash_block(&mut state, h, &len_block);
+    ghash_block(&mut state, table, &len_block);
 
     // Tag = GHASH ^ E(J0)
     for i in 0..16 {
@@ -403,12 +787,36 @@ fn compute_tag(h: &[u8; 16], aad: &[u8], ciphertext: &[u8], ej0: &[u8; 16]) -> [
 
 // ── Public struct ─────────────────────────────────────────────────────────────
 
-/// AES-256-GCM authenticated cipher (pure-Rust implementation).
+/// AES-256-GCM authenticated cipher.
 ///
 /// On x86-64 machines with AES-NI + PCLMULQDQ the methods automatically
 /// dispatch to the hardware-accelerated path (see `aes256_amd64`).
+///
+/// The struct stores **only** the round keys native to the target architecture.
+/// - x86_64: stores `round_keys_ni` (`[__m128i; 15]`) + precomputed GHASH powers
+/// - aarch64: stores `round_keys_arm` (`[uint8x16_t; 15]`) + precomputed GHASH powers
+/// - other: stores `round_keys` (`[[u8; 16]; 15]`)
+///
+/// The raw 32-byte key is retained so the software fallback can recompute
+/// the expanded key on the rare occasion the hardware path is unavailable.
 pub struct Aes256Gcm {
     pub(crate) key: [u8; 32],
+    /// x86_64 AES-NI round keys (precomputed in `new()`).
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) round_keys_ni: [__m128i; 15],
+    /// Precomputed GHASH powers [H, H², H³, H⁴] in bit-reversed-per-byte form.
+    /// Used by 4-block aggregated GHASH to avoid recomputing H on every call.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) h_powers: [__m128i; 8],
+    /// aarch64 ARMv8 round keys (precomputed in `new()`).
+    #[cfg(target_arch = "aarch64")]
+    pub(crate) round_keys_arm: [core::arch::aarch64::uint8x16_t; 15],
+    /// Precomputed GHASH powers [H¹..H⁸] in bit-reversed-per-byte form.
+    /// Used by 8-block aggregated GHASH to avoid recomputing H on every call.
+    #[cfg(target_arch = "aarch64")]
+    pub(crate) h_powers: [core::arch::aarch64::uint8x16_t; 8],
+    /// Software round keys (targets without hardware acceleration).
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     pub(crate) round_keys: RoundKeys,
 }
 
@@ -419,10 +827,57 @@ impl Aes256Gcm {
     const MAX_GCM_LEN: usize = (u32::MAX as usize - 1) * 16;
 
     /// Create a new `Aes256Gcm` instance from a 32-byte key.
+    ///
+    /// Precomputes the target-specific round keys and GHASH powers (H, H², H³, H⁴)
+    /// using software GF(2¹²⁸) multiplication, so `new()` is safe on any CPU
+    /// and does not require hardware feature detection.
     pub fn new(key: &[u8; 32]) -> Self {
-        Aes256Gcm {
-            key: *key,
-            round_keys: key_expand(key),
+        #[cfg(target_arch = "x86_64")]
+        {
+            use core::arch::x86_64::*;
+            let rk_soft = key_expand(key);
+            let mut rk = [_mm_setzero_si128(); 15];
+            for i in 0..15 {
+                rk[i] = unsafe { _mm_loadu_si128(rk_soft[i].as_ptr().cast()) };
+            }
+            let (h_powers_bytes, _h) = precompute_ghash_powers(key);
+            let mut h_powers = [_mm_setzero_si128(); 8];
+            for i in 0..8 {
+                h_powers[i] = unsafe { _mm_loadu_si128(h_powers_bytes[i].as_ptr().cast()) };
+            }
+            Aes256Gcm {
+                key: *key,
+                round_keys_ni: rk,
+                h_powers,
+            }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            use core::arch::aarch64::*;
+            let rk_soft = key_expand(key);
+            let mut rk = [unsafe { vdupq_n_u8(0) }; 15];
+            for i in 0..15 {
+                rk[i] = unsafe { vld1q_u8(rk_soft[i].as_ptr()) };
+            }
+            let (h_powers_bytes, _h) = precompute_ghash_powers(key);
+            let mut h_powers = [unsafe { vdupq_n_u8(0) }; 8];
+            for i in 0..8 {
+                h_powers[i] = unsafe { vld1q_u8(h_powers_bytes[i].as_ptr()) };
+            }
+            Aes256Gcm {
+                key: *key,
+                round_keys_arm: rk,
+                h_powers,
+            }
+        }
+
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            Aes256Gcm {
+                key: *key,
+                round_keys: key_expand(key),
+            }
         }
     }
 
@@ -437,7 +892,7 @@ impl Aes256Gcm {
         #[cfg(target_arch = "aarch64")]
         {
             use crate::aes::aes256_arm64::encrypt_armv8;
-            unsafe { return encrypt_armv8(&self.key, in_out, nonce, aad) }
+            unsafe { return encrypt_armv8(&self.round_keys_arm, &self.h_powers, in_out, nonce, aad) }
         }
 
         // runtime detection of CPU features for x86 and x86_64 when the "std" feature is enabled
@@ -451,7 +906,7 @@ impl Aes256Gcm {
                     && std::arch::is_x86_feature_detected!("ssse3")
                     && std::arch::is_x86_feature_detected!("sse4.1")
                 {
-                    unsafe { return encrypt_aesni(&self.key, in_out, nonce, aad) }
+                    unsafe { return encrypt_aesni(&self.round_keys_ni, &self.h_powers, in_out, nonce, aad) }
                 }
             }
         }
@@ -467,7 +922,7 @@ impl Aes256Gcm {
             {
                 use crate::aes::aes256_amd64::encrypt_aesni;
                 unsafe {
-                    return encrypt_aesni(&self.key, in_out, nonce, aad);
+                    return encrypt_aesni(&self.round_keys_ni, &self.h_powers, in_out, nonce, aad);
                 }
             }
         }
@@ -491,7 +946,7 @@ impl Aes256Gcm {
         #[cfg(target_arch = "aarch64")]
         {
             use crate::aes::aes256_arm64::decrypt_armv8;
-            unsafe { return decrypt_armv8(&self.key, in_out, tag, nonce, aad) }
+            unsafe { return decrypt_armv8(&self.round_keys_arm, &self.h_powers, in_out, tag, nonce, aad) }
         }
 
         #[cfg(feature = "std")]
@@ -504,7 +959,7 @@ impl Aes256Gcm {
                     && std::arch::is_x86_feature_detected!("ssse3")
                     && std::arch::is_x86_feature_detected!("sse4.1")
                 {
-                    unsafe { return decrypt_aesni(&self.key, in_out, tag, nonce, aad) }
+                    unsafe { return decrypt_aesni(&self.round_keys_ni, &self.h_powers, in_out, tag, nonce, aad) }
                 }
             }
         }
@@ -520,7 +975,7 @@ impl Aes256Gcm {
             {
                 use crate::aes::aes256_amd64::decrypt_aesni;
                 unsafe {
-                    return decrypt_aesni(&self.key, in_out, tag, nonce, aad);
+                    return decrypt_aesni(&self.round_keys_ni, &self.h_powers, in_out, tag, nonce, aad);
                 }
             }
         }
@@ -529,27 +984,32 @@ impl Aes256Gcm {
     }
 
     /// Pure-Rust encrypt implementation.
+    ///
+    /// The expanded key is recomputed here because on x86_64/aarch64 we store
+    /// only the hardware-specific keys. This path is only reached when
+    /// the hardware accelerator is unavailable, so the overhead is negligible.
     pub(crate) fn encrypt_in_place_soft(&self, in_out: &mut [u8], nonce: &[u8; 12], aad: &[u8]) -> [u8; 16] {
         assert!(
             in_out.len() <= Self::MAX_GCM_LEN,
             "GCM plaintext exceeds maximum allowed length (2^32 - 2 blocks)"
         );
-        let rk = &self.round_keys;
-        let h = encrypt_block(rk, &[0u8; 16]);
+        let rk = key_expand(&self.key);
+        let h = encrypt_block(&rk, &[0u8; 16]);
+        let ghash_table = precompute_ghash_table(&h);
 
         // J0 = nonce || 0x00000001
         let mut j0 = [0u8; 16];
         j0[..12].copy_from_slice(nonce);
         j0[15] = 1;
 
-        let ej0 = encrypt_block(rk, &j0);
+        let ej0 = encrypt_block(&rk, &j0);
 
         // CTR starts at J0 + 1 (= nonce || 0x00000002)
         let mut ctr = j0;
         ctr_inc(&mut ctr);
 
-        ctr_encrypt(rk, in_out, &mut ctr);
-        compute_tag(&h, aad, in_out, &ej0)
+        ctr_encrypt(&rk, in_out, &mut ctr);
+        compute_tag(&ghash_table, aad, in_out, &ej0)
     }
 
     /// Pure-Rust decrypt implementation.
@@ -563,17 +1023,18 @@ impl Aes256Gcm {
         if in_out.len() > Self::MAX_GCM_LEN {
             return Err(AeadError::InvalidCiphertext);
         }
-        let rk = &self.round_keys;
-        let h = encrypt_block(rk, &[0u8; 16]);
+        let rk = key_expand(&self.key);
+        let h = encrypt_block(&rk, &[0u8; 16]);
+        let ghash_table = precompute_ghash_table(&h);
 
         let mut j0 = [0u8; 16];
         j0[..12].copy_from_slice(nonce);
         j0[15] = 1;
 
-        let ej0 = encrypt_block(rk, &j0);
+        let ej0 = encrypt_block(&rk, &j0);
 
         // Verify tag before decrypting (authenticate-then-decrypt ordering)
-        let expected_tag = compute_tag(&h, aad, in_out, &ej0);
+        let expected_tag = compute_tag(&ghash_table, aad, in_out, &ej0);
 
         // Constant-time comparison to avoid timing oracle
         let mut diff = 0u8;
@@ -586,7 +1047,7 @@ impl Aes256Gcm {
 
         let mut ctr = j0;
         ctr_inc(&mut ctr);
-        ctr_encrypt(rk, in_out, &mut ctr);
+        ctr_encrypt(&rk, in_out, &mut ctr);
 
         Ok(())
     }

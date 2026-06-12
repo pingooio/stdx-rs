@@ -3,6 +3,7 @@ use constant_time_eq::constant_time_eq;
 /// A fixed-capacity, stack-allocated bytes buffer of capacity `N`.
 /// Use [`Self::as_ref`] to get the bytes as a `&[u8]` and [`Self::as_mut`] to get the bytes as a `&mut [u8]`.
 /// Comparing `Bytes` is a constant-time operation.
+#[derive(Clone)]
 #[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
 pub struct Bytes<const N: usize> {
     bytes: [u8; N],
@@ -20,6 +21,11 @@ impl<const N: usize> Bytes<N> {
     }
 
     #[inline]
+    pub fn len(&self) -> usize {
+        return self.length as usize;
+    }
+
+    #[inline]
     pub(crate) fn with_length(length: usize) -> Bytes<N> {
         assert!(N <= u16::MAX as usize && length <= u16::MAX as usize);
         assert!(length <= N, "length exceeds capacity");
@@ -27,11 +33,6 @@ impl<const N: usize> Bytes<N> {
             bytes: [0u8; N],
             length: length as u16,
         };
-    }
-
-    #[inline]
-    pub fn len(&self) -> usize {
-        return self.length as usize;
     }
 
     pub(crate) fn push(&mut self, byte: u8) {
@@ -69,3 +70,55 @@ impl<const N: usize> AsMut<[u8]> for Bytes<N> {
         &mut self.bytes[..self.length as usize]
     }
 }
+
+/// A stack-allocated bytes buffer.
+/// Use [`Self::as_ref`] to get the bytes as a `&[u8]` and [`Self::as_mut`] to get the bytes as a `&mut [u8]`.
+/// Comparing `Hash` is a constant-time operation.
+#[derive(Clone)]
+#[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
+pub struct Hash(pub(crate) Bytes<64>);
+
+/// A stack-allocated bytes buffer.
+/// Use [`Self::as_ref`] to get the bytes as a `&[u8]` and [`Self::as_mut`] to get the bytes as a `&mut [u8]`.
+/// Comparing `Tag` is a constant-time operation.
+#[derive(Clone)]
+#[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
+pub struct Tag(pub(crate) Bytes<32>);
+
+/// implement the required public methods for `Type` to be used as a bytes buffer.
+macro_rules! impl_bytes {
+    ($name:ident($inner:ty)) => {
+        impl $name {
+            #[inline]
+            pub fn len(&self) -> usize {
+                self.0.len()
+            }
+        }
+
+        impl AsRef<[u8]> for $name {
+            #[inline]
+            fn as_ref(&self) -> &[u8] {
+                self.0.as_ref()
+            }
+        }
+
+        impl AsMut<[u8]> for $name {
+            #[inline]
+            fn as_mut(&mut self) -> &mut [u8] {
+                self.0.as_mut()
+            }
+        }
+
+        impl PartialEq for $name {
+            #[inline]
+            fn eq(&self, other: &Self) -> bool {
+                self.0 == other.0
+            }
+        }
+
+        impl Eq for $name {}
+    };
+}
+
+impl_bytes!(Tag(Bytes<32>));
+impl_bytes!(Hash(Bytes<64>));

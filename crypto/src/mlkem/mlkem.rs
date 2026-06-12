@@ -839,16 +839,18 @@ fn barrett_reduce(a: i16) -> i16 {
 
 #[inline]
 fn hash_h(data: &[u8]) -> [u8; 32] {
+    use crate::Hasher;
     let mut hasher = Sha3_256::new();
-    hasher.write(data);
-    hasher.sum()
+    hasher.update(data);
+    hasher.sum().as_ref().try_into().unwrap()
 }
 
 #[inline]
 fn hash_g(data: &[u8]) -> [u8; 64] {
+    use crate::Hasher;
     let mut hasher = Sha3_512::new();
-    hasher.write(data);
-    hasher.sum()
+    hasher.update(data);
+    hasher.sum().as_ref().try_into().unwrap()
 }
 
 #[inline]
@@ -967,9 +969,10 @@ pub(crate) fn decode_hex_array<const N: usize>(s: &str) -> [u8; N] {
 
 #[cfg(test)]
 pub(crate) fn sha3_256_hex(data: &[u8]) -> String {
+    use crate::Hasher;
     let mut hasher = Sha3_256::new();
-    hasher.write(data);
-    hex::encode(hasher.sum())
+    hasher.update(data);
+    hex::encode(hasher.sum().as_ref())
 }
 
 #[cfg(test)]

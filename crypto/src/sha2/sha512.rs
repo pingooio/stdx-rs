@@ -2,7 +2,7 @@
 use super::sha512_amd64;
 #[cfg(target_arch = "aarch64")]
 use super::sha512_arm64;
-use crate::{Hash, Hasher};
+use crate::{Bytes, Hash, Hasher};
 
 pub(crate) const SHA512_K: [u64; 80] = [
     0x428a2f98d728ae22,
@@ -191,12 +191,12 @@ impl Hasher for Sha512 {
             process_block(&mut self.state, chunk.try_into().unwrap());
         }
 
-        let mut hash = Hash::new();
+        let mut hash = Bytes::<64>::new();
         for word in self.state.iter() {
             hash.append(&word.to_be_bytes());
         }
 
-        return hash;
+        return Hash(hash);
     }
 }
 

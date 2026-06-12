@@ -1077,7 +1077,7 @@ mod tests {
     use hex;
 
     use super::*;
-    use crate::sha3::Sha3_256;
+    use crate::{Hasher, sha3::Sha3_256};
 
     #[test]
     fn test_ml_dsa_65_roundtrip() {
@@ -1273,7 +1273,7 @@ mod tests {
 
             let vk_hash = hex::encode({
                 let mut h = Sha3_256::new();
-                h.write(&pk);
+                h.update(&pk);
                 h.sum()
             });
             assert_eq!(
@@ -1285,7 +1285,7 @@ mod tests {
 
             let sig_hash = hex::encode({
                 let mut h = Sha3_256::new();
-                h.write(&sig);
+                h.update(&sig);
                 h.sum()
             });
             assert_eq!(

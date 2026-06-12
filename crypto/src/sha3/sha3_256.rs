@@ -1,5 +1,5 @@
 use super::keccak::Keccak;
-use crate::{Hash, Hasher};
+use crate::{Bytes, Hash, Hasher};
 
 const SHA3_256_RATE: usize = 136;
 const SHA3_256_DOMAIN_SEPARATOR: u8 = 0x06;
@@ -19,11 +19,11 @@ const SHA3_256_DOMAIN_SEPARATOR: u8 = 0x06;
 /// # Incremental API
 ///
 /// ```ignore
-/// use crypto::sha3::Sha3_256;
+/// use crypto::{Hasher, sha3::Sha3_256};
 ///
 /// let mut hasher = Sha3_256::new();
-/// hasher.write(b"hello ");
-/// hasher.write(b"world");
+/// hasher.update(b"hello ");
+/// hasher.update(b"world");
 /// let hash = hasher.sum();
 /// ```
 #[derive(Clone)]
@@ -39,18 +39,6 @@ impl Sha3_256 {
             keccak: Keccak::new(SHA3_256_RATE, SHA3_256_DOMAIN_SEPARATOR),
         };
     }
-
-    #[inline]
-    pub fn write(&mut self, data: &[u8]) {
-        self.keccak.absorb(data);
-    }
-
-    #[inline]
-    pub fn sum(mut self) -> [u8; 32] {
-        let mut output = [0u8; 32];
-        self.keccak.squeeze(&mut output);
-        return output;
-    }
 }
 
 impl Hasher for Sha3_256 {
@@ -64,14 +52,14 @@ impl Hasher for Sha3_256 {
 
     #[inline]
     fn update(&mut self, data: &[u8]) {
-        self.write(data);
+        self.keccak.absorb(data);
     }
 
     #[inline]
     fn sum(mut self) -> Hash {
-        let mut hash = Hash::with_length(Self::OUTPUT_SIZE);
+        let mut hash = Bytes::<64>::with_length(Self::OUTPUT_SIZE);
         self.keccak.squeeze(hash.as_mut());
-        return hash;
+        return Hash(hash);
     }
 }
 
@@ -109,18 +97,18 @@ mod tests {
     #[test]
     fn known_vectors_single_update() {
         for (input, expected) in vectors_sha3_256() {
-            assert_eq!(hex::encode(Sha3_256::hash(&input)), expected);
+            assert_eq!(hex::encode(<Sha3_256 as Hasher>::hash(&input)), expected);
         }
     }
 
     #[test]
     fn known_vectors_incremental() {
         for (input, expected) in vectors_sha3_256() {
-            let mut sha3_256 = Sha3_256::new();
+            let mut sha3_256 = <Sha3_256 as Hasher>::new();
             for chunk in input.chunks(7) {
-                sha3_256.write(chunk);
+                sha3_256.update(chunk);
             }
-            assert_eq!(hex::encode(sha3_256.sum()), expected);
+            assert_eq!(hex::encode(sha3_256.sum().as_ref()), expected);
         }
     }
 
