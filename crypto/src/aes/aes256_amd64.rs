@@ -1,3 +1,5 @@
+#![allow(unsafe_op_in_unsafe_fn)]
+
 /// x86-64 AES-256-GCM using AES-NI and PCLMULQDQ intrinsics.
 ///
 /// ## Representations
@@ -83,16 +85,20 @@ unsafe fn aes256_enc(rk: &RoundKeysNi, block: __m128i) -> __m128i {
 
 /// Reduce a 256-bit carry-less product `(lo, hi)` modulo P = x^128+x^7+x^2+x+1.
 ///
-/// Uses the 2-pclmulqdq reduction from the Intel GCM whitepaper
-/// (Gueron & Kounavis 2014 revision), which replaces one `pclmulqdq`
-/// with a cheaper `pshufd` compared to the naive 3-pclmulqdq approach.
+/// Uses the standard 3-pclmulqdq reduction.  A 2-pclmulqdq variant exists
+/// (Intel GCM whitepaper) but the shuffle it relies on is not equivalent
+/// to the required `<< 64` shift, so we use the 3-step form which is
+/// correct and matches the ARM64 implementation.
 #[target_feature(enable = "pclmulqdq,sse2")]
 #[inline]
 unsafe fn gcm_reduce(lo: __m128i, hi: __m128i) -> __m128i {
     let poly = _mm_set_epi64x(0, 0x87_i64);
-    let t0 = _mm_clmulepi64_si128(hi, poly, 0x00);
-    let t1 = _mm_clmulepi64_si128(_mm_shuffle_epi32(hi, 0x4e), poly, 0x00);
-    _mm_xor_si128(lo, _mm_xor_si128(t0, _mm_shuffle_epi32(t1, 0x4e)))
+    let t1 = _mm_clmulepi64_si128(hi, poly, 0x00);
+    let t2 = _mm_clmulepi64_si128(_mm_shuffle_epi32(hi, 0x4e), poly, 0x00);
+    let t2_lo = _mm_slli_si128(t2, 8);
+    let t2_hi = _mm_srli_si128(t2, 8);
+    let t3 = _mm_clmulepi64_si128(t2_hi, poly, 0x00);
+    _mm_xor_si128(_mm_xor_si128(lo, t1), _mm_xor_si128(t2_lo, t3))
 }
 
 /// Multiply two GCM elements (both already byte-swapped) using Karatsuba + PCLMULQDQ.
@@ -244,7 +250,7 @@ const SWAP_BYTES: [i8; 16] = [3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 
 unsafe fn ctr_inc(ctr: __m128i) -> __m128i {
     let swap = _mm_loadu_si128(SWAP_BYTES.as_ptr().cast());
     let le = _mm_shuffle_epi8(ctr, swap);
-    let inc = _mm_add_epi32(le, _mm_set_epi32(0, 0, 0, 1));
+    let inc = _mm_add_epi32(le, _mm_set_epi32(1, 0, 0, 0));
     _mm_shuffle_epi8(inc, swap)
 }
 
@@ -291,13 +297,13 @@ pub(crate) unsafe fn encrypt_aesni(
     let swap = _mm_loadu_si128(SWAP_BYTES.as_ptr().cast());
     let mut base = _mm_shuffle_epi8(ctr, swap);
     let zero = _mm_setzero_si128();
-    let one = _mm_set_epi32(0, 0, 0, 1);
-    let two = _mm_set_epi32(0, 0, 0, 2);
-    let three = _mm_set_epi32(0, 0, 0, 3);
-    let four = _mm_set_epi32(0, 0, 0, 4);
-    let five = _mm_set_epi32(0, 0, 0, 5);
-    let six = _mm_set_epi32(0, 0, 0, 6);
-    let seven = _mm_set_epi32(0, 0, 0, 7);
+    let one = _mm_set_epi32(1, 0, 0, 0);
+    let two = _mm_set_epi32(2, 0, 0, 0);
+    let three = _mm_set_epi32(3, 0, 0, 0);
+    let four = _mm_set_epi32(4, 0, 0, 0);
+    let five = _mm_set_epi32(5, 0, 0, 0);
+    let six = _mm_set_epi32(6, 0, 0, 0);
+    let seven = _mm_set_epi32(7, 0, 0, 0);
 
     let mut state = _mm_setzero_si128();
     // AAD (single-block GHASH, usually short)
@@ -355,7 +361,7 @@ pub(crate) unsafe fn encrypt_aesni(
 
         state = ghash_8blocks(state, ct1, ct2, ct3, ct4, ct5, ct6, ct7, ct8, h_powers);
 
-        base = _mm_add_epi32(base, _mm_set_epi32(0, 0, 0, 8));
+        base = _mm_add_epi32(base, _mm_set_epi32(8, 0, 0, 0));
         i += 128;
     }
 
@@ -528,13 +534,13 @@ pub(crate) unsafe fn decrypt_aesni(
     let mut ctr = ctr_inc(j0);
     let mut base = _mm_shuffle_epi8(ctr, swap);
     let zero_offset = _mm_setzero_si128();
-    let one = _mm_set_epi32(0, 0, 0, 1);
-    let two = _mm_set_epi32(0, 0, 0, 2);
-    let three = _mm_set_epi32(0, 0, 0, 3);
-    let four = _mm_set_epi32(0, 0, 0, 4);
-    let five = _mm_set_epi32(0, 0, 0, 5);
-    let six = _mm_set_epi32(0, 0, 0, 6);
-    let seven = _mm_set_epi32(0, 0, 0, 7);
+    let one = _mm_set_epi32(1, 0, 0, 0);
+    let two = _mm_set_epi32(2, 0, 0, 0);
+    let three = _mm_set_epi32(3, 0, 0, 0);
+    let four = _mm_set_epi32(4, 0, 0, 0);
+    let five = _mm_set_epi32(5, 0, 0, 0);
+    let six = _mm_set_epi32(6, 0, 0, 0);
+    let seven = _mm_set_epi32(7, 0, 0, 0);
 
     let mut i = 0;
     while i + 128 <= n {
@@ -574,7 +580,7 @@ pub(crate) unsafe fn decrypt_aesni(
         _mm_storeu_si128(in_out.as_mut_ptr().add(i + 96).cast(), _mm_xor_si128(ct7, k7));
         _mm_storeu_si128(in_out.as_mut_ptr().add(i + 112).cast(), _mm_xor_si128(ct8, k8));
 
-        base = _mm_add_epi32(base, _mm_set_epi32(0, 0, 0, 8));
+        base = _mm_add_epi32(base, _mm_set_epi32(8, 0, 0, 0));
         i += 128;
     }
 
