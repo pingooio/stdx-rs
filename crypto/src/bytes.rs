@@ -75,6 +75,7 @@ impl<const N: usize> AsMut<[u8]> for Bytes<N> {
 /// Use [`Self::as_ref`] to get the bytes as a `&[u8]` and [`Self::as_mut`] to get the bytes as a `&mut [u8]`.
 /// Comparing `Hash` is a constant-time operation.
 #[derive(Clone)]
+#[repr(transparent)]
 #[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
 pub struct Hash(pub(crate) Bytes<64>);
 
@@ -82,6 +83,7 @@ pub struct Hash(pub(crate) Bytes<64>);
 /// Use [`Self::as_ref`] to get the bytes as a `&[u8]` and [`Self::as_mut`] to get the bytes as a `&mut [u8]`.
 /// Comparing `Tag` is a constant-time operation.
 #[derive(Clone)]
+#[repr(transparent)]
 #[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
 pub struct Tag(pub(crate) Bytes<32>);
 

@@ -121,7 +121,7 @@ impl Hasher for Sha256 {
     }
 }
 
-#[inline]
+#[inline(always)]
 #[allow(unreachable_code)]
 fn process_block(state: &mut [u32; 8], block: &[u8; 64]) {
     #[cfg(target_arch = "x86_64")]

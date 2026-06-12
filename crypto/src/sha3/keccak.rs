@@ -144,7 +144,9 @@ impl<const ROUNDS: usize> Keccak<ROUNDS> {
 /// The Keccak-p sponge function for a 1600-bit state
 #[allow(unreachable_code)]
 pub fn p1600<const ROUNDS: usize>(state: &mut [u64; 25]) {
-    debug_assert!(ROUNDS <= 24, "A round_count greater than 24 is not supported.");
+    const {
+        assert!(ROUNDS <= 24, "A round_count greater than 24 is not supported.");
+    }
 
     // we assume that the SHA-3 instructions are always preseent for aarch64
     #[cfg(target_arch = "aarch64")]
