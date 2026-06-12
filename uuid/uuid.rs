@@ -33,7 +33,7 @@
 //! assert_eq!(v7.version(), Version::V7);
 //! ```
 
-use core::fmt;
+use core::{fmt, str::FromStr};
 
 mod hex;
 
@@ -100,6 +100,134 @@ impl fmt::Display for Error {
 
 #[cfg(feature = "std")]
 impl std::error::Error for Error {}
+
+#[cfg(feature = "std")]
+impl Uuid {
+    /// Generate a new version 4 (random) UUID.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use uuid::{Uuid, Version};
+    ///
+    /// let uuid = Uuid::new_v4();
+    /// assert_eq!(uuid.version(), Version::V4);
+    /// ```
+    #[inline]
+    pub fn new_v4() -> Uuid {
+        let mut uuid = Uuid(rand::random());
+
+        // Set version nibble (bits 48-51) to 0100 (4)
+        uuid.0[6] = (uuid.0[6] & 0x0f) | 0x40;
+
+        // Set variant bits (bits 64-65) to 10
+        uuid.0[8] = (uuid.0[8] & 0x3f) | 0x80;
+
+        uuid
+    }
+
+    /// Generate a new version 7 UUID with a 32-bit monotonic counter.
+    ///
+    /// The 48-bit timestamp is milliseconds since the Unix epoch.
+    /// A 32-bit monotonic counter occupies `rand_a` (12 bits) and the
+    /// most-significant 20 bits of `rand_b`, guaranteeing up to
+    /// 2³² UUIDs within a single millisecond per thread (per
+    /// RFC 9562 §6.2, Method 1).
+    ///
+    /// The counter is seeded with 31 random bits each time the
+    /// timestamp advances and incremented on repeated calls within
+    /// the same millisecond. If the counter does overflow, this
+    /// function spin-waits for the next millisecond tick.
+    ///
+    /// The 128-bit layout follows RFC 9562:
+    ///
+    /// ```text
+    ///  0                   1                   2                   3
+    ///  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    /// |                           unix_ts_ms                          |
+    /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    /// |          unix_ts_ms           |  ver  |       rand_a          |
+    /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    /// |var|                        rand_b                             |
+    /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    /// |                            rand_b                             |
+    /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    /// ```
+    ///
+    /// The 32-bit counter spans `rand_a` (12 bits) and the most-
+    /// significant 20 bits of `rand_b` (bytes 6–10).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the system clock is before the Unix epoch.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use uuid::{Uuid, Version};
+    ///
+    /// let uuid = Uuid::new_v7();
+    /// assert_eq!(uuid.version(), Version::V7);
+    /// ```
+    pub fn new_v7() -> Uuid {
+        let mut timestamp = v7_now_ms();
+
+        let counter = loop {
+            match V7_STATE.with(|cell| {
+                let mut state = cell.borrow_mut();
+
+                if timestamp > state.0 {
+                    state.0 = timestamp;
+                    state.1 = v7_random_counter();
+                } else if timestamp == state.0 {
+                    if state.1 < u32::MAX {
+                        state.1 += 1;
+                    } else {
+                        return None; // overflow, spin until next ms
+                    }
+                } else {
+                    // clock moved backward, re-seed
+                    state.0 = timestamp;
+                    state.1 = v7_random_counter();
+                }
+                Some(state.1)
+            }) {
+                Some(ctr) => break ctr,
+                None => {
+                    while v7_now_ms() == timestamp {
+                        std::hint::spin_loop();
+                    }
+                    timestamp = v7_now_ms();
+                }
+            }
+        };
+
+        let mut uuid = Uuid(rand::random());
+
+        // unix_ts_ms: 48-bit big-endian timestamp
+        uuid.0[0..6].copy_from_slice(&timestamp.to_be_bytes()[2..8]);
+        // uuid.0[0] = (ts >> 40) as u8;
+        // uuid.0[1] = (ts >> 32) as u8;
+        // uuid.0[2] = (ts >> 24) as u8;
+        // uuid.0[3] = (ts >> 16) as u8;
+        // uuid.0[4] = (ts >> 8) as u8;
+        // uuid.0[5] = ts as u8;
+
+        // version (4 bits) + counter[31:28] (4 bits)
+        uuid.0[6] = 0x70 | ((counter >> 28) & 0x0F) as u8;
+        // counter[27:20] (8 bits)
+        uuid.0[7] = (counter >> 20) as u8;
+        // variant (2 bits) + counter[19:14] (6 bits)
+        uuid.0[8] = 0x80 | ((counter >> 14) & 0x3F) as u8;
+        // counter[13:6] (8 bits)
+        uuid.0[9] = (counter >> 6) as u8;
+        // counter[5:0] (6 bits) -> preserve upper 2 random bits
+        uuid.0[10] = (uuid.0[10] & 0xC0) | (counter & 0x3F) as u8;
+
+        uuid
+    }
+}
 
 impl Uuid {
     /// Parse a UUID from its canonical 8-4-4-4-12 hexadecimal string form.
@@ -238,7 +366,7 @@ impl Uuid {
         u128::from_be_bytes(self.0)
     }
 
-    /// The Nil UUID — all 128 bits set to zero.
+    /// The Nil UUID: all 128 bits set to zero.
     ///
     /// # Examples
     ///
@@ -252,7 +380,7 @@ impl Uuid {
         Uuid([0; 16])
     }
 
-    /// The Max UUID — all 128 bits set to one.
+    /// The Max UUID: all 128 bits set to one.
     ///
     /// # Examples
     ///
@@ -345,134 +473,6 @@ impl Uuid {
     }
 }
 
-#[cfg(feature = "std")]
-impl Uuid {
-    /// Generate a new version 4 (random) UUID.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use uuid::{Uuid, Version};
-    ///
-    /// let uuid = Uuid::new_v4();
-    /// assert_eq!(uuid.version(), Version::V4);
-    /// ```
-    #[inline]
-    pub fn new_v4() -> Uuid {
-        let mut uuid = Uuid(rand::random());
-
-        // Set version nibble (bits 48-51) to 0100 (4)
-        uuid.0[6] = (uuid.0[6] & 0x0f) | 0x40;
-
-        // Set variant bits (bits 64-65) to 10
-        uuid.0[8] = (uuid.0[8] & 0x3f) | 0x80;
-
-        uuid
-    }
-
-    /// Generate a new version 7 UUID with a 32-bit monotonic counter.
-    ///
-    /// The 48-bit timestamp is milliseconds since the Unix epoch.
-    /// A 32-bit monotonic counter occupies `rand_a` (12 bits) and the
-    /// most-significant 20 bits of `rand_b`, guaranteeing up to
-    /// 2³² UUIDs within a single millisecond per thread (per
-    /// RFC 9562 §6.2, Method 1).
-    ///
-    /// The counter is seeded with 31 random bits each time the
-    /// timestamp advances and incremented on repeated calls within
-    /// the same millisecond. If the counter does overflow, this
-    /// function spin-waits for the next millisecond tick.
-    ///
-    /// The 128-bit layout follows RFC 9562:
-    ///
-    /// ```text
-    ///  0                   1                   2                   3
-    ///  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-    /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    /// |                           unix_ts_ms                          |
-    /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    /// |          unix_ts_ms           |  ver  |       rand_a          |
-    /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    /// |var|                        rand_b                             |
-    /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    /// |                            rand_b                             |
-    /// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    /// ```
-    ///
-    /// The 32-bit counter spans `rand_a` (12 bits) and the most-
-    /// significant 20 bits of `rand_b` (bytes 6–10).
-    ///
-    /// # Panics
-    ///
-    /// Panics if the system clock is before the Unix epoch.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use uuid::{Uuid, Version};
-    ///
-    /// let uuid = Uuid::new_v7();
-    /// assert_eq!(uuid.version(), Version::V7);
-    /// ```
-    pub fn new_v7() -> Uuid {
-        let mut timestamp = v7_now_ms();
-
-        let counter = loop {
-            match V7_STATE.with(|cell| {
-                let mut state = cell.borrow_mut();
-
-                if timestamp > state.0 {
-                    state.0 = timestamp;
-                    state.1 = v7_random_counter();
-                } else if timestamp == state.0 {
-                    if state.1 < u32::MAX {
-                        state.1 += 1;
-                    } else {
-                        return None; // overflow — spin until next ms
-                    }
-                } else {
-                    // clock moved backward — re-seed
-                    state.0 = timestamp;
-                    state.1 = v7_random_counter();
-                }
-                Some(state.1)
-            }) {
-                Some(ctr) => break ctr,
-                None => {
-                    while v7_now_ms() == timestamp {
-                        std::hint::spin_loop();
-                    }
-                    timestamp = v7_now_ms();
-                }
-            }
-        };
-
-        let mut uuid = Uuid(rand::random());
-
-        // unix_ts_ms: 48-bit big-endian timestamp
-        uuid.0[0..6].copy_from_slice(&timestamp.to_be_bytes()[2..8]);
-        // uuid.0[0] = (ts >> 40) as u8;
-        // uuid.0[1] = (ts >> 32) as u8;
-        // uuid.0[2] = (ts >> 24) as u8;
-        // uuid.0[3] = (ts >> 16) as u8;
-        // uuid.0[4] = (ts >> 8) as u8;
-        // uuid.0[5] = ts as u8;
-
-        // version (4 bits) + counter[31:28] (4 bits)
-        uuid.0[6] = 0x70 | ((counter >> 28) & 0x0F) as u8;
-        // counter[27:20] (8 bits)
-        uuid.0[7] = (counter >> 20) as u8;
-        // variant (2 bits) + counter[19:14] (6 bits)
-        uuid.0[8] = 0x80 | ((counter >> 14) & 0x3F) as u8;
-        // counter[13:6] (8 bits)
-        uuid.0[9] = (counter >> 6) as u8;
-        // counter[5:0] (6 bits) — preserve upper 2 random bits
-        uuid.0[10] = (uuid.0[10] & 0xC0) | (counter & 0x3F) as u8;
-
-        uuid
-    }
-}
-
 impl fmt::Display for Uuid {
     /// Formats the UUID as a lowercase 8-4-4-4-12 hyphenated string.
     ///
@@ -515,6 +515,14 @@ impl fmt::Display for Uuid {
 impl fmt::Debug for Uuid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)
+    }
+}
+
+impl FromStr for Uuid {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Uuid, Error> {
+        Uuid::parse(s)
     }
 }
 
@@ -630,8 +638,20 @@ mod tests {
     }
 
     #[test]
+    fn from_str_valid() {
+        let uuid: Uuid = "f47ac10b-58cc-4372-a567-0e02b2c3d479".parse().unwrap();
+        assert_eq!(uuid.version(), Version::V4);
+    }
+
+    #[test]
+    fn from_str_invalid() {
+        let result: Result<Uuid, _> = "not-a-uuid".parse();
+        assert_eq!(result, Err(Error::InvalidUuid));
+    }
+
+    #[test]
     fn unknown_version() {
-        // Version nibble = 0, but not nil — should be Unknown, not Nil
+        // Version nibble = 0, but not nil. Should be Unknown, not Nil.
         let bytes = [
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
         ];
@@ -725,15 +745,15 @@ mod tests {
     /// Extract the 32-bit monotonic counter from a v7 UUID.
     #[cfg(feature = "std")]
     fn extract_v7_counter(uuid: &Uuid) -> u32 {
-        // counter[31:28] — byte 6 low nibble
+        // counter[31:28] -> byte 6 low nibble
         ((uuid.0[6] & 0x0F) as u32) << 28
-            // counter[27:20] — byte 7
+            // counter[27:20] -> byte 7
             | (uuid.0[7] as u32) << 20
-            // counter[19:14] — byte 8 low 6 bits (below variant)
+            // counter[19:14] -> byte 8 low 6 bits (below variant)
             | ((uuid.0[8] & 0x3F) as u32) << 14
-            // counter[13:6] — byte 9
+            // counter[13:6] -> byte 9
             | (uuid.0[9] as u32) << 6
-            // counter[5:0] — byte 10 low 6 bits
+            // counter[5:0] -> byte 10 low 6 bits
             | (uuid.0[10] & 0x3F) as u32
     }
 }
