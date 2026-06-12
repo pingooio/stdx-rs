@@ -2,12 +2,16 @@
 
 /// aarch64 AES-256-GCM using ARMv8 Crypto extensions.
 ///
-/// Same 4-block parallel CTR and 4-block aggregated GHASH strategy as the
+/// Same 8/4-block parallel CTR and aggregated GHASH strategy as the
 /// x86_64 path (see `aes256_amd64.rs` for details). The ARMv8 equivalents:
 /// - `vaeseq_u8` / `vaesmcq_u8` for AES
-/// - `vmull_p64` for carry-less multiplication
+/// - `vmull_p64` intrinsic for carry-less multiplication
 /// - `vrbitq_u8` for per-byte bit reversal
 /// - `vqtbl1q_u8` for byte permutation (counter swap)
+///
+/// Round keys are stored in standard form (no pre-transformation).
+/// Each AES round is `vaesmcq_u8(vaeseq_u8(b, zero)) ^ rk[i]`,
+/// which avoids the need for `vaesimcq_u8` key pre-processing.
 ///
 /// The caller supplies precomputed round keys and GHASH powers,
 /// eliminating key expansion and H derivation from every call.
@@ -26,55 +30,115 @@ unsafe fn aes256_enc(rk: &RoundKeysArm, block: uint8x16_t) -> uint8x16_t {
     let zero = vdupq_n_u8(0);
 
     let mut b = veorq_u8(block, rk[0]);
-    for round_key in rk.iter().take(14).skip(1) {
-        b = vaesmcq_u8(vaeseq_u8(b, zero));
-        b = veorq_u8(b, *round_key);
-    }
-
+    b = vaesmcq_u8(vaeseq_u8(b, zero));
+    b = veorq_u8(b, rk[1]);
+    b = vaesmcq_u8(vaeseq_u8(b, zero));
+    b = veorq_u8(b, rk[2]);
+    b = vaesmcq_u8(vaeseq_u8(b, zero));
+    b = veorq_u8(b, rk[3]);
+    b = vaesmcq_u8(vaeseq_u8(b, zero));
+    b = veorq_u8(b, rk[4]);
+    b = vaesmcq_u8(vaeseq_u8(b, zero));
+    b = veorq_u8(b, rk[5]);
+    b = vaesmcq_u8(vaeseq_u8(b, zero));
+    b = veorq_u8(b, rk[6]);
+    b = vaesmcq_u8(vaeseq_u8(b, zero));
+    b = veorq_u8(b, rk[7]);
+    b = vaesmcq_u8(vaeseq_u8(b, zero));
+    b = veorq_u8(b, rk[8]);
+    b = vaesmcq_u8(vaeseq_u8(b, zero));
+    b = veorq_u8(b, rk[9]);
+    b = vaesmcq_u8(vaeseq_u8(b, zero));
+    b = veorq_u8(b, rk[10]);
+    b = vaesmcq_u8(vaeseq_u8(b, zero));
+    b = veorq_u8(b, rk[11]);
+    b = vaesmcq_u8(vaeseq_u8(b, zero));
+    b = veorq_u8(b, rk[12]);
+    b = vaesmcq_u8(vaeseq_u8(b, zero));
+    b = veorq_u8(b, rk[13]);
     b = vaeseq_u8(b, zero);
     veorq_u8(b, rk[14])
 }
 
-#[inline]
-unsafe fn clmul64_pmull(a: u64, b: u64) -> u128 {
-    let product = vmull_p64(core::mem::transmute(a), core::mem::transmute(b));
-    core::mem::transmute(product)
-}
-
-#[inline]
-unsafe fn gcm_reduce(product_lo: u128, product_hi: u128) -> u128 {
-    let poly = 0x87u64;
-    let t1 = clmul64_pmull(product_hi as u64, poly);
-    let t2 = clmul64_pmull((product_hi >> 64) as u64, poly);
-    let t2_lo = t2 << 64;
-    let t2_hi = t2 >> 64;
-    let t3 = clmul64_pmull(t2_hi as u64, poly);
-    product_lo ^ t1 ^ t2_lo ^ t3
-}
-
+#[target_feature(enable = "aes,neon")]
 #[inline]
 unsafe fn clmul_gcm_pmull(a: uint8x16_t, b: uint8x16_t) -> uint8x16_t {
-    let a_u64 = vreinterpretq_u64_u8(a);
-    let b_u64 = vreinterpretq_u64_u8(b);
-    let a_lo = vgetq_lane_u64(a_u64, 0);
-    let a_hi = vgetq_lane_u64(a_u64, 1);
-    let b_lo = vgetq_lane_u64(b_u64, 0);
-    let b_hi = vgetq_lane_u64(b_u64, 1);
-
-    let lo = clmul64_pmull(a_lo, b_lo);
-    let hi = clmul64_pmull(a_hi, b_hi);
-    let mid = clmul64_pmull(a_lo ^ a_hi, b_lo ^ b_hi);
-
-    let mid_true = mid ^ lo ^ hi;
-    let product_lo = lo ^ (mid_true << 64);
-    let product_hi = hi ^ (mid_true >> 64);
-    let reduced = gcm_reduce(product_lo, product_hi);
-
-    // Stay in registers: convert u128 → uint8x16_t without store/load.
-    let lo = reduced as u64;
-    let hi = (reduced >> 64) as u64;
-    vreinterpretq_u8_u64(vcombine_u64(vcreate_u64(lo), vcreate_u64(hi)))
+    let poly = vld1q_u8([0x87, 0, 0, 0, 0, 0, 0, 0, 0x87, 0, 0, 0, 0, 0, 0, 0].as_ptr());
+    let result: uint8x16_t;
+    core::arch::asm!(
+        "movi    v17.16b, #0",
+        "pmull   v18.1q, {a:v}.1d, {b:v}.1d",
+        "pmull2  v19.1q, {a:v}.2d, {b:v}.2d",
+        "ext     v20.16b, {a:v}.16b, {a:v}.16b, #8",
+        "ext     v21.16b, {b:v}.16b, {b:v}.16b, #8",
+        "eor     v20.16b, v20.16b, {a:v}.16b",
+        "eor     v21.16b, v21.16b, {b:v}.16b",
+        "pmull   v22.1q, v20.1d, v21.1d",
+        "eor     v22.16b, v22.16b, v18.16b",
+        "eor     v22.16b, v22.16b, v19.16b",
+        "ext     v20.16b, v17.16b, v22.16b, #8",
+        "eor     v18.16b, v18.16b, v20.16b",
+        "ext     v20.16b, v22.16b, v17.16b, #8",
+        "eor     v19.16b, v19.16b, v20.16b",
+        "pmull   v22.1q, v19.1d, {poly:v}.1d",
+        "ext     v20.16b, v19.16b, v19.16b, #8",
+        "pmull   v23.1q, v20.1d, {poly:v}.1d",
+        "ext     v20.16b, v17.16b, v23.16b, #8",
+        "ext     v21.16b, v23.16b, v17.16b, #8",
+        "pmull   v17.1q, v21.1d, {poly:v}.1d",
+        "eor     v18.16b, v18.16b, v22.16b",
+        "eor     v18.16b, v18.16b, v20.16b",
+        "eor     {result:v}.16b, v18.16b, v17.16b",
+        a = in(vreg) a,
+        b = in(vreg) b,
+        poly = in(vreg) poly,
+        result = out(vreg) result,
+        out("v17") _, out("v18") _, out("v19") _,
+        out("v20") _, out("v21") _, out("v22") _, out("v23") _,
+        options(nostack),
+    );
+    result
 }
+
+// #[inline]
+// unsafe fn clmul_gcm_pmull(a: uint8x16_t, b: uint8x16_t) -> uint8x16_t {
+//     let a_u64 = vreinterpretq_u64_u8(a);
+//     let b_u64 = vreinterpretq_u64_u8(b);
+//     let a_lo = vgetq_lane_u64(a_u64, 0);
+//     let a_hi = vgetq_lane_u64(a_u64, 1);
+//     let b_lo = vgetq_lane_u64(b_u64, 0);
+//     let b_hi = vgetq_lane_u64(b_u64, 1);
+
+//     let lo = clmul64_pmull(a_lo, b_lo);
+//     let hi = clmul64_pmull(a_hi, b_hi);
+//     let mid = clmul64_pmull(a_lo ^ a_hi, b_lo ^ b_hi);
+
+//     let mid_true = mid ^ lo ^ hi;
+//     let product_lo = lo ^ (mid_true << 64);
+//     let product_hi = hi ^ (mid_true >> 64);
+//     let reduced = gcm_reduce(product_lo, product_hi);
+
+//     let lo = reduced as u64;
+//     let hi = (reduced >> 64) as u64;
+//     vreinterpretq_u8_u64(vcombine_u64(vcreate_u64(lo), vcreate_u64(hi)))
+// }
+
+// #[inline]
+// unsafe fn gcm_reduce(product_lo: u128, product_hi: u128) -> u128 {
+//     let poly = 0x87u64;
+//     let t1 = clmul64_pmull(product_hi as u64, poly);
+//     let t2 = clmul64_pmull((product_hi >> 64) as u64, poly);
+//     let t2_lo = t2 << 64;
+//     let t2_hi = t2 >> 64;
+//     let t3 = clmul64_pmull(t2_hi as u64, poly);
+//     product_lo ^ t1 ^ t2_lo ^ t3
+// }
+
+// #[inline]
+// unsafe fn clmul64_pmull(a: u64, b: u64) -> u128 {
+//     let product = vmull_p64(core::mem::transmute(a), core::mem::transmute(b));
+//     core::mem::transmute(product)
+// }
 
 /// Single-block GHASH feed (tail processing).
 unsafe fn ghash_update(mut state: uint8x16_t, h: uint8x16_t, data: &[u8]) -> uint8x16_t {
