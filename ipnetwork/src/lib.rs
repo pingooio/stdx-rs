@@ -19,6 +19,7 @@ mod error;
 mod ipv4;
 mod ipv6;
 mod parse;
+mod serde_helpers;
 mod size;
 
 pub use crate::{
@@ -42,8 +43,7 @@ impl<'de> serde::Deserialize<'de> for IpNetwork {
     where
         D: serde::Deserializer<'de>,
     {
-        let s = <String>::deserialize(deserializer)?;
-        IpNetwork::from_str(&s).map_err(serde::de::Error::custom)
+        deserializer.deserialize_str(crate::serde_helpers::FromStrVisitor(core::marker::PhantomData))
     }
 }
 
@@ -286,9 +286,7 @@ impl IpNetwork {
             IpNetwork::V4(ip) => IpNetworkIteratorInner::V4(ip.iter()),
             IpNetwork::V6(ip) => IpNetworkIteratorInner::V6(ip.iter()),
         };
-        IpNetworkIterator {
-            inner,
-        }
+        IpNetworkIterator { inner }
     }
 }
 

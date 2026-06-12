@@ -21,8 +21,7 @@ impl<'de> serde::Deserialize<'de> for Ipv6Network {
     where
         D: serde::Deserializer<'de>,
     {
-        let s = <String>::deserialize(deserializer)?;
-        Ipv6Network::from_str(&s).map_err(serde::de::Error::custom)
+        deserializer.deserialize_str(crate::serde_helpers::FromStrVisitor(core::marker::PhantomData))
     }
 }
 
@@ -113,10 +112,7 @@ impl Ipv6Network {
         if prefix > IPV6_BITS {
             None
         } else {
-            Some(Ipv6Network {
-                addr,
-                prefix,
-            })
+            Some(Ipv6Network { addr, prefix })
         }
     }
 
@@ -125,10 +121,7 @@ impl Ipv6Network {
     /// If the netmask is not valid this will return an `IpNetworkError::InvalidPrefix`.
     pub fn with_netmask(netaddr: Ipv6Addr, netmask: Ipv6Addr) -> Result<Self, IpNetworkError> {
         let prefix = ipv6_mask_to_prefix(netmask)?;
-        let net = Self {
-            addr: netaddr,
-            prefix,
-        };
+        let net = Self { addr: netaddr, prefix };
         Ok(net)
     }
 
@@ -150,10 +143,7 @@ impl Ipv6Network {
         let mask = max.checked_shr(u32::from(prefix)).unwrap_or(0);
         let end: u128 = dec | mask;
 
-        Ipv6NetworkIterator {
-            next: Some(start),
-            end,
-        }
+        Ipv6NetworkIterator { next: Some(start), end }
     }
 
     pub const fn ip(&self) -> Ipv6Addr {
@@ -343,10 +333,7 @@ impl TryFrom<&str> for Ipv6Network {
 
 impl From<Ipv6Addr> for Ipv6Network {
     fn from(a: Ipv6Addr) -> Ipv6Network {
-        Ipv6Network {
-            addr: a,
-            prefix: 128,
-        }
+        Ipv6Network { addr: a, prefix: 128 }
     }
 }
 
