@@ -1,29 +1,22 @@
 [package]
 name = "uuid"
-version = "1.18.1"
-description = "Generate, encode and decode UUIDs (RFC 9562)"
-keywords = ["uuid", "no_std"]
-categories = ["uuid"]
-license = "Apache-2.0"
+version = "0.1.0"
 edition = "2024"
+description = "Generate, encode and decode UUIDs (RFC 9562) — supports v4 and v7"
 
 [lib]
-name = "uuid"
-path = "src/uuid.rs"
+path = "./uuid.rs"
 
-[[bin]]
-name = "uuid"
-path = "src/main.rs"
-
+[features]
+default = ["std"]
+std = ["dep:rand"]
+serde = ["dep:serde"]
+sqlx = ["dep:sqlx"]
 
 [dependencies]
-rand = { workspace = true }
-serde = { workspace = true }
-thiserror = "2"
+rand = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+sqlx = { workspace = true, optional = true, features = ["postgres"] }
 
-# features to mimick the uuid crate
-[features]
-default = []
-serde = []
-v4 = []
-v7 = []
+[dev-dependencies]
+serde_json = { workspace = true }
