@@ -8,6 +8,9 @@
 ///   multiplication 4 bits at a time instead of bit-by-bit.
 /// - The x86-64 code path (aes256_amd64) dispatches to AES-NI + PCLMULQDQ
 ///   at runtime and is used whenever the required CPU features are present.
+#[cfg(target_arch = "x86_64")]
+use core::arch::x86_64::__m128i;
+
 use crate::AeadError;
 
 // ── Bit-reverse lookup table ─────────────────────────────────────────────────
@@ -836,12 +839,12 @@ impl Aes256Gcm {
         {
             use core::arch::x86_64::*;
             let rk_soft = key_expand(key);
-            let mut rk = [_mm_setzero_si128(); 15];
+            let mut rk = unsafe { [_mm_setzero_si128(); 15] };
             for i in 0..15 {
                 rk[i] = unsafe { _mm_loadu_si128(rk_soft[i].as_ptr().cast()) };
             }
             let (h_powers_bytes, _h) = precompute_ghash_powers(key);
-            let mut h_powers = [_mm_setzero_si128(); 8];
+            let mut h_powers = unsafe { [_mm_setzero_si128(); 8] };
             for i in 0..8 {
                 h_powers[i] = unsafe { _mm_loadu_si128(h_powers_bytes[i].as_ptr().cast()) };
             }
