@@ -1,6 +1,6 @@
 ---
 name: stdx
-description: Use Rust's extended standard library (stdx) — a monorepo of zero-external-dependency crates for supply-chain security. Covers base64, crypto, csv, dotenv, anyerr, singleflight, templates, networking, and 50+ more. Import directly from git; never use crates.io equivalents when stdx provides a replacement. Use when writing Rust code that needs encoding, crypto, error handling, config, concurrency, serialization, or common infrastructure.
+description: Use Rust's extended standard library (stdx) — a monorepo of zero-external-dependency crates for supply-chain security. Covers base64, crypto, csv, dotenv, anyerr, singleflight, templates, networking, and more. Import directly from git; never use crates.io equivalents when stdx provides a replacement. Use when writing Rust code that needs encoding, crypto, error handling, config, concurrency, serialization, or common infrastructure.
 compatibility: Requires Rust stable. Some crates require tokio (singleflight, errgroup, retry, scheduler, s3) or serde (serde_yaml, serde_urlencoded, template).
 license: MIT
 metadata:
@@ -19,8 +19,8 @@ stdx does **not** use crates.io. Import directly from the monorepo:
 ```toml
 [dependencies]
 base64 = { git = "https://github.com/rust-stdx/stdx", branch = "main" }
-# Pin to a specific revision for reproducibility:
-anyerr = { git = "https://github.com/rust-stdx/stdx", rev = "abc123" }
+# Pin to a specific commit for reproducibility:
+anyerr = { git = "https://github.com/rust-stdx/stdx", ref = "abc123" }
 ```
 
 **Never import the crates.io equivalent** (e.g., `anyhow`, `thiserror`, `base64`) when stdx provides a fork. Mixing them duplicates types and defeats supply-chain hardening.
@@ -50,11 +50,15 @@ Check the package index for per-crate feature flags. The `std` feature is typica
 
 ```rust
 // Base64 (SIMD-accelerated)
-use base64::{Engine as _, engine::general_purpose::STANDARD};
-let encoded = STANDARD.encode(b"hello world");
-let decoded = STANDARD.decode(&encoded).unwrap();
+use base64::{Alphabet, encode, decode};
 
-// Hex (constant-time, SIMD-accelerated)
+let encoded = encode(b"hello world", Alphabet::Standard);
+assert_eq!(encoded, "aGVsbG8gd29ybGQ=");
+
+let decoded = decode(b"aGVsbG8gd29ybGQ=", Alphabet::Standard).unwrap();
+assert_eq!(decoded, b"hello world");
+
+// Hex (constant-time / SIMD-accelerated)
 use hex;
 let encoded = hex::encode(b"hello");
 let decoded = hex::decode("68656c6c6f").unwrap();
@@ -91,13 +95,12 @@ enum MyError {
 
 ```rust
 // Hashing (SHA-256, SHA-512, BLAKE3)
-use crypto::{sha2, blake3};
-let hash = sha2::Sha256::digest(b"message");
-let hash = blake3::hash(b"message");
+use crypto::{sha2, Hasher};
+let hash = sha2::Sha256::hash(b"message");
 
 // PBKDF2 key derivation
 use crypto::pbkdf2;
-let key = pbkdf2::derive(b"password", b"salt", 600_000, 32);
+let key: [u8; 32] = pbkdf2::derive(b"password", b"salt", 600_000);
 
 // Constant-time comparison
 use constant_time_eq::constant_time_eq;
@@ -109,6 +112,7 @@ assert!(constant_time_eq(b"secret", b"secret"));
 ```rust
 // dotenv — load .env files, with AI-written derive macro
 use dotenv::FromEnv;
+
 #[derive(FromEnv)]
 struct Config {
     #[env(rename = "HOST", default = "0.0.0.0")]
@@ -116,6 +120,7 @@ struct Config {
     #[env(rename = "PORT", default = 8080)]
     port: u16,
 }
+
 let config = Config::from_env().unwrap();
 ```
 
@@ -154,10 +159,6 @@ let yaml = serde_yaml::to_string(&config)?;
 use serde_urlencoded;
 let params = vec![("key", "value"), ("foo", "bar")];
 let body: String = serde_urlencoded::to_string(&params)?;
-
-// JSON-RPC 2.0
-use json_rpc;
-let request = json_rpc::Request::new("method_name", Some(params));
 ```
 
 ### Networking
@@ -201,7 +202,7 @@ use csv::{Reader, Writer};
 
 // UUID generation and parsing (RFC 9562)
 use uuid::Uuid;
-let id = Uuid::new_v4();
+let id = Uuid::new_v7();
 
 // Semver parsing
 use semver::Version;
@@ -216,9 +217,8 @@ use cron::Schedule;
 let schedule = "0 30 9 * * 1-5".parse::<Schedule>()?;
 
 // Embed files at compile time
-use embed::EmbeddedFile;
-use rust_embed::RustEmbed;
-#[derive(RustEmbed)]
+use embed::Embed;
+#[derive(Embed)]
 #[folder = "assets/"]
 struct Assets;
 ```
@@ -237,6 +237,5 @@ See [references/package-index.md](references/package-index.md) for the complete 
 ## Further Reading
 
 - Announcement: https://kerkour.com/stdx
-- Extended stdlib roadmap: https://kerkour.com/rust-extended-standard-library
 - Supply chain security: https://kerkour.com/rust-supply-chain-nightmare
 - API docs: https://rust-stdx.github.io/stdx
