@@ -63,6 +63,7 @@ members = [
     "thiserror/impl",
     "tld",
     "tools/crypt",
+    "tools/duplicates",
     "unsafe_libyaml",
     "uuid",
 ]

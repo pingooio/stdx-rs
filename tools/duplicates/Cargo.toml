@@ -1,0 +1,13 @@
+[package]
+name = "duplicates"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "duplicates"
+path = "duplicates.rs"
+
+[dependencies]
+crypto = { path = "../../crypto" }
+tokio = { workspace = true }
+walkdir = { workspace = true }
