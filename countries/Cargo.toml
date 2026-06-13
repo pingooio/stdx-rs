@@ -6,6 +6,8 @@ edition = "2024"
 [lib]
 path = "./countries.rs"
 
+[features]
+serde = ["serde/derive"]
+
 [dependencies]
-serde = { workspace = true }
-serde_json = { workspace = true }
+serde = { workspace = true, optional = true }
