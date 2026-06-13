@@ -9,5 +9,6 @@ path = "duplicates.rs"
 
 [dependencies]
 crypto = { path = "../../crypto" }
+hex = { path = "../../hex" }
 tokio = { workspace = true }
 walkdir = { workspace = true }

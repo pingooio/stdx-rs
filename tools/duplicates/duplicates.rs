@@ -32,7 +32,7 @@ async fn main() {
 
     let results: Arc<Mutex<HashMap<[u8; 32], (u64, Vec<PathBuf>)>>> = Arc::new(Mutex::new(HashMap::new()));
     let semaphore = Arc::new(Semaphore::new(thread::available_parallelism().unwrap().get()));
-    let mut handles = vec![];
+    let mut handles = Vec::with_capacity(args.len() - 1);
 
     for arg in &args[1..] {
         let dir = PathBuf::from(arg);
@@ -60,7 +60,7 @@ async fn main() {
 
     for (total, hash) in groups {
         let (_, paths) = &map[hash];
-        println!("{}: {}:", format_size(total), hex_encode(hash));
+        println!("{}: {}:", format_size(total), hex::encode(hash));
         let mut sorted = paths.clone();
         sorted.sort();
         for p in &sorted {
@@ -109,7 +109,7 @@ async fn hash_file(path: &Path) -> Result<([u8; 32], u64), io::Error> {
     let mut file = File::open(path).await?;
     let size = file.metadata().await?.len();
     let mut hasher = Sha256::new();
-    let mut buf = vec![0u8; 64 * 1024];
+    let mut buf = vec![0u8; 1024 * 1024];
     loop {
         let n = file.read(&mut buf).await?;
         if n == 0 {
@@ -119,14 +119,6 @@ async fn hash_file(path: &Path) -> Result<([u8; 32], u64), io::Error> {
     }
     let hash = hasher.sum();
     Ok((hash.as_ref().try_into().unwrap(), size))
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for &b in bytes {
-        s.push_str(&format!("{:02x}", b));
-    }
-    s
 }
 
 fn format_size(bytes: u64) -> String {
