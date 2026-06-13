@@ -42,8 +42,8 @@ impl<'a> Renderer<'a> {
         }
 
         let escaper = match engine.mode {
-            crate::engine::Mode::Html => html_escape,
-            crate::engine::Mode::Text => |s: &str, out: &mut String| {
+            crate::engine::EscapeMode::Html => html_escape,
+            crate::engine::EscapeMode::Text => |s: &str, out: &mut String| {
                 out.push_str(s);
                 Ok(())
             },
