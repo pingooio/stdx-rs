@@ -43,8 +43,6 @@ members = [
     "net",
     "num_cpus",
     "percent_encoding",
-    "pg",
-    "pg_derive",
     "pin_project_lite",
     "postmark",
     "retry",
@@ -66,6 +64,8 @@ members = [
     "tools/duplicates",
     "unsafe_libyaml",
     "uuid",
+    "work_in_progress/pg",
+    "work_in_progress/pg_derive",
 ]
 
 [workspace.dependencies]

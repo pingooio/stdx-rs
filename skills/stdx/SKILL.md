@@ -94,7 +94,7 @@ enum MyError {
 ### Cryptography
 
 ```rust
-// Hashing (SHA-256, SHA-512, BLAKE3)
+// Hashing (SHA-256, SHA-512 and more)
 use crypto::{sha2, Hasher};
 let hash = sha2::Sha256::hash(b"message");
 

@@ -627,7 +627,6 @@ name = "countries"
 version = "0.1.0"
 dependencies = [
  "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -934,6 +933,7 @@ name = "duplicates"
 version = "0.1.0"
 dependencies = [
  "crypto",
+ "hex 0.1.0",
  "tokio",
  "walkdir",
 ]

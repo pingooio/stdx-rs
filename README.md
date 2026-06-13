@@ -1,6 +1,6 @@
 # Rust's (unofficial) extended standard library: simplicity, performance and supply chain security for everyone
 
-Rust's biggest problem is its anemic standard library unable to fulfill the needs of most developers. It leads not only to a fragmented ecosystem with multiple competing packages (so you end up with 10 different packages to handle time and 15 crypto libraries, and no more package named "froggy" because "template" was already taken on crates.io) but also to elevated supply chain risks (see [Supply chain nightmare: How Rust will be attacked and what we can do to mitigate the inevitable](https://kerkour.com/rust-supply-chain-nightmare)).
+Rust's biggest problem is its anemic standard library unable to fulfill the needs of most developers. It leads not only to a fragmented ecosystem with multiple competing packages (so you end up with 10 different packages to handle time and 15 crypto libraries, and packages named "froggy" because "template" was already taken on crates.io) but also to elevated supply chain risks (see [Supply chain nightmare: How Rust will be attacked and what we can do to mitigate the inevitable](https://kerkour.com/rust-supply-chain-nightmare)).
 
 This is why we are creating Rust's extended standard library, inspired by Go's extensive standard library and `golang.org/x/...` packages, to bring simplicity, performance and supply chain security to every Rust developer.
 
@@ -23,7 +23,13 @@ base64 = { git = "https://github.com/rust-stdx/stdx", branch = "main" }
 base64 = { git = "https://github.com/rust-stdx/stdx", ref = "1234" }
 # or, to use Codeberg
 base64 = { git = "https://codeberg.org/rust-stdx/stdx", branch = "main" }
+# or, fork it and use your own mirror
+base64 = { git = "https://git.[my-organization].com/[username]/stdx", branch = "main" }
 ```
+
+Other than crates in the `work_in_progress` folder, the `main` branch is considered production-ready.
+
+Contrary to what the name may suggest, most packages also support `no_std` environments by disabling the default `std` feature. Look at the documentation of individual packages to learn more.
 
 > **Warning ⚠️**: The project is moving fast, we can't provide any stability guarantees at this time.
 
@@ -58,14 +64,14 @@ Contributions are welcome, especially bug reports, improvement ideas and new pac
 
 Except for minor typos, no pull request will be accepted without a preliminary discussion. Please open an issue first.
 
-See [CONTRIBUTING.md](./CONTRIBUTIN.md) for details and for our AI policy.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for details and for our AI policy.
 
 
 ## Development
 
-See `.devcontainer/Dockerfile`.
+See [.devcontainer/Dockerfile](./.devcontainer/Dockerfile).
 
-then:
+Then:
 
 ```bash
 rustup default stable
