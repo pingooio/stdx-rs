@@ -104,7 +104,7 @@ impl<H: Hasher> Hmac<H> {
 mod hmac_tests {
     use crate::{
         hmac::Hmac,
-        sha2::{Sha256, Sha512},
+        sha2::{Sha256, Sha384, Sha512},
     };
 
     #[derive(Clone, Copy)]
@@ -335,5 +335,47 @@ mod hmac_tests {
         }
         assert!(valid_tested > 0, "no valid HMAC-SHA-512 wycheproof tests were run");
         assert!(invalid_tested > 0, "no invalid HMAC-SHA-512 wycheproof tests were run");
+    }
+
+    #[test]
+    fn hmac_sha384_wycheproof() {
+        let data: serde_json::Value =
+            serde_json::from_str(include_str!("../testdata/wycheproof/testvectors_v1/hmac_sha384_test.json")).unwrap();
+        let mut valid_tested = 0u64;
+        let mut invalid_tested = 0u64;
+        for group in data["testGroups"].as_array().unwrap() {
+            let tag_size_bits = group["tagSize"].as_u64().unwrap();
+            let tag_size_bytes = (tag_size_bits / 8) as usize;
+            for test in group["tests"].as_array().unwrap() {
+                let key_hex = test["key"].as_str().unwrap();
+                let msg_hex = test["msg"].as_str().unwrap();
+                let expected_tag_hex = test["tag"].as_str().unwrap();
+                let result = test["result"].as_str().unwrap();
+
+                let key = hex::decode(key_hex).unwrap();
+                let msg = hex::decode(msg_hex).unwrap();
+
+                let computed = Hmac::<Sha384>::mac(&key, &msg);
+                let computed_tag = hex::encode(&computed.as_ref()[..tag_size_bytes]);
+
+                if result == "valid" {
+                    assert_eq!(
+                        computed_tag, expected_tag_hex,
+                        "wycheproof HMAC-SHA-384 tcId={} tagSize={}",
+                        test["tcId"], tag_size_bits
+                    );
+                    valid_tested += 1;
+                } else {
+                    assert_ne!(
+                        computed_tag, expected_tag_hex,
+                        "wycheproof HMAC-SHA-384 tcId={} ModifiedTag not detected",
+                        test["tcId"]
+                    );
+                    invalid_tested += 1;
+                }
+            }
+        }
+        assert!(valid_tested > 0, "no valid HMAC-SHA-384 wycheproof tests were run");
+        assert!(invalid_tested > 0, "no invalid HMAC-SHA-384 wycheproof tests were run");
     }
 }

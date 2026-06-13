@@ -104,7 +104,7 @@ pub fn derive_key<H: Hasher, const N: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sha2::{Sha256, Sha512};
+    use crate::sha2::{Sha256, Sha384, Sha512};
 
     struct TestVector {
         ikm: &'static str,
@@ -382,5 +382,57 @@ mod tests {
         }
         assert!(valid_tested > 0, "no valid HKDF-SHA-512 wycheproof tests were run");
         assert!(invalid_tested > 0, "no invalid HKDF-SHA-512 wycheproof tests were run");
+    }
+
+    #[test]
+    fn hkdf_sha384_wycheproof() {
+        // Maximum valid HKDF-SHA-384 output: 255 * 48 = 12240 bytes.
+        const MAX_OKM: usize = 12240;
+        const SIZE_TOO_LARGE: usize = 12241;
+
+        let data: serde_json::Value =
+            serde_json::from_str(include_str!("../testdata/wycheproof/testvectors_v1/hkdf_sha384_test.json")).unwrap();
+        let mut valid_tested = 0u64;
+        let mut invalid_tested = 0u64;
+        for group in data["testGroups"].as_array().unwrap() {
+            for test in group["tests"].as_array().unwrap() {
+                let ikm_hex = test["ikm"].as_str().unwrap();
+                let salt_hex = test["salt"].as_str().unwrap();
+                let info_hex = test["info"].as_str().unwrap();
+                let size = test["size"].as_u64().unwrap() as usize;
+                let expected_okm_hex = test["okm"].as_str().unwrap();
+                let result = test["result"].as_str().unwrap();
+
+                let ikm = hex::decode(ikm_hex).unwrap();
+                let info = hex::decode(info_hex).unwrap();
+                let salt: Option<Vec<u8>> = if salt_hex.is_empty() {
+                    None
+                } else {
+                    Some(hex::decode(salt_hex).unwrap())
+                };
+
+                if result == "valid" {
+                    let okm = derive_key::<Sha384, MAX_OKM>(&ikm, &info, salt.as_deref()).unwrap();
+                    let okm_hex = hex::encode(&okm[..size]);
+                    assert_eq!(
+                        okm_hex, expected_okm_hex,
+                        "wycheproof HKDF-SHA-384 tcId={} size={}",
+                        test["tcId"], size
+                    );
+                    valid_tested += 1;
+                } else {
+                    assert_eq!(
+                        derive_key::<Sha384, SIZE_TOO_LARGE>(&ikm, &info, salt.as_deref()),
+                        Err(HkdfError::OutputIsTooLong),
+                        "wycheproof HKDF-SHA-384 tcId={} size={} should reject",
+                        test["tcId"],
+                        size
+                    );
+                    invalid_tested += 1;
+                }
+            }
+        }
+        assert!(valid_tested > 0, "no valid HKDF-SHA-384 wycheproof tests were run");
+        assert!(invalid_tested > 0, "no invalid HKDF-SHA-384 wycheproof tests were run");
     }
 }

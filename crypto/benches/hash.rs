@@ -1,7 +1,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use crypto::{
     Hasher,
-    sha2::{Sha256, Sha512},
+    sha2::{Sha256, Sha384, Sha512},
     sha3::{Sha3_256, Sha3_512},
 };
 

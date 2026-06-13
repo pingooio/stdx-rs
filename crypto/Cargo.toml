@@ -42,3 +42,7 @@ harness = false
 [[bench]]
 name = "signatures"
 harness = false
+
+[[bench]]
+name = "stream_ciphers"
+harness = false

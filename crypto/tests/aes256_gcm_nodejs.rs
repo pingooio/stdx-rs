@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use crypto::aes::Aes256Gcm;
+use crypto::{Aead, aes::Aes256Gcm};
 
 fn node_encrypt(key: &[u8; 32], nonce: &[u8; 12], aad: &[u8], plaintext: &[u8]) -> (Vec<u8>, [u8; 16]) {
     let output = Command::new("node")
@@ -30,7 +30,7 @@ fn node_encrypt(key: &[u8; 32], nonce: &[u8; 12], aad: &[u8], plaintext: &[u8]) 
     (ciphertext, tag)
 }
 
-fn node_decrypt(key: &[u8; 32], nonce: &[u8; 12], aad: &[u8], ciphertext: &[u8], tag: &[u8; 16]) -> Vec<u8> {
+fn node_decrypt(key: &[u8; 32], nonce: &[u8; 12], aad: &[u8], ciphertext: &[u8], tag: &[u8]) -> Vec<u8> {
     let mut data = ciphertext.to_vec();
     data.extend_from_slice(tag);
 
@@ -81,9 +81,9 @@ fn rust_encrypt_node_decrypt_roundtrip() {
     for (key, nonce, aad, plaintext) in test_cases {
         let cipher = Aes256Gcm::new(&key);
         let mut buf = plaintext.clone();
-        let tag = cipher.encrypt_in_place(&mut buf, &nonce, &aad);
+        let tag = cipher.encrypt_in_place(&mut buf, &nonce[..], &aad);
 
-        let decrypted = node_decrypt(&key, &nonce, &aad, &buf, &tag);
+        let decrypted = node_decrypt(&key, &nonce, &aad, &buf, tag.as_ref());
         assert_eq!(decrypted, plaintext, "Roundtrip failed for key={}", hex::encode(key));
     }
 }
@@ -113,7 +113,7 @@ fn node_encrypt_rust_decrypt_roundtrip() {
         let cipher = Aes256Gcm::new(&key);
         let mut buf = ciphertext.clone();
         cipher
-            .decrypt_in_place(&mut buf, &tag, &nonce, &aad)
+            .decrypt_in_place(&mut buf, &nonce[..], &aad, &tag[..])
             .expect("Rust decrypt failed");
 
         assert_eq!(buf, plaintext, "Roundtrip failed for key={}", hex::encode(key));
@@ -129,15 +129,15 @@ fn bidirectional_large_payload() {
 
     let cipher = Aes256Gcm::new(&key);
     let mut buf = plaintext.clone();
-    let tag = cipher.encrypt_in_place(&mut buf, &nonce, aad);
+    let tag = cipher.encrypt_in_place(&mut buf, &nonce[..], aad);
 
-    let decrypted = node_decrypt(&key, &nonce, aad, &buf, &tag);
+    let decrypted = node_decrypt(&key, &nonce, aad, &buf, tag.as_ref());
     assert_eq!(decrypted, plaintext);
 
     let (ciphertext, node_tag) = node_encrypt(&key, &nonce, aad, &plaintext);
     let mut buf2 = ciphertext.clone();
     cipher
-        .decrypt_in_place(&mut buf2, &node_tag, &nonce, aad)
+        .decrypt_in_place(&mut buf2, &nonce[..], aad, &node_tag[..])
         .expect("Rust decrypt failed");
     assert_eq!(buf2, plaintext);
 }
@@ -151,15 +151,15 @@ fn bidirectional_empty_plaintext_with_aad() {
 
     let cipher = Aes256Gcm::new(&key);
     let mut buf = plaintext.clone();
-    let tag = cipher.encrypt_in_place(&mut buf, &nonce, aad);
+    let tag = cipher.encrypt_in_place(&mut buf, &nonce[..], aad);
 
-    let decrypted = node_decrypt(&key, &nonce, aad, &buf, &tag);
+    let decrypted = node_decrypt(&key, &nonce, aad, &buf, tag.as_ref());
     assert_eq!(decrypted, plaintext);
 
     let (ciphertext, node_tag) = node_encrypt(&key, &nonce, aad, &plaintext);
     let mut buf2 = ciphertext.clone();
     cipher
-        .decrypt_in_place(&mut buf2, &node_tag, &nonce, aad)
+        .decrypt_in_place(&mut buf2, &nonce[..], aad, &node_tag[..])
         .expect("Rust decrypt failed");
     assert_eq!(buf2, plaintext);
 }
@@ -175,15 +175,15 @@ fn bidirectional_various_sizes() {
 
         let cipher = Aes256Gcm::new(&key);
         let mut buf = plaintext.clone();
-        let tag = cipher.encrypt_in_place(&mut buf, &nonce, aad);
+        let tag = cipher.encrypt_in_place(&mut buf, &nonce[..], aad);
 
-        let decrypted = node_decrypt(&key, &nonce, aad, &buf, &tag);
+        let decrypted = node_decrypt(&key, &nonce, aad, &buf, tag.as_ref());
         assert_eq!(decrypted, plaintext, "Failed for size {}", size);
 
         let (ciphertext, node_tag) = node_encrypt(&key, &nonce, aad, &plaintext);
         let mut buf2 = ciphertext.clone();
         cipher
-            .decrypt_in_place(&mut buf2, &node_tag, &nonce, aad)
+            .decrypt_in_place(&mut buf2, &nonce[..], aad, &node_tag[..])
             .expect(&format!("Rust decrypt failed for size {}", size));
         assert_eq!(buf2, plaintext, "Failed for size {}", size);
     }

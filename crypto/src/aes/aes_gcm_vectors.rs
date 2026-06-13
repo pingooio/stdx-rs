@@ -1,4 +1,52 @@
-pub const EXTRA_GCM_VECTORS: &[GcmVector] = &[
+struct GcmVector {
+    key: &'static str,
+    nonce: &'static str,
+    pt: &'static str,
+    aad: &'static str,
+    ct: &'static str,
+    tag: &'static str,
+}
+
+const NIST_GCM_VECTORS: &[GcmVector] = &[
+    // Test Case 13 – empty plaintext, empty AAD, 256-bit key
+    GcmVector {
+        key: "0000000000000000000000000000000000000000000000000000000000000000",
+        nonce: "000000000000000000000000",
+        pt: "",
+        aad: "",
+        ct: "",
+        tag: "530f8afbc74536b9a963b4f1c4cb738b",
+    },
+    // Test Case 14 – plaintext = 16 zero bytes, empty AAD, 256-bit key
+    GcmVector {
+        key: "0000000000000000000000000000000000000000000000000000000000000000",
+        nonce: "000000000000000000000000",
+        pt: "00000000000000000000000000000000",
+        aad: "",
+        ct: "cea7403d4d606b6e074ec5d3baf39d18",
+        tag: "d0d1c8a799996bf0265b98b5d48ab919",
+    },
+    // Test Case 15 – from NIST SP 800-38D
+    GcmVector {
+        key: "feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308",
+        nonce: "cafebabefacedbaddecaf888",
+        pt: "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b391aafd255",
+        aad: "",
+        ct: "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662898015ad",
+        tag: "b094dac5d93471bdec1a502270e3cc6c",
+    },
+    // Test Case 16 – with AAD
+    GcmVector {
+        key: "feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308",
+        nonce: "cafebabefacedbaddecaf888",
+        pt: "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39",
+        aad: "feedfacedeadbeeffeedfacedeadbeefabaddad2",
+        ct: "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662",
+        tag: "76fc6ece0f4e1768cddf8853bb2d551b",
+    },
+];
+
+const EXTRA_GCM_VECTORS: &[GcmVector] = &[
     // Source: pyca/cryptography (Count=0)
     GcmVector {
         key: "b52c505a37d78eda5dd34f20c22540ea1b58963cf8e5bf8ffa85f9f2492505b4",

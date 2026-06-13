@@ -1,5 +1,5 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use crypto::aes::Aes256Gcm;
+use crypto::{Aead, aes::Aes256Gcm};
 
 const DATA_SIZES: [usize; 7] = [64, 256, 1024, 16 * 1024, 64 * 1024, 1024 * 1024, 10 * 1024 * 1024];
 
@@ -21,7 +21,7 @@ fn bench_encrypt(c: &mut Criterion) {
             b.iter_batched(
                 || vec![0xA5_u8; size],
                 |mut data| {
-                    let _tag = cipher.encrypt_in_place(&mut data, &NONCE_96, &[]);
+                    let _tag = cipher.encrypt_in_place(&mut data, &NONCE_96[..], &[]);
                 },
                 criterion::BatchSize::SmallInput,
             );
@@ -42,11 +42,11 @@ fn bench_decrypt(c: &mut Criterion) {
             b.iter_batched(
                 || {
                     let mut data = vec![0xA5_u8; size];
-                    let tag = cipher.encrypt_in_place(&mut data, &NONCE_96, &[]);
+                    let tag = cipher.encrypt_in_place(&mut data, &NONCE_96[..], &[]);
                     (data, tag)
                 },
                 |(mut data, tag)| {
-                    let _result = cipher.decrypt_in_place(&mut data, &tag, &NONCE_96, &[]);
+                    let _result = cipher.decrypt_in_place(&mut data, &NONCE_96[..], &[], tag.as_ref());
                 },
                 criterion::BatchSize::SmallInput,
             );

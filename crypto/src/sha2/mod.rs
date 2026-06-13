@@ -1,4 +1,5 @@
 mod sha256;
+mod sha384;
 mod sha512;
 
 #[cfg(target_arch = "x86_64")]
@@ -11,4 +12,5 @@ mod sha512_amd64;
 mod sha512_arm64;
 
 pub use sha256::Sha256;
+pub use sha384::Sha384;
 pub use sha512::Sha512;
