@@ -7,9 +7,9 @@
 //! # Quick start
 //!
 //! ```rust
-//! use template::{Engine, Mode, args};
+//! use template::{Engine, EscapeMode, args};
 //!
-//! let mut engine = Engine::new(Mode::Html);
+//! let mut engine = Engine::new(EscapeMode::Html);
 //! engine.add_template("hello", "<p>Hello, {{ name }}!</p>");
 //!
 //! let result = engine.render("hello", args! { name: "World" });
@@ -24,9 +24,9 @@
 //! The [`args!`] macro builds a context map without requiring `serde_json`:
 //!
 //! ```rust
-//! use template::{Engine, Mode, args};
+//! use template::{Engine, EscapeMode, args};
 //!
-//! let mut engine = Engine::new(Mode::Text);
+//! let mut engine = Engine::new(EscapeMode::Text);
 //! engine.add_template("t", "{{ name }} is {{ age }}").unwrap();
 //!
 //! let result = engine.render("t", args! {
@@ -45,9 +45,9 @@
 //! Iterate over a list with `{% for %}`:
 //!
 //! ```rust
-//! use template::{Engine, Mode, args};
+//! use template::{Engine, EscapeMode, args};
 //!
-//! let mut engine = Engine::new(Mode::Text);
+//! let mut engine = Engine::new(EscapeMode::Text);
 //! engine.add_template("list", "{% for item in items %}- {{ item }}
 //! {% endfor %}").unwrap();
 //!
@@ -60,9 +60,9 @@
 //! Access elements by index, including nested fields:
 //!
 //! ```rust
-//! use template::{Engine, Mode, args};
+//! use template::{Engine, EscapeMode, args};
 //!
-//! let mut engine = Engine::new(Mode::Text);
+//! let mut engine = Engine::new(EscapeMode::Text);
 //! engine.add_template("t", "{{ users[0].name }}, {{ users[1].name }}").unwrap();
 //!
 //! let result = engine.render("t", args! {
@@ -77,9 +77,9 @@
 //! Use filters on arrays — `join`, `first`, `last`, `length`, `reverse`:
 //!
 //! ```rust
-//! use template::{Engine, Mode, args};
+//! use template::{Engine, EscapeMode, args};
 //!
-//! let mut engine = Engine::new(Mode::Text);
+//! let mut engine = Engine::new(EscapeMode::Text);
 //! engine.add_template("t", "\
 //! join: {{ items | join(\", \") }}
 //! first: {{ items | first }}
@@ -103,9 +103,9 @@
 //! Check membership with the `in` operator:
 //!
 //! ```rust
-//! use template::{Engine, Mode, args};
+//! use template::{Engine, EscapeMode, args};
 //!
-//! let mut engine = Engine::new(Mode::Text);
+//! let mut engine = Engine::new(EscapeMode::Text);
 //! engine.add_template("t",
 //!     "{% if \"admin\" in roles %}Welcome, admin!{% endif %}"
 //! ).unwrap();
@@ -119,9 +119,9 @@
 //! Render directly from a Rust `Vec`:
 //!
 //! ```rust
-//! use template::{Engine, Mode, args};
+//! use template::{Engine, EscapeMode, args};
 //!
-//! let mut engine = Engine::new(Mode::Text);
+//! let mut engine = Engine::new(EscapeMode::Text);
 //! engine.add_template("t", "{% for n in numbers %}{{ n }} {% endfor %}").unwrap();
 //!
 //! let result = engine.render("t", args! {
@@ -133,9 +133,9 @@
 //! Filter across a nested array field:
 //!
 //! ```rust
-//! use template::{Engine, Mode, args};
+//! use template::{Engine, EscapeMode, args};
 //!
-//! let mut engine = Engine::new(Mode::Text);
+//! let mut engine = Engine::new(EscapeMode::Text);
 //! engine.add_template("t",
 //!     "{% for tag in post.tags %}{{ tag | upper }} {% endfor %}"
 //! ).unwrap();
@@ -151,8 +151,8 @@
 //!
 //! # Modes
 //!
-//! - `Mode::Html` — auto-escapes `{{ ... }}` output (escapes `&`, `<`, `>`, `"`, `'`)
-//! - `Mode::Text` — no escaping, raw output
+//! - `EscapeMode::Html` — auto-escapes `{{ ... }}` output (escapes `&`, `<`, `>`, `"`, `'`)
+//! - `EscapeMode::Text` — no escaping, raw output
 //!
 //! # Template syntax
 //!
@@ -262,7 +262,7 @@ mod parser;
 pub mod value;
 mod vm;
 
-pub use engine::{Engine, Mode};
+pub use engine::{Engine, EscapeMode};
 pub use error::Error;
 pub use value::Value;
 
@@ -273,9 +273,9 @@ pub use value::Value;
 /// construction from external data.
 ///
 /// ```rust
-/// use template::{Engine, Mode, args};
+/// use template::{Engine, EscapeMode, args};
 ///
-/// let mut engine = Engine::new(Mode::Text);
+/// let mut engine = Engine::new(EscapeMode::Text);
 /// engine.add_template("t", "Hello, {{ name }}!").unwrap();
 ///
 /// let result = engine.render("t", args! { name: "World" }).unwrap();
@@ -285,9 +285,9 @@ pub use value::Value;
 /// Supports nesting, vectors, and all types that implement [`Into<Value>`]:
 ///
 /// ```rust
-/// use template::{Engine, Mode, args};
+/// use template::{Engine, EscapeMode, args};
 ///
-/// let mut engine = Engine::new(Mode::Text);
+/// let mut engine = Engine::new(EscapeMode::Text);
 /// engine.add_template("t", "\
 /// {% for item in items %}- {{ item }}
 /// {% endfor %}").unwrap();
