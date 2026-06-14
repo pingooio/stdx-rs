@@ -344,6 +344,81 @@ mod test {
         let result = ae.decrypt_in_place(&mut decrypted, &[1u8; 12], b"", tag.as_ref());
         assert!(result.is_err());
     }
+
+    // --- Wycheproof test vectors ---
+
+    #[test]
+    fn wycheproof_chacha20_poly1305_vectors() {
+        let data: serde_json::Value = serde_json::from_str(include_str!(
+            "../../testdata/wycheproof/testvectors_v1/chacha20_poly1305_test.json"
+        ))
+        .unwrap();
+        let mut valid_tested = 0u64;
+        let mut invalid_tested = 0u64;
+        for group in data["testGroups"].as_array().unwrap() {
+            if group["keySize"].as_u64() != Some(256) {
+                continue;
+            }
+            if group["ivSize"].as_u64() != Some(96) {
+                continue;
+            }
+            if group["tagSize"].as_u64() != Some(128) {
+                continue;
+            }
+            for test in group["tests"].as_array().unwrap() {
+                let key_hex = test["key"].as_str().unwrap();
+                let iv_hex = test["iv"].as_str().unwrap();
+                let msg_hex = test["msg"].as_str().unwrap();
+                let aad_hex = test["aad"].as_str().unwrap();
+                let ct_hex = test["ct"].as_str().unwrap();
+                let tag_hex = test["tag"].as_str().unwrap();
+                let result = test["result"].as_str().unwrap();
+
+                let key: [u8; 32] = hex::decode(key_hex).unwrap().try_into().unwrap();
+                let nonce: [u8; 12] = hex::decode(iv_hex).unwrap().try_into().unwrap();
+                let expected_ct = hex::decode(ct_hex).unwrap();
+                let expected_tag: [u8; 16] = hex::decode(tag_hex).unwrap().try_into().unwrap();
+                let pt = hex::decode(msg_hex).unwrap();
+                let aad = hex::decode(aad_hex).unwrap();
+
+                let cipher = ChaCha20Poly1305::new(&key);
+
+                if result == "valid" {
+                    let mut buf = pt.clone();
+                    let tag = cipher.encrypt_in_place(&mut buf, &nonce, &aad);
+                    assert_eq!(
+                        buf, expected_ct,
+                        "wycheproof ChaCha20-Poly1305 tcId={} ct mismatch",
+                        test["tcId"]
+                    );
+                    assert_eq!(
+                        tag.as_ref(),
+                        &expected_tag[..],
+                        "wycheproof ChaCha20-Poly1305 tcId={} tag mismatch",
+                        test["tcId"]
+                    );
+
+                    let mut buf2 = expected_ct.clone();
+                    cipher
+                        .decrypt_in_place(&mut buf2, &nonce, &aad, &expected_tag)
+                        .expect("wycheproof ChaCha20-Poly1305 decrypt failed");
+                    assert_eq!(buf2, pt, "wycheproof ChaCha20-Poly1305 tcId={} pt mismatch", test["tcId"]);
+                    valid_tested += 1;
+                } else {
+                    let mut buf = expected_ct.clone();
+                    let res = cipher.decrypt_in_place(&mut buf, &nonce, &aad, &expected_tag);
+                    assert!(
+                        res.is_err(),
+                        "wycheproof ChaCha20-Poly1305 tcId={} expected invalid but passed",
+                        test["tcId"]
+                    );
+                    invalid_tested += 1;
+                }
+            }
+        }
+        assert!(valid_tested > 0, "no valid ChaCha20-Poly1305 wycheproof tests were run");
+        assert!(invalid_tested > 0, "no invalid ChaCha20-Poly1305 wycheproof tests were run");
+    }
 }
 
 #[cfg(test)]
@@ -455,5 +530,80 @@ mod xchacha20poly1305_tests {
         let mut decrypted = ciphertext.clone();
         let result = ae.decrypt_in_place(&mut decrypted, &[1u8; 24], b"", tag.as_ref());
         assert!(result.is_err());
+    }
+
+    // --- Wycheproof test vectors ---
+
+    #[test]
+    fn wycheproof_xchacha20_poly1305_vectors() {
+        let data: serde_json::Value = serde_json::from_str(include_str!(
+            "../../testdata/wycheproof/testvectors_v1/xchacha20_poly1305_test.json"
+        ))
+        .unwrap();
+        let mut valid_tested = 0u64;
+        let mut invalid_tested = 0u64;
+        for group in data["testGroups"].as_array().unwrap() {
+            if group["keySize"].as_u64() != Some(256) {
+                continue;
+            }
+            if group["ivSize"].as_u64() != Some(192) {
+                continue;
+            }
+            if group["tagSize"].as_u64() != Some(128) {
+                continue;
+            }
+            for test in group["tests"].as_array().unwrap() {
+                let key_hex = test["key"].as_str().unwrap();
+                let iv_hex = test["iv"].as_str().unwrap();
+                let msg_hex = test["msg"].as_str().unwrap();
+                let aad_hex = test["aad"].as_str().unwrap();
+                let ct_hex = test["ct"].as_str().unwrap();
+                let tag_hex = test["tag"].as_str().unwrap();
+                let result = test["result"].as_str().unwrap();
+
+                let key: [u8; 32] = hex::decode(key_hex).unwrap().try_into().unwrap();
+                let nonce: [u8; 24] = hex::decode(iv_hex).unwrap().try_into().unwrap();
+                let expected_ct = hex::decode(ct_hex).unwrap();
+                let expected_tag: [u8; 16] = hex::decode(tag_hex).unwrap().try_into().unwrap();
+                let pt = hex::decode(msg_hex).unwrap();
+                let aad = hex::decode(aad_hex).unwrap();
+
+                let cipher = XChaCha20Poly1305::new(&key);
+
+                if result == "valid" {
+                    let mut buf = pt.clone();
+                    let tag = cipher.encrypt_in_place(&mut buf, &nonce, &aad);
+                    assert_eq!(
+                        buf, expected_ct,
+                        "wycheproof XChaCha20-Poly1305 tcId={} ct mismatch",
+                        test["tcId"]
+                    );
+                    assert_eq!(
+                        tag.as_ref(),
+                        &expected_tag[..],
+                        "wycheproof XChaCha20-Poly1305 tcId={} tag mismatch",
+                        test["tcId"]
+                    );
+
+                    let mut buf2 = expected_ct.clone();
+                    cipher
+                        .decrypt_in_place(&mut buf2, &nonce, &aad, &expected_tag)
+                        .expect("wycheproof XChaCha20-Poly1305 decrypt failed");
+                    assert_eq!(buf2, pt, "wycheproof XChaCha20-Poly1305 tcId={} pt mismatch", test["tcId"]);
+                    valid_tested += 1;
+                } else {
+                    let mut buf = expected_ct.clone();
+                    let res = cipher.decrypt_in_place(&mut buf, &nonce, &aad, &expected_tag);
+                    assert!(
+                        res.is_err(),
+                        "wycheproof XChaCha20-Poly1305 tcId={} expected invalid but passed",
+                        test["tcId"]
+                    );
+                    invalid_tested += 1;
+                }
+            }
+        }
+        assert!(valid_tested > 0, "no valid XChaCha20-Poly1305 wycheproof tests were run");
+        assert!(invalid_tested > 0, "no invalid XChaCha20-Poly1305 wycheproof tests were run");
     }
 }

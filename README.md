@@ -22,7 +22,7 @@ base64 = { git = "https://codeberg.org/rust-stdx/stdx", branch = "main" }
 base64 = { git = "https://git.[my-organization].com/[username]/stdx", branch = "main" }
 ```
 
-Contrary to what the name may suggest, most packages also support `no_std` environments by disabling the default `std` feature. Look at the documentation of individual packages to learn more.
+Contrary to what the name may suggest, most packages also support `no_std` environments by disabling the default `std` feature, and some also work without `alloc` by disabling the `alloc` feature. Look at the documentation of individual packages to learn more.
 
 
 Other than crates in the `work_in_progress` folder, the `main` branch is considered stable. Minor breaking changes may happen from time to time, but we will do our best to reduce disruptions.
