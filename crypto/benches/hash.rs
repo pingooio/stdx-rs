@@ -1,7 +1,10 @@
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use crypto::{
     Hasher,
-    sha2::{Sha256, Sha384, Sha512},
+    blake3::Blake3,
+    sha2::{Sha256, Sha512},
     sha3::{Sha3_256, Sha3_512},
 };
 
@@ -35,6 +38,12 @@ fn bench_hashes(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter("SHA3-512"), &data, |b, data| {
             b.iter(|| {
                 let _ = Sha3_512::hash(black_box(data.as_slice()));
+            });
+        });
+
+        group.bench_with_input(BenchmarkId::from_parameter("BLAKE3"), &data, |b, data| {
+            b.iter(|| {
+                let _ = Blake3::hash(black_box(data.as_slice()));
             });
         });
 

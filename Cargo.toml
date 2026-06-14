@@ -69,6 +69,7 @@ members = [
 ]
 
 [workspace.dependencies]
+blake3 = { default-features = false, git = "https://github.com/BLAKE3-team/BLAKE3", ref = "93a431c78a52d7ccf0f366f106467f5070e6075e" } # 1.8.5
 bytes = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "oldtime", "serde", "std", ] }
 futures-util = "0.3"
