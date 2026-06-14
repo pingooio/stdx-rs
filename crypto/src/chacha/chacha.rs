@@ -329,7 +329,7 @@ impl<const ROUNDS: usize> XChaCha<ROUNDS> {
     /// The first 16 bytes of the nonce are used with HChaCha20 to derive a subkey.
     /// The last 8 bytes of the nonce become the ChaCha20 IETF nonce (prefixed with 4 zero bytes).
     pub fn new(key: &[u8; 32], nonce: &[u8; 24]) -> XChaCha<ROUNDS> {
-        let subkey = super::hchacha20::hchacha20(key, nonce[..16].try_into().unwrap());
+        let subkey = super::hchacha20(key, nonce[..16].try_into().unwrap());
         let mut ietf_nonce = [0u8; 12];
         ietf_nonce[4..12].copy_from_slice(&nonce[16..24]);
         return XChaCha {
