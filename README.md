@@ -1,10 +1,6 @@
 # Rust's (unofficial) extended standard library: simplicity, performance and supply chain security for everyone
 
-Rust's biggest problem is its anemic standard library unable to fulfill the needs of most developers. It leads not only to a fragmented ecosystem with multiple competing packages (so you end up with 10 different packages to handle time and 15 crypto libraries, and packages named "froggy" because "template" was already taken on crates.io) but also to elevated supply chain risks (see [Supply chain nightmare: How Rust will be attacked and what we can do to mitigate the inevitable](https://kerkour.com/rust-supply-chain-nightmare)).
-
-This is why we are creating Rust's extended standard library, inspired by Go's extensive standard library and `golang.org/x/...` packages, to bring simplicity, performance and supply chain security to every Rust developer.
-
-The goal is that `stdx` only uses code from `std` and `stdx`, supports `no_std` use cases, and doesn't import any third-party packages. No supply chain risks, no ecosystem fragmentation.
+Inspired by Go's extensive standard library, we are building Rust's extended standard library to bring simplicity, performance and supply chain security to every Rust developer.
 
 Once the idea has proven valuable, we plan to donate the entire codebase to the Rust Foundation to build trust and drive adoption.
 
@@ -13,7 +9,6 @@ Learn more in the announcement post: https://kerkour.com/stdx
 
 
 ## Usage
-
 
 To avoid namespace clashes and supply chain risks, we do not use a centralized package repository. Import packages directly from source, for example:
 
@@ -27,11 +22,11 @@ base64 = { git = "https://codeberg.org/rust-stdx/stdx", branch = "main" }
 base64 = { git = "https://git.[my-organization].com/[username]/stdx", branch = "main" }
 ```
 
-Other than crates in the `work_in_progress` folder, the `main` branch is considered production-ready.
-
 Contrary to what the name may suggest, most packages also support `no_std` environments by disabling the default `std` feature. Look at the documentation of individual packages to learn more.
 
-> **Warning ⚠️**: The project is moving fast, we can't provide any stability guarantees at this time.
+
+Other than crates in the `work_in_progress` folder, the `main` branch is considered stable. Minor breaking changes may happen from time to time, but we will do our best to reduce disruptions.
+
 
 
 ## Documentation
@@ -55,7 +50,7 @@ https://rust-stdx.github.io/stdx
 
 `stdx` is only possible thanks to our awesome partners!
 
-Join our partner program to invest in the future of Rust and get unfair advantages such as priority support and roadmap prioritization. See [FUNDING.md](./FUNDING.md) or reach out at [code@pingoo.io](mailto:code@pingoo.io) to learn more.
+Join our partner program to invest in the future of Rust and get unfair advantages such as end-to-end supply chain traceability and security, priority support and roadmap prioritization. See [FUNDING.md](./FUNDING.md) or reach out at [code@pingoo.io](mailto:code@pingoo.io) to learn more.
 
 
 ## Contributing

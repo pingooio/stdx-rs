@@ -378,6 +378,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "blake3"
+version = "1.8.5"
+source = "git+https://github.com/BLAKE3-team/BLAKE3#8aa5145039b972ba30e98e788752d37d14568824"
+dependencies = [
+ "arrayref",
+ "arrayvec",
+ "cc",
+ "cfg-if",
+ "constant_time_eq 0.4.2",
+ "cpufeatures 0.3.0",
+ "zeroize",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -471,7 +485,7 @@ name = "chacha20-blake3"
 version = "0.9.11"
 source = "git+https://github.com/skerkour/chacha20-blake3?branch=main#9942bf34c77b03896bb1733079256076ca823e58"
 dependencies = [
- "blake3",
+ "blake3 1.8.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "chacha",
  "constant_time_eq 0.4.2",
  "zeroize",
@@ -780,6 +794,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.1.0",
  "big_number",
+ "blake3 1.8.5 (git+https://github.com/BLAKE3-team/BLAKE3)",
  "constant_time_eq 0.3.0",
  "criterion",
  "hex 0.1.0",
