@@ -3,7 +3,7 @@ use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use crypto::{
     hmac::Hmac,
-    poly1305::poly1305_mac,
+    poly1305::Poly1305,
     sha2::{Sha256, Sha512},
     sha3::Kmac256,
 };
@@ -53,7 +53,7 @@ fn bench_macs(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::from_parameter("Poly1305"), &data, |b, data| {
             b.iter(|| {
-                let out = poly1305_mac(&KEY, data);
+                let out = Poly1305::mac(&KEY, data);
                 black_box(out);
             });
         });

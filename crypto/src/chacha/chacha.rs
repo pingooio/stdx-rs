@@ -21,10 +21,7 @@ pub type ChaCha8Djb = ChaCha<8, false>;
 pub type ChaCha12Djb = ChaCha<12, false>;
 pub type ChaCha20Djb = ChaCha<20, false>;
 pub type ChaCha20Ietf = ChaCha<20, true>;
-pub type ChaCha12Ietf = ChaCha<12, true>;
 pub type XChaCha20 = XChaCha<20>;
-pub type XChaCha12 = XChaCha<12>;
-pub type XChaCha8 = XChaCha<8>;
 
 /// ChaCha stream cipher.
 ///

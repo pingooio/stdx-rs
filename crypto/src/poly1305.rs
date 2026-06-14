@@ -231,6 +231,24 @@ impl Poly1305 {
         tag[12..16].copy_from_slice(&(f3 as u32).to_le_bytes());
         return tag;
     }
+
+    /// Computes the Poly1305 message authentication code as specified in RFC 8439.
+    ///
+    /// `key` must be 32 bytes (`r || s`).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use crypto::poly1305::Poly1305;
+    ///
+    /// let key = b"0123456789abcdef0123456789abcdef";
+    /// let tag = Poly1305::mac(key, b"message");
+    /// ```
+    pub fn mac(key: &[u8; 32], data: &[u8]) -> [u8; 16] {
+        let mut mac = Poly1305::new(key);
+        mac.update(data);
+        return mac.finalize();
+    }
 }
 
 const MASK26: u64 = 0x3ffffff;
@@ -297,24 +315,6 @@ fn process_block(
     *h1 += c;
 }
 
-/// Computes the Poly1305 message authentication code as specified in RFC 8439.
-///
-/// `key` must be 32 bytes (`r || s`).
-///
-/// # Example
-///
-/// ```ignore
-/// use crypto::poly1305::poly1305_mac;
-///
-/// let key = b"0123456789abcdef0123456789abcdef";
-/// let tag = poly1305_mac(key, b"message");
-/// ```
-pub fn poly1305_mac(key: &[u8; 32], data: &[u8]) -> [u8; 16] {
-    let mut mac = Poly1305::new(key);
-    mac.update(data);
-    return mac.finalize();
-}
-
 #[inline]
 fn load_u32_le_padded(bytes: &[u8], offset: usize) -> u32 {
     let mut word = [0u8; 4];
@@ -327,7 +327,7 @@ fn load_u32_le_padded(bytes: &[u8], offset: usize) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::poly1305_mac;
+    use super::Poly1305;
 
     struct TestVector {
         source: &'static str,
@@ -430,7 +430,7 @@ mod tests {
             let data = decode_hex(vector.data_hex);
             let expected = decode_hex(vector.expected_hex);
 
-            let mac = poly1305_mac(&key, &data);
+            let mac = Poly1305::mac(&key, &data);
             assert_eq!(mac.as_slice(), expected.as_slice(), "{}", vector.source);
         }
     }
@@ -443,13 +443,13 @@ mod tests {
         let data = decode_hex(
             "2754776173206272696c6c69672c20616e642074686520736c6974687920746f7665730a446964206779726520616e642067696d626c6520696e2074686520776162653a0a416c6c206d696d737920776572652074686520626f726f676f7665732c0a416e6420746865206d6f6d65207261746873206f757467726162652e",
         );
-        let single = poly1305_mac(&key, &data);
+        let single = Poly1305::mac(&key, &data);
 
         let mut rebuilt = Vec::with_capacity(data.len());
         for chunk in data.chunks(7) {
             rebuilt.extend_from_slice(chunk);
         }
-        let chunked = poly1305_mac(&key, &rebuilt);
+        let chunked = Poly1305::mac(&key, &rebuilt);
         assert_eq!(single, chunked);
     }
 
@@ -809,7 +809,7 @@ mod tests {
             let key: [u8; 32] = decode_hex(v.key_hex).try_into().unwrap();
             let data = decode_hex(v.data_hex);
             let expected = decode_hex(v.expected_hex);
-            let mac = poly1305_mac(&key, &data);
+            let mac = Poly1305::mac(&key, &data);
             assert_eq!(mac.as_slice(), expected.as_slice(), "go/crypto poly1305 vector {}", i + 1);
         }
     }
