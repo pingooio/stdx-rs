@@ -5,7 +5,7 @@ use constant_time_eq::constant_time_eq;
 /// Comparing `Bytes` is a constant-time operation.
 #[derive(Clone)]
 #[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
-pub struct Bytes<const N: usize> {
+pub(crate) struct Bytes<const N: usize> {
     bytes: [u8; N],
     length: u16,
 }

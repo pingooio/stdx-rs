@@ -1,5 +1,69 @@
 use crate::{Hash, Hasher, Xof};
 
+/// BLAKE3 hash function and extensible-output function (XOF).
+///
+/// Implements both the [`Hasher`] and [`Xof`] traits.
+///
+/// # One-shot API
+///
+/// ```ignore
+/// use crypto::{Hasher, blake3::Blake3};
+///
+/// let hash = Blake3::hash(b"hello world");
+/// ```
+///
+/// # Incremental API
+///
+/// ```ignore
+/// use crypto::{Hasher, blake3::Blake3};
+///
+/// let mut hasher = Blake3::new();
+/// hasher.update(b"hello ");
+/// hasher.update(b"world");
+/// let hash = hasher.sum();
+/// ```
+///
+/// # XOF API
+///
+/// ```ignore
+/// use crypto::{blake3::Blake3, Xof};
+///
+/// let mut hasher = Blake3::new();
+/// hasher.absorb(b"hello world");
+/// let mut out = [0u8; 64];
+/// hasher.squeeze(&mut out);
+/// ```
+///
+/// # Keyed hashing
+///
+/// ```ignore
+/// use crypto::{Hasher, blake3::Blake3};
+///
+/// let key = b"whats the Elvish word for friend";
+/// let mut hasher = Blake3::new_keyed(key);
+/// hasher.update(b"hello world");
+/// let hash = hasher.sum();
+/// ```
+///
+/// The [`keyed_hash`](Blake3::keyed_hash) one-shot is also available:
+///
+/// ```ignore
+/// use crypto::blake3::Blake3;
+///
+/// let key = b"whats the Elvish word for friend";
+/// let hash = Blake3::keyed_hash(key, b"hello world");
+/// ```
+///
+/// # Derive-key mode
+///
+/// ```ignore
+/// use crypto::blake3::Blake3;
+///
+/// let key = Blake3::derive_key("my app context", b"key material");
+/// let mut hasher = Blake3::new_keyed(&key);
+/// hasher.update(b"hello world");
+/// let hash = hasher.sum();
+/// ```
 pub struct Blake3 {
     hasher: blake3::Hasher,
     xof_reader: Option<blake3::OutputReader>,
