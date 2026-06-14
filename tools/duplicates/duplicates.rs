@@ -7,14 +7,14 @@ use std::{
     thread,
 };
 
-use crypto::{Hasher, sha2::Sha256};
+use crypto::{Hasher, blake3::Blake3};
 use tokio::{fs::File, io::AsyncReadExt, sync::Semaphore, task};
 use walkdir::WalkDir;
 
 /// Scans one or more directories for duplicate files and prints groups
 /// sorted by total disk space used (size × occurrence count).
 ///
-/// Each group lists the human-readable total size, the SHA-256 hash, and
+/// Each group lists the human-readable total size, the BLAKE3 hash, and
 /// every path sharing that hash.
 ///
 /// # Errors
@@ -108,7 +108,7 @@ async fn process_directory(
 async fn hash_file(path: &Path) -> Result<([u8; 32], u64), io::Error> {
     let mut file = File::open(path).await?;
     let size = file.metadata().await?.len();
-    let mut hasher = Sha256::new();
+    let mut hasher = Blake3::new();
     let mut buf = vec![0u8; 1024 * 1024];
     loop {
         let n = file.read(&mut buf).await?;
