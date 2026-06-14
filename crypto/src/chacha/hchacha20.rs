@@ -10,10 +10,6 @@
 /// 2. Perform 20 rounds (10 double rounds) of ChaCha quarter rounds.
 /// 3. Output words 0-3 and 12-15 of the final state, serialized as
 ///    little-endian bytes (without adding the initial state back).
-///
-/// # Panics
-///
-/// This function does not panic.
 pub fn hchacha20(key: &[u8; 32], input: &[u8; 16]) -> [u8; 32] {
     use super::{CONSTANT, STATE_WORDS, quarter_round};
 

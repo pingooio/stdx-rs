@@ -25,7 +25,8 @@ pub mod chacha20poly1305;
 pub use chacha20poly1305::{ChaCha20Poly1305, XChaCha20Poly1305};
 
 /// HChaCha20 hash function.
-pub mod hchacha20;
+mod hchacha20;
+pub use hchacha20::hchacha20;
 
 /// ChaCha and XChaCha cipher implementations.
 mod chacha;
