@@ -18,7 +18,7 @@ pub const SIMD_LANES: usize = 4;
 pub fn chacha_neon<const ROUNDS: usize, const IS_IETF: bool>(
     state: &mut [u32; STATE_WORDS],
     input: &mut [u8],
-    last_keystream_block: &mut [u8; BLOCK_SIZE],
+    last_keystream_block: &mut [u8; BLOCK_SIZE - 1],
 ) {
     let mut counter = if IS_IETF {
         state[12] as u64
@@ -97,8 +97,11 @@ pub fn chacha_neon<const ROUNDS: usize, const IS_IETF: bool>(
     if input.len() % BLOCK_SIZE != 0 {
         let last_keystream_block_index = ((input.len() - 1) / BLOCK_SIZE) % SIMD_LANES;
         let last_keystream_block_offset = last_keystream_block_index * BLOCK_SIZE;
-        last_keystream_block
-            .copy_from_slice(&keystream[last_keystream_block_offset..last_keystream_block_offset + BLOCK_SIZE]);
+        let consumed = input.len() % BLOCK_SIZE;
+        let remaining = BLOCK_SIZE - consumed;
+        last_keystream_block[..remaining].copy_from_slice(
+            &keystream[last_keystream_block_offset + consumed..last_keystream_block_offset + BLOCK_SIZE],
+        );
     }
 }
 

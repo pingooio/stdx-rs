@@ -20,6 +20,14 @@ mod chacha_avx2;
 ))]
 mod chacha_avx512;
 
+/// ChaCha and XChaCha cipher implementations.
+mod chacha;
+
+pub(crate) use chacha::{BLOCK_SIZE, CONSTANT, STATE_WORDS, quarter_round};
+pub use chacha::{ChaCha, ChaCha8Djb, ChaCha12Djb, ChaCha20Djb, ChaCha20Ietf, XChaCha, XChaCha20};
+
+mod chachablake3;
+
 /// ChaCha20-Poly1305 AEAD construction (RFC 8439) and XChaCha20-Poly1305.
 mod chacha20poly1305;
 pub use chacha20poly1305::{ChaCha20Poly1305, XChaCha20Poly1305};
@@ -27,9 +35,3 @@ pub use chacha20poly1305::{ChaCha20Poly1305, XChaCha20Poly1305};
 /// HChaCha20 hash function.
 mod hchacha20;
 pub use hchacha20::hchacha20;
-
-/// ChaCha and XChaCha cipher implementations.
-mod chacha;
-
-pub(crate) use chacha::{BLOCK_SIZE, CONSTANT, STATE_WORDS, quarter_round};
-pub use chacha::{ChaCha, ChaCha8Djb, ChaCha12Djb, ChaCha20Djb, ChaCha20Ietf, XChaCha, XChaCha20};

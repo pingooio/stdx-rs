@@ -38,15 +38,17 @@ pub struct ChaCha<const ROUNDS: usize, const IS_IETF: bool> {
     /// xor_keystream(plaintext[0..3]), xor_keystream(plaintext[3..50]), xor_keystream(plaintext[50..150]);
     /// Should be equal to calling it only once:
     /// xor_keystream(plaintext[0..150]);
-    /// For that, we keep the last computed keystream block, as well as an index of where in the keystream
-    /// we were after completing the last call.
-    /// Then, when calling `xor_keystream` again, we first check if there is sone leftover form the last
-    /// keystream.
+    /// For that, we keep the last computed keystream block, as well as how many bytes remain
+    /// from that block after completing the last call.
+    /// Then, when calling `xor_keystream` again, we first check if there is some leftover from
+    /// the last keystream.
     /// NOTE: the `last_keystream_block` is valid only if the previous call to `xor_keystream` had
     /// an input.len() % 64 != 0.
     /// Otherwise there is no need to preserve the last keystream block.
-    last_keystream_block: [u8; BLOCK_SIZE],
-    last_keystream_block_index: usize,
+    /// The unconsumed tail of the last keystream block is stored starting at `last_keystream_block[0]`,
+    /// and `last_keystream_block_remaining` holds the number of remaining bytes (0..=63).
+    last_keystream_block: [u8; BLOCK_SIZE - 1],
+    last_keystream_block_remaining: u8,
 }
 
 impl<const ROUNDS: usize, const IS_IETF: bool> ChaCha<ROUNDS, IS_IETF> {
@@ -84,8 +86,8 @@ impl<const ROUNDS: usize> ChaCha<ROUNDS, false> {
 
         return ChaCha {
             state,
-            last_keystream_block: [0u8; BLOCK_SIZE],
-            last_keystream_block_index: 0,
+            last_keystream_block: [0u8; BLOCK_SIZE - 1],
+            last_keystream_block_remaining: 0,
         };
     }
 
@@ -94,7 +96,7 @@ impl<const ROUNDS: usize> ChaCha<ROUNDS, false> {
     #[inline(always)]
     pub fn set_counter(&mut self, counter: u64) {
         Self::inject_counter(&mut self.state, counter);
-        self.last_keystream_block_index = 0;
+        self.last_keystream_block_remaining = 0;
     }
 }
 
@@ -115,8 +117,8 @@ impl<const ROUNDS: usize> ChaCha<ROUNDS, true> {
 
         return ChaCha {
             state,
-            last_keystream_block: [0u8; BLOCK_SIZE],
-            last_keystream_block_index: 0,
+            last_keystream_block: [0u8; BLOCK_SIZE - 1],
+            last_keystream_block_remaining: 0,
         };
     }
 
@@ -125,7 +127,7 @@ impl<const ROUNDS: usize> ChaCha<ROUNDS, true> {
     #[inline(always)]
     pub fn set_counter(&mut self, counter: u32) {
         Self::inject_counter(&mut self.state, counter as u64);
-        self.last_keystream_block_index = 0;
+        self.last_keystream_block_remaining = 0;
     }
 }
 
@@ -137,8 +139,9 @@ impl<const ROUNDS: usize, const IS_IETF: bool> StreamCipher for ChaCha<ROUNDS, I
         }
 
         // first, consume the keystream leftover, if any
-        if self.last_keystream_block_index != 0 {
-            let remaining_keystream = &self.last_keystream_block[self.last_keystream_block_index..];
+        if self.last_keystream_block_remaining != 0 {
+            let remaining = self.last_keystream_block_remaining as usize;
+            let remaining_keystream = &self.last_keystream_block[..remaining];
 
             in_out
                 .iter_mut()
@@ -148,15 +151,17 @@ impl<const ROUNDS: usize, const IS_IETF: bool> StreamCipher for ChaCha<ROUNDS, I
             if in_out.len() > remaining_keystream.len() {
                 in_out = &mut in_out[remaining_keystream.len()..];
             } else if in_out.len() < remaining_keystream.len() {
-                self.last_keystream_block_index += in_out.len();
+                self.last_keystream_block_remaining -= in_out.len() as u8;
                 return;
             } else {
                 // plaintext.len() == remaining_keystream.len()
-                self.last_keystream_block_index = 0;
+                self.last_keystream_block_remaining = 0;
                 return;
             }
         }
-        self.last_keystream_block_index = in_out.len() % BLOCK_SIZE;
+
+        let consumed = in_out.len() % BLOCK_SIZE;
+        self.last_keystream_block_remaining = ((BLOCK_SIZE - consumed) % BLOCK_SIZE) as u8;
 
         // aarch64 assumes that NEON is always available
         #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
@@ -225,7 +230,7 @@ impl<const ROUNDS: usize, const IS_IETF: bool> StreamCipher for ChaCha<ROUNDS, I
 #[inline]
 fn chacha_generic<const ROUNDS: usize, const IS_IETF: bool>(
     mut state: &mut [u32; STATE_WORDS],
-    last_keystream_block: &mut [u8; BLOCK_SIZE],
+    last_keystream_block: &mut [u8; BLOCK_SIZE - 1],
     plaintext: &mut [u8],
 ) {
     let mut keystream = [0u8; BLOCK_SIZE];
@@ -284,7 +289,9 @@ fn chacha_generic<const ROUNDS: usize, const IS_IETF: bool>(
     ChaCha::<ROUNDS, IS_IETF>::inject_counter(state, counter);
 
     if plaintext.len() % BLOCK_SIZE != 0 {
-        last_keystream_block.copy_from_slice(&keystream);
+        let consumed = plaintext.len() % BLOCK_SIZE;
+        let remaining = BLOCK_SIZE - consumed;
+        last_keystream_block[..remaining].copy_from_slice(&keystream[consumed..]);
     }
 }
 

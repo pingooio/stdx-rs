@@ -1,8 +1,8 @@
 use crate::{Hash, Hasher, Xof};
 
-/// BLAKE3 hash function and extensible-output function (XOF).
+/// BLAKE3 hash function.
 ///
-/// Implements both the [`Hasher`] and [`Xof`] traits.
+/// Implements the [`Hasher`] trait.
 ///
 /// # One-shot API
 ///
@@ -26,12 +26,24 @@ use crate::{Hash, Hasher, Xof};
 /// # XOF API
 ///
 /// ```ignore
+/// use crypto::blake3::Blake3;
+///
+/// let mut hasher = Blake3::new();
+/// hasher.update(b"hello world");
+/// let mut out = [0u8; 64];
+/// hasher.xof(&mut out);
+/// ```
+///
+/// Or with the [`Blake3Xof`] type:
+///
+/// ```ignore
 /// use crypto::{blake3::Blake3, Xof};
 ///
 /// let mut hasher = Blake3::new();
-/// hasher.absorb(b"hello world");
+/// hasher.update(b"hello world");
+/// let mut xof = hasher.finalize_xof();
 /// let mut out = [0u8; 64];
-/// hasher.squeeze(&mut out);
+/// xof.squeeze(&mut out);
 /// ```
 ///
 /// # Keyed hashing
@@ -64,57 +76,50 @@ use crate::{Hash, Hasher, Xof};
 /// hasher.update(b"hello world");
 /// let hash = hasher.sum();
 /// ```
+#[derive(Clone)]
+#[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
 pub struct Blake3 {
     hasher: blake3::Hasher,
-    xof_reader: Option<blake3::OutputReader>,
 }
-
-impl Clone for Blake3 {
-    fn clone(&self) -> Self {
-        Self {
-            hasher: self.hasher.clone(),
-            xof_reader: None,
-        }
-    }
-}
-
-#[cfg(feature = "zeroize")]
-impl zeroize::Zeroize for Blake3 {
-    fn zeroize(&mut self) {
-        self.hasher.zeroize();
-        if let Some(ref mut reader) = self.xof_reader {
-            reader.zeroize();
-        }
-    }
-}
-
-#[cfg(feature = "zeroize")]
-impl zeroize::ZeroizeOnDrop for Blake3 {}
 
 impl Blake3 {
+    #[inline]
     pub fn new_keyed(key: &[u8; 32]) -> Self {
         Self {
             hasher: blake3::Hasher::new_keyed(key),
-            xof_reader: None,
         }
     }
 
+    #[inline]
     pub fn new_derive_key(context: &str) -> Self {
         Self {
             hasher: blake3::Hasher::new_derive_key(context),
-            xof_reader: None,
         }
     }
 
+    #[inline]
     pub fn derive_key(context: &str, key_material: &[u8]) -> [u8; 32] {
         blake3::derive_key(context, key_material)
     }
 
+    #[inline]
     pub fn keyed_hash(key: &[u8; 32], input: &[u8]) -> Hash {
         let blake3_hash = blake3::keyed_hash(key, input);
         let mut hash = crate::Bytes::<64>::new();
         hash.append(blake3_hash.as_bytes());
         Hash(hash)
+    }
+
+    #[inline]
+    pub fn finalize_xof(self) -> Blake3Xof {
+        Blake3Xof {
+            reader: self.hasher.finalize_xof(),
+        }
+    }
+
+    #[inline]
+    pub fn xof(self, output: &mut [u8]) {
+        self.finalize_xof().fill(output);
     }
 }
 
@@ -125,12 +130,10 @@ impl Hasher for Blake3 {
     fn new() -> Self {
         Self {
             hasher: blake3::Hasher::new(),
-            xof_reader: None,
         }
     }
 
     fn update(&mut self, data: &[u8]) {
-        self.xof_reader = None;
         self.hasher.update(data);
     }
 
@@ -142,21 +145,39 @@ impl Hasher for Blake3 {
     }
 }
 
-impl Xof for Blake3 {
-    fn absorb(&mut self, data: &[u8]) {
-        self.xof_reader = None;
-        self.hasher.update(data);
-    }
+/// BLAKE3 extensible-output function (XOF) reader.
+///
+/// Produced by [`Blake3::finalize_xof`]. Implements the [`Xof`] trait and
+/// also provides a direct [`fill`](Blake3Xof::fill) method.
+///
+/// ```ignore
+/// use crypto::{blake3::Blake3, Xof};
+///
+/// let mut hasher = Blake3::new();
+/// hasher.update(b"hello world");
+/// let mut xof = hasher.finalize_xof();
+/// let mut out = [0u8; 64];
+/// xof.squeeze(&mut out);
+/// ```
+#[derive(Clone)]
+#[cfg_attr(feature = "zeroize", derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop))]
+pub struct Blake3Xof {
+    reader: blake3::OutputReader,
+}
 
+impl Blake3Xof {
+    pub fn fill(&mut self, output: &mut [u8]) {
+        self.reader.fill(output);
+    }
+}
+
+impl Xof for Blake3Xof {
+    /// Do nothing.
+    fn absorb(&mut self, _data: &[u8]) {}
+
+    /// Fill `out` with bytes.
     fn squeeze(&mut self, out: &mut [u8]) {
-        match &mut self.xof_reader {
-            Some(reader) => reader.fill(out),
-            None => {
-                let mut reader = self.hasher.finalize_xof();
-                reader.fill(out);
-                self.xof_reader = Some(reader);
-            }
-        }
+        self.reader.fill(out);
     }
 }
 
@@ -312,8 +333,9 @@ mod tests {
             let input = test_input(case.input_len);
             let mut output = vec![0u8; 128];
             let mut hasher = Blake3::new();
-            hasher.absorb(&input);
-            hasher.squeeze(&mut output);
+            hasher.update(&input);
+            let mut xof = hasher.finalize_xof();
+            xof.squeeze(&mut output);
             let expected = hex::decode(case.hash).unwrap();
             assert_eq!(&output[..], &expected[..128], "XOF mismatch at input_len={}", case.input_len);
         }
@@ -325,9 +347,10 @@ mod tests {
             let input = test_input(case.input_len);
             let mut output = vec![0u8; 128];
             let mut hasher = Blake3::new();
-            hasher.absorb(&input);
-            hasher.squeeze(&mut output[..64]);
-            hasher.squeeze(&mut output[64..]);
+            hasher.update(&input);
+            let mut xof = hasher.finalize_xof();
+            xof.squeeze(&mut output[..64]);
+            xof.squeeze(&mut output[64..]);
             let expected = hex::decode(case.hash).unwrap();
             assert_eq!(
                 &output[..],
@@ -361,15 +384,17 @@ mod tests {
         let input = test_input(1024);
         let mut output_one = vec![0u8; 32];
         let mut h1 = Blake3::new();
-        h1.absorb(&input);
-        h1.squeeze(&mut output_one);
+        h1.update(&input);
+        let mut xof = h1.finalize_xof();
+        xof.squeeze(&mut output_one);
 
         let mut output_two = vec![0u8; 32];
         let mut h2 = Blake3::new();
         for chunk in input.chunks(13) {
-            h2.absorb(chunk);
+            h2.update(chunk);
         }
-        h2.squeeze(&mut output_two);
+        let mut xof = h2.finalize_xof();
+        xof.squeeze(&mut output_two);
 
         assert_eq!(output_one, output_two);
     }
