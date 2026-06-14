@@ -20,8 +20,7 @@ impl<'de> serde::Deserialize<'de> for Ipv4Network {
     where
         D: serde::Deserializer<'de>,
     {
-        let s = <String>::deserialize(deserializer)?;
-        Ipv4Network::from_str(&s).map_err(serde::de::Error::custom)
+        deserializer.deserialize_str(crate::serde_helpers::FromStrVisitor(core::marker::PhantomData))
     }
 }
 
@@ -101,10 +100,7 @@ impl Ipv4Network {
         if prefix > IPV4_BITS {
             None
         } else {
-            Some(Ipv4Network {
-                addr,
-                prefix,
-            })
+            Some(Ipv4Network { addr, prefix })
         }
     }
 
@@ -113,10 +109,7 @@ impl Ipv4Network {
     /// If the netmask is not valid this will return an `IpNetworkError::InvalidPrefix`.
     pub fn with_netmask(netaddr: Ipv4Addr, netmask: Ipv4Addr) -> Result<Ipv4Network, IpNetworkError> {
         let prefix = ipv4_mask_to_prefix(netmask)?;
-        let net = Self {
-            addr: netaddr,
-            prefix,
-        };
+        let net = Self { addr: netaddr, prefix };
         Ok(net)
     }
 
@@ -126,10 +119,7 @@ impl Ipv4Network {
     pub fn iter(self) -> Ipv4NetworkIterator {
         let start = u32::from(self.network());
         let end = start + (self.size() - 1);
-        Ipv4NetworkIterator {
-            next: Some(start),
-            end,
-        }
+        Ipv4NetworkIterator { next: Some(start), end }
     }
 
     pub const fn ip(self) -> Ipv4Addr {
@@ -335,10 +325,7 @@ impl TryFrom<&str> for Ipv4Network {
 
 impl From<Ipv4Addr> for Ipv4Network {
     fn from(a: Ipv4Addr) -> Ipv4Network {
-        Ipv4Network {
-            addr: a,
-            prefix: 32,
-        }
+        Ipv4Network { addr: a, prefix: 32 }
     }
 }
 
