@@ -23,16 +23,19 @@ mod chacha_avx512;
 #[cfg(feature = "zeroize")]
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+/// HChaCha20 hash function.
+pub mod hchacha20;
+
 use crate::StreamCipher;
 
 /// The number of 32-bit words that compose ChaCha's state.
-const STATE_WORDS: usize = 16;
+pub(crate) const STATE_WORDS: usize = 16;
 
 /// The size of a ChaCha block in bytes which is the size of the state in bytes
-const BLOCK_SIZE: usize = 64;
+pub(crate) const BLOCK_SIZE: usize = 64;
 
 /// The "sigma" constant which is the value of the first row of ChaCha's state.
-const CONSTANT: [u32; 4] = [
+pub(crate) const CONSTANT: [u32; 4] = [
     0x61707865, // "expa"
     0x3320646e, // "nd 3"
     0x79622d32, // "2-by"
@@ -260,7 +263,7 @@ fn chacha_generic<const ROUNDS: usize>(
 }
 
 #[inline(always)]
-const fn quarter_round(state: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize) {
+pub(crate) const fn quarter_round(state: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize) {
     // a += b; d ^= a; d <<<= 16
     state[a] = state[a].wrapping_add(state[b]);
     state[d] ^= state[a];

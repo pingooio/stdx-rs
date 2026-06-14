@@ -10,16 +10,18 @@ path = "./src/crypto.rs"
 default = ["std", "zeroize"]
 
 alloc = []
-std = ["alloc", "memchr/std"]
-zeroize = ["dep:zeroize"]
+std = ["alloc", "blake3/std", "memchr/std"]
+zeroize = ["dep:zeroize", "blake3/zeroize"]
 
 [dependencies]
-memchr = { version = "2", default-features = false, features = ["alloc"] }
-zeroize = { workspace = true, optional = true }
-big_number = { path = "../big_number" }
-constant_time_eq = { path = "../constant_time_eq" }
 base64 = { path = "../base64" }
+big_number = { path = "../big_number" }
+blake3 = { workspace = true, features = ["neon", "wasm32_simd"] }
+constant_time_eq = { path = "../constant_time_eq" }
+memchr = { version = "2", default-features = false, features = ["alloc"] }
 rand = { workspace = true }
+zeroize = { workspace = true, optional = true }
+
 
 [dev-dependencies]
 criterion = { workspace = true }

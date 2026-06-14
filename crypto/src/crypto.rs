@@ -16,6 +16,7 @@ pub mod aes;
 #[cfg(feature = "alloc")]
 pub mod argon2;
 pub mod blake2;
+pub mod blake3;
 pub mod chacha;
 pub mod curve25519;
 pub mod hkdf;

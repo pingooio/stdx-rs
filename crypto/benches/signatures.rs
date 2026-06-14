@@ -1,4 +1,6 @@
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
+
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use crypto::{
     curve25519::ed25519::SecretKey,
     mldsa::{ml_dsa_65_generate_keypair, ml_dsa_65_sign, ml_dsa_65_verify},
