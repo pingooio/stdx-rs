@@ -1,5 +1,5 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use crypto::{Aead, aes::Aes256Gcm};
+use crypto::{Aead, aes::Aes256Gcm, chacha::ChaCha20Poly1305};
 
 const DATA_SIZES: [usize; 7] = [64, 256, 1024, 16 * 1024, 64 * 1024, 1024 * 1024, 10 * 1024 * 1024];
 
@@ -11,7 +11,8 @@ const KEY: [u8; 32] = [
 const NONCE_96: [u8; 12] = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C];
 
 fn bench_encrypt(c: &mut Criterion) {
-    let cipher = Aes256Gcm::new(&KEY);
+    let aes = Aes256Gcm::new(&KEY);
+    let chacha = ChaCha20Poly1305::new(&KEY);
 
     for &size in &DATA_SIZES {
         let mut group = c.benchmark_group(size.to_string());
@@ -21,7 +22,17 @@ fn bench_encrypt(c: &mut Criterion) {
             b.iter_batched(
                 || vec![0xA5_u8; size],
                 |mut data| {
-                    let _tag = cipher.encrypt_in_place(&mut data, &NONCE_96[..], &[]);
+                    let _tag = aes.encrypt_in_place(&mut data, &NONCE_96[..], &[]);
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+
+        group.bench_function(BenchmarkId::from_parameter("ChaCha20-Poly1305-encrypt"), |b| {
+            b.iter_batched(
+                || vec![0xA5_u8; size],
+                |mut data| {
+                    let _tag = chacha.encrypt_in_place(&mut data, &NONCE_96[..], &[]);
                 },
                 criterion::BatchSize::SmallInput,
             );
@@ -32,7 +43,8 @@ fn bench_encrypt(c: &mut Criterion) {
 }
 
 fn bench_decrypt(c: &mut Criterion) {
-    let cipher = Aes256Gcm::new(&KEY);
+    let aes = Aes256Gcm::new(&KEY);
+    let chacha = ChaCha20Poly1305::new(&KEY);
 
     for &size in &DATA_SIZES {
         let mut group = c.benchmark_group(size.to_string());
@@ -42,11 +54,25 @@ fn bench_decrypt(c: &mut Criterion) {
             b.iter_batched(
                 || {
                     let mut data = vec![0xA5_u8; size];
-                    let tag = cipher.encrypt_in_place(&mut data, &NONCE_96[..], &[]);
+                    let tag = aes.encrypt_in_place(&mut data, &NONCE_96[..], &[]);
                     (data, tag)
                 },
                 |(mut data, tag)| {
-                    let _result = cipher.decrypt_in_place(&mut data, &NONCE_96[..], &[], tag.as_ref());
+                    let _result = aes.decrypt_in_place(&mut data, &NONCE_96[..], &[], tag.as_ref());
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+
+        group.bench_function(BenchmarkId::from_parameter("ChaCha20-Poly1305-decrypt"), |b| {
+            b.iter_batched(
+                || {
+                    let mut data = vec![0xA5_u8; size];
+                    let tag = chacha.encrypt_in_place(&mut data, &NONCE_96[..], &[]);
+                    (data, tag)
+                },
+                |(mut data, tag)| {
+                    let _result = chacha.decrypt_in_place(&mut data, &NONCE_96[..], &[], tag.as_ref());
                 },
                 criterion::BatchSize::SmallInput,
             );

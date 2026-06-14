@@ -1,6 +1,6 @@
 use core::arch::aarch64::*;
 
-use super::{BLOCK_SIZE, STATE_WORDS, extract_counter_from_state, inject_counter_into_state};
+use super::{BLOCK_SIZE, STATE_WORDS};
 
 // https://doc.rust-lang.org/stable/core/arch/aarch64
 
@@ -15,13 +15,19 @@ pub const SIMD_LANES: usize = 4;
 // then we perform the normal ChaCha operations on these vectors, meaning that we compute
 // 4 ChaCha blocks in parallel for every operation on these vectors.
 #[target_feature(enable = "neon")]
-pub fn chacha_neon<const ROUNDS: usize>(
+pub fn chacha_neon<const ROUNDS: usize, const IS_IETF: bool>(
     state: &mut [u32; STATE_WORDS],
     input: &mut [u8],
     last_keystream_block: &mut [u8; BLOCK_SIZE],
 ) {
-    let mut counter = extract_counter_from_state(state);
+    let mut counter = if IS_IETF {
+        state[12] as u64
+    } else {
+        ((state[13] as u64) << 32) | (state[12] as u64)
+    };
     let mut keystream = [0u8; SIMD_LANES * BLOCK_SIZE];
+
+    let w13 = if IS_IETF { state[13] } else { 0 };
 
     // process 4 blocks of 64 bytes (4 * 16) in parallel
     let mut state_simd: [uint32x4_t; STATE_WORDS] = unsafe {
@@ -42,7 +48,8 @@ pub fn chacha_neon<const ROUNDS: usize>(
             vdupq_n_u32(state[11]),
             // counter, set to 0, it will be injected later
             vld1q_u32([0, 0, 0, 0].as_ptr()),
-            vld1q_u32([0, 0, 0, 0].as_ptr()),
+            // word 13: nonce low for IETF, counter high for DJB (set to 0 and injected per-lane)
+            vdupq_n_u32(w13),
             // nonce
             vdupq_n_u32(state[14]),
             vdupq_n_u32(state[15]),
@@ -55,13 +62,19 @@ pub fn chacha_neon<const ROUNDS: usize>(
         let mut counter_lane_low = [0u32; SIMD_LANES];
         let mut counter_lane_high = [0u32; SIMD_LANES];
         for i in 0..SIMD_LANES {
-            let counter_lane = counter.wrapping_add(i as u64);
-            counter_lane_low[i] = counter_lane as u32;
-            counter_lane_high[i] = (counter_lane >> 32) as u32;
+            if IS_IETF {
+                counter_lane_low[i] = (counter as u32).wrapping_add(i as u32);
+            } else {
+                let counter_lane = counter.wrapping_add(i as u64);
+                counter_lane_low[i] = counter_lane as u32;
+                counter_lane_high[i] = (counter_lane >> 32) as u32;
+            }
         }
         unsafe {
             state_simd[12] = vld1q_u32(counter_lane_low.as_ptr());
-            state_simd[13] = vld1q_u32(counter_lane_high.as_ptr());
+            if !IS_IETF {
+                state_simd[13] = vld1q_u32(counter_lane_high.as_ptr());
+            }
         }
 
         // compute 4 blocks in parallel
@@ -76,7 +89,10 @@ pub fn chacha_neon<const ROUNDS: usize>(
         counter = counter.wrapping_add((input_blocks.len() as u64).div_ceil(BLOCK_SIZE as u64));
     }
 
-    inject_counter_into_state(state, counter);
+    state[12] = counter as u32;
+    if !IS_IETF {
+        state[13] = (counter >> 32) as u32;
+    }
 
     if input.len() % BLOCK_SIZE != 0 {
         let last_keystream_block_index = ((input.len() - 1) / BLOCK_SIZE) % SIMD_LANES;
@@ -157,25 +173,21 @@ fn quarter_round(state: &mut [uint32x4_t; STATE_WORDS], a: usize, b: usize, c: u
         // a += b; d ^= a; d <<<= 16
         state[a] = vaddq_u32(state[a], state[b]);
         state[d] = veorq_u32(state[d], state[a]);
-        // *d = vorrq_u32(vshlq_n_u32(*d, 16), vshrq_n_u32(*d, 16));
         rotate_left!(state[d], 16);
 
         // c += d; b ^= c; b <<<= 12
         state[c] = vaddq_u32(state[c], state[d]);
         state[b] = veorq_u32(state[b], state[c]);
-        // *b = vorrq_u32(vshlq_n_u32(*b, 12), vshrq_n_u32(*b, 20));
         rotate_left!(state[b], 12);
 
         // a += b; d ^= a; d <<<= 8
         state[a] = vaddq_u32(state[a], state[b]);
         state[d] = veorq_u32(state[d], state[a]);
-        // *d = vorrq_u32(vshlq_n_u32(*d, 8), vshrq_n_u32(*d, 24));
         rotate_left!(state[d], 8);
 
         // c += d; b ^= c; b <<<= 7
         state[c] = vaddq_u32(state[c], state[d]);
         state[b] = veorq_u32(state[b], state[c]);
-        // *b = vorrq_u32(vshlq_n_u32(*b, 7), vshrq_n_u32(*b, 25));
         rotate_left!(state[b], 7);
     }
 }

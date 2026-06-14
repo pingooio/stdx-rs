@@ -1,19 +1,25 @@
 use core::arch::wasm32::*;
 
-use super::{BLOCK_SIZE, STATE_WORDS, extract_counter_from_state, inject_counter_into_state};
+use super::{BLOCK_SIZE, STATE_WORDS};
 
 // https://doc.rust-lang.org/stable/core/arch/wasm32
 
 /// how many ChaCha blocks we compute in parallel (depends on the size of the SIMD vectors, here 128 / 32 = 4)
 pub const SIMD_LANES: usize = 4;
 
-pub fn chacha_wasm_simd128<const ROUNDS: usize>(
+pub fn chacha_wasm_simd128<const ROUNDS: usize, const IS_IETF: bool>(
     state: &mut [u32; STATE_WORDS],
     input: &mut [u8],
     last_keystream_block: &mut [u8; BLOCK_SIZE],
 ) {
-    let mut counter = extract_counter_from_state(state);
+    let mut counter = if IS_IETF {
+        state[12] as u64
+    } else {
+        ((state[13] as u64) << 32) | (state[12] as u64)
+    };
     let mut keystream = [0u8; SIMD_LANES * BLOCK_SIZE];
+
+    let w13 = if IS_IETF { state[13] as i32 } else { 0 };
 
     let mut initial_state: [v128; STATE_WORDS] = [
         // constant
@@ -32,7 +38,8 @@ pub fn chacha_wasm_simd128<const ROUNDS: usize>(
         i32x4_splat(state[11] as i32),
         // counter, set it to 0 for now, it is injected later during each iteration of the loop
         i32x4_splat(0),
-        i32x4_splat(0),
+        // word 13: nonce low for IETF, counter high for DJB (set to 0 and injected per-lane)
+        i32x4_splat(w13),
         // nonce
         i32x4_splat(state[14] as i32),
         i32x4_splat(state[15] as i32),
@@ -40,19 +47,24 @@ pub fn chacha_wasm_simd128<const ROUNDS: usize>(
 
     // process input by chunks of 4 * 64 bytes
     for input_blocks in input.chunks_mut(BLOCK_SIZE * SIMD_LANES) {
-        // inject counter (uint64 little-endian) as two 32-bit little-endian words for each lane
-        // e.g for one 128-bit vector with 4 32-bit lanes: [counter, counter + 1, counter + 2, counter + 3...]
+        // inject counter as 32-bit little-endian words for each lane
         let mut counter_lane_low = [0u32; SIMD_LANES];
         let mut counter_lane_high = [0u32; SIMD_LANES];
         for i in 0..SIMD_LANES {
-            let counter_lane = counter.wrapping_add(i as u64);
-            counter_lane_low[i] = counter_lane as u32;
-            counter_lane_high[i] = (counter_lane >> 32) as u32;
+            if IS_IETF {
+                counter_lane_low[i] = (counter as u32).wrapping_add(i as u32);
+            } else {
+                let counter_lane = counter.wrapping_add(i as u64);
+                counter_lane_low[i] = counter_lane as u32;
+                counter_lane_high[i] = (counter_lane >> 32) as u32;
+            }
         }
 
         unsafe {
             initial_state[12] = v128_load(counter_lane_low.as_ptr() as *const v128);
-            initial_state[13] = v128_load(counter_lane_high.as_ptr() as *const v128);
+            if !IS_IETF {
+                initial_state[13] = v128_load(counter_lane_high.as_ptr() as *const v128);
+            }
         }
 
         // compute 4 64-byte ChaCha blocks in parallel
@@ -67,7 +79,10 @@ pub fn chacha_wasm_simd128<const ROUNDS: usize>(
         counter = counter.wrapping_add((input_blocks.len() as u64).div_ceil(BLOCK_SIZE as u64));
     }
 
-    inject_counter_into_state(state, counter);
+    state[12] = counter as u32;
+    if !IS_IETF {
+        state[13] = (counter >> 32) as u32;
+    }
 
     if input.len() % BLOCK_SIZE != 0 {
         let last_keystream_block_index = ((input.len() - 1) / BLOCK_SIZE) % SIMD_LANES;

@@ -1,6 +1,6 @@
 use core::arch::x86_64::*;
 
-use super::{BLOCK_SIZE, STATE_WORDS, extract_counter_from_state, inject_counter_into_state};
+use super::{BLOCK_SIZE, STATE_WORDS};
 
 // https://doc.rust-lang.org/stable/core/arch/x86_64
 // https://en.wikipedia.org/wiki/AVX-512
@@ -25,13 +25,19 @@ struct AlignedU32x16([u32; SIMD_LANES]);
 // then we perform the normal ChaCha operations on these vectors, meaning that we compute
 // 16 ChaCha blocks in parallel for every operation on these vectors.
 #[target_feature(enable = "avx512f")]
-pub fn chacha_avx512<const ROUNDS: usize>(
+pub fn chacha_avx512<const ROUNDS: usize, const IS_IETF: bool>(
     state: &mut [u32; STATE_WORDS],
     input: &mut [u8],
     last_keystream_block: &mut [u8; BLOCK_SIZE],
 ) {
-    let mut counter = extract_counter_from_state(state);
+    let mut counter = if IS_IETF {
+        state[12] as u64
+    } else {
+        ((state[13] as u64) << 32) | (state[12] as u64)
+    };
     let mut keystream = [0u8; SIMD_LANES * BLOCK_SIZE];
+
+    let w13 = if IS_IETF { state[13] as i32 } else { 0 };
 
     let mut initial_state: [__m512i; STATE_WORDS] = unsafe {
         [
@@ -51,7 +57,8 @@ pub fn chacha_avx512<const ROUNDS: usize>(
             _mm512_set1_epi32(state[11] as i32),
             // counter, set it to 0 for now, it is injected later during each iteration of the loop
             _mm512_set1_epi32(0),
-            _mm512_set1_epi32(0),
+            // word 13: nonce low for IETF, counter high for DJB (set to 0 and injected per-lane)
+            _mm512_set1_epi32(w13),
             // nonce
             _mm512_set1_epi32(state[14] as i32),
             _mm512_set1_epi32(state[15] as i32),
@@ -60,19 +67,24 @@ pub fn chacha_avx512<const ROUNDS: usize>(
 
     // process input by chunks of 16 * 64 bytes
     for input_blocks in input.chunks_mut(BLOCK_SIZE * SIMD_LANES) {
-        // inject counter (uint64 little-endian) as two 32-bit little-endian words for each lane
-        // e.g for one 512-bit vector with 16 32-bit lanes: [counter, counter + 1, counter + 2, counter + 3...]
+        // inject counter as 32-bit little-endian words for each lane
         let mut counter_lane_low = AlignedU32x16([0u32; SIMD_LANES]);
         let mut counter_lane_high = AlignedU32x16([0u32; SIMD_LANES]);
         for i in 0..SIMD_LANES {
-            let counter_lane = counter.wrapping_add(i as u64);
-            counter_lane_low.0[i] = counter_lane as u32;
-            counter_lane_high.0[i] = (counter_lane >> 32) as u32;
+            if IS_IETF {
+                counter_lane_low.0[i] = (counter as u32).wrapping_add(i as u32);
+            } else {
+                let counter_lane = counter.wrapping_add(i as u64);
+                counter_lane_low.0[i] = counter_lane as u32;
+                counter_lane_high.0[i] = (counter_lane >> 32) as u32;
+            }
         }
 
         unsafe {
             initial_state[12] = _mm512_load_epi32(counter_lane_low.0.as_ptr() as *const i32);
-            initial_state[13] = _mm512_load_epi32(counter_lane_high.0.as_ptr() as *const i32);
+            if !IS_IETF {
+                initial_state[13] = _mm512_load_epi32(counter_lane_high.0.as_ptr() as *const i32);
+            }
         }
 
         // compute 16 64-byte ChaCha blocks in parallel
@@ -87,7 +99,10 @@ pub fn chacha_avx512<const ROUNDS: usize>(
         counter = counter.wrapping_add((input_blocks.len() as u64).div_ceil(BLOCK_SIZE as u64));
     }
 
-    inject_counter_into_state(state, counter);
+    state[12] = counter as u32;
+    if !IS_IETF {
+        state[13] = (counter >> 32) as u32;
+    }
 
     if input.len() % BLOCK_SIZE != 0 {
         let last_keystream_block_index = ((input.len() - 1) / BLOCK_SIZE) % SIMD_LANES;

@@ -149,10 +149,14 @@ impl Xof for Blake3 {
     }
 
     fn squeeze(&mut self, out: &mut [u8]) {
-        if self.xof_reader.is_none() {
-            self.xof_reader = Some(self.hasher.finalize_xof());
+        match &mut self.xof_reader {
+            Some(reader) => reader.fill(out),
+            None => {
+                let mut reader = self.hasher.finalize_xof();
+                reader.fill(out);
+                self.xof_reader = Some(reader);
+            }
         }
-        self.xof_reader.as_mut().unwrap().fill(out);
     }
 }
 
